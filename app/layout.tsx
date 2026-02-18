@@ -11,7 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     // Add suppressHydrationWarning here to fix the error in your screenshot
     <html lang="en" suppressHydrationWarning>
-      <body className="bg-[#f3f6f9] h-screen overflow-hidden">
+      <body className="bg-[#f3f6f9] h-screen overflow-hidden" cz-shortcut-listen="true">
         {!isLoginPage ? (
           <div className="flex flex-col h-full">
             <Header />
