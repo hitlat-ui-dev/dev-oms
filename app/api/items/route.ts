@@ -3,33 +3,39 @@ import clientPromise from "@/lib/mongodb";
 import Item from "@/models/Item";
 import mongoose from "mongoose";
 
-export async function POST(req: Request) {
-  try {
-    const { itemName, category } = await req.json();
-    const client = await clientPromise;
-    const db = client.db(); // Next.js standard Mongo connection
-
-    // Ensure Mongoose is connected for the Model
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connect(process.env.MONGODB_URI!);
-    }
-
-    const newItem = await Item.create({ itemName, category });
-    return NextResponse.json({ message: "Item Created", item: newItem }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to create item" }, { status: 500 });
+async function connectDB() {
+  await clientPromise;
+  if (mongoose.connection.readyState !== 1) {
+    await mongoose.connect(process.env.MONGODB_URI as string);
   }
 }
 
 export async function GET() {
   try {
-    await clientPromise; 
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connect(process.env.MONGODB_URI!);
+    await connectDB();
+    const items = await Item.find({}).sort({ createdAt: -1 });
+    
+    // Logic to generate next SKU
+    const lastItem = await Item.findOne().sort({ sku: -1 });
+    let nextSku = "S1100";
+    if (lastItem && lastItem.sku) {
+      const lastNum = parseInt(lastItem.sku.replace("S", ""));
+      nextSku = `S${lastNum + 1}`;
     }
-    const items = await Item.find({});
-    return NextResponse.json(items);
+
+    return NextResponse.json({ items, nextSku });
   } catch (error) {
-    return NextResponse.json({ error: "Failed to fetch items" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    await connectDB();
+    const data = await req.json();
+    const newItem = await Item.create(data);
+    return NextResponse.json(newItem, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: "Duplicate SKU or Invalid Data" }, { status: 400 });
   }
 }

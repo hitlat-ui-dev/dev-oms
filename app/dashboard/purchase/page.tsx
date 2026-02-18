@@ -6,13 +6,14 @@ import {
   FiShoppingCart, 
   FiRotateCcw, 
   FiBox, 
-  FiFileText 
+  FiFileText,
+  FiSend 
 } from "react-icons/fi";
 
 export default function PurchasePage() {
   const router = useRouter();
 
-  // Menu items styled to match image_3e0c69.png exactly
+  // Menu items - No popup logic here, just standard routing
   const purchaseMenu = [
     { name: "Add Purchase", path: "/dashboard/purchase/add-purchase", icon: <FiShoppingCart />, color: "bg-[#1d63ff]" },
     { name: "Payment of Purchase", path: "/dashboard/purchase/payment", icon: <FiPlusCircle />, color: "bg-[#00a86b]" },
@@ -20,6 +21,7 @@ export default function PurchasePage() {
     { name: "Add Vendor", path: "/dashboard/purchase/add-vendor", icon: <FiUserPlus />, color: "bg-[#8b2ef5]" },
     { name: "Add Item", path: "/dashboard/purchase/add-item", icon: <FiBox />, color: "bg-[#ff5100]" },
     { name: "Purchase Reports", path: "/dashboard/purchase/reports", icon: <FiFileText />, color: "bg-[#5c5cf5]" },
+    { name: "Purchase Request", path: "/dashboard/purchase/purchase-request", icon: <FiSend />, color: "bg-[#0f172a]" }, 
   ];
 
   return (
@@ -31,12 +33,12 @@ export default function PurchasePage() {
           <p className="text-slate-500 text-[10px] font-bold tracking-[0.2em] uppercase">Internal Management System</p>
         </div>
 
-        {/* Grid Menu exactly like your reference image */}
+        {/* Grid Menu */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {purchaseMenu.map((item) => (
             <button
               key={item.name}
-              onClick={() => router.push(item.path)}
+              onClick={() => router.push(item.path)} // Fixed: Simplified to only use router.push
               className={`${item.color} flex items-center p-5 rounded-2xl shadow-lg hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 text-left group`}
             >
               {/* White Translucent Icon Box */}

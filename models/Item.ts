@@ -1,10 +1,11 @@
 import mongoose, { Schema, model, models } from "mongoose";
 
 const ItemSchema = new Schema({
-  itemName: { type: String, required: true },
+  itemName: { type: String, required: true, trim: true },
+  sku: { type: String, required: true, unique: true },
   category: { type: String, required: true },
-  currentStock: { type: Number, default: 0 }, // Automatically managed by purchases/sales
+  unit: { type: String, required: true },
+  currentStock: { type: Number, default: 0 }
 }, { timestamps: true });
 
-const Item = models.Item || model("Item", ItemSchema);
-export default Item;
+export default models.Item || model("Item", ItemSchema);
