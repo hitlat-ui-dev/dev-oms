@@ -42,7 +42,7 @@ export default function ReceivedQtyModal({ isOpen, request, onClose }: any) {
       <div className="bg-white rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl border border-slate-100">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h2 className="text-2xl font-black uppercase tracking-tight text-slate-800">Receive Stock</h2>
+            <h2 className="text-2xl font-black uppercase tracking-tight text-slate-800">Receiveggfg Stock</h2>
             <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Inward Entry</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><FiX size={20}/></button>

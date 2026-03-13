@@ -1,27 +1,19 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { 
-  FiPlusCircle, 
-  FiUserPlus, 
-  FiShoppingCart, 
-  FiRotateCcw, 
-  FiBox, 
-  FiFileText,
-  FiSend 
-} from "react-icons/fi";
+import { FiPlusCircle,  FiUserPlus, FiShoppingCart, FiRotateCcw, FiBox, FiFileText, FiSend } from "react-icons/fi";
 
 export default function PurchasePage() {
   const router = useRouter();
 
   // Menu items - No popup logic here, just standard routing
   const purchaseMenu = [
-    { name: "Add Purchase", path: "/dashboard/purchase/add-purchase", icon: <FiShoppingCart />, color: "bg-[#1d63ff]" },
-    { name: "Payment of Purchase", path: "/dashboard/purchase/payment", icon: <FiPlusCircle />, color: "bg-[#00a86b]" },
-    { name: "Purchase Return", path: "/dashboard/purchase/return", icon: <FiRotateCcw />, color: "bg-[#f20505]" },
+   // { name: "Add Purchase", path: "/dashboard/purchase/add-purchase", icon: <FiShoppingCart />, color: "bg-[#1d63ff]" },
+    //{ name: "Payment of Purchase", path: "/dashboard/purchase/payment", icon: <FiPlusCircle />, color: "bg-[#00a86b]" },
+    //{ name: "Purchase Return", path: "/dashboard/purchase/return", icon: <FiRotateCcw />, color: "bg-[#f20505]" },
     { name: "Add Vendor", path: "/dashboard/purchase/add-vendor", icon: <FiUserPlus />, color: "bg-[#8b2ef5]" },
     { name: "Add Item", path: "/dashboard/purchase/add-item", icon: <FiBox />, color: "bg-[#ff5100]" },
-    { name: "Purchase Reports", path: "/dashboard/purchase/reports", icon: <FiFileText />, color: "bg-[#5c5cf5]" },
-    { name: "Purchase Request", path: "/dashboard/purchase/purchase-request", icon: <FiSend />, color: "bg-[#0f172a]" }, 
+    //{ name: "Purchase Reports", path: "/dashboard/purchase/reports", icon: <FiFileText />, color: "bg-[#5c5cf5]" },
+    { name: "Purchase", path: "/dashboard/purchase/purchase", icon: <FiSend />, color: "bg-[#0f172a]" }
   ];
 
   return (
