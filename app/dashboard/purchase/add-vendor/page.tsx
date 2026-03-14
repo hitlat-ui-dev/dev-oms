@@ -83,7 +83,8 @@ export default function AddVendorPage() {
               <div className="relative">
                 <FiPhone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
-                  type="text" required value={formData.mobile}
+                  type="text" //required 
+                  value={formData.mobile}
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700"
                   placeholder="00000 00000"
                   onChange={(e) => setFormData({...formData, mobile: e.target.value})}
@@ -111,7 +112,8 @@ export default function AddVendorPage() {
               <div className="relative">
                 <FiHome className="absolute left-4 top-4 text-slate-400" />
                 <textarea 
-                  required value={formData.address}
+                  //required
+                  value={formData.address}
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 min-h-24"
                   placeholder="Full Business Address"
                   onChange={(e) => setFormData({...formData, address: e.target.value})}
