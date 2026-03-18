@@ -2,113 +2,43 @@ import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 
-// --- PATCH: Handles Updates (Order Placement & Receiving) ---
-// export async function PATCH(
-//   req: Request, 
-//   { params }: { params: Promise<{ id: string }> } 
-// ) {
-//   try {
-//     const { id } = await params;
+// --- PATCH: Handles Updates (Revert to Purchase Request) ---
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const client = await clientPromise;
+    const db = client.db("dev_oms_db");
 
-//     if (!ObjectId.isValid(id)) {
-//       return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
-//     }
+    // 1. Get the data from "Order place Purchase" first
+    const sourceCollection = db.collection("Order place Purchase");
+    const itemToMove = await sourceCollection.findOne({ _id: new ObjectId(id) });
 
-//     const body = await req.json();
-//     const { 
-//       status, 
-//       receivedQty, 
-//       orderQty, 
-//       rate, 
-//       vendor 
-//     } = body;
+    if (!itemToMove) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
 
-//     const client = await clientPromise;
-//     const db = client.db();
-//     const collection = db.collection("purchase_requests");
+    // 2. Prepare the data for the "purchase_requests" collection
+    // We remove the old _id to let MongoDB create a new one, or keep it if you prefer
+    const { _id, orderNumber, ...restOfData } = itemToMove;
 
-//     // 1. Fetch the original document
-//     const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+    const targetCollection = db.collection("purchase_requests");
+    await targetCollection.insertOne({
+      ...restOfData,
+      status: "pending", // Reset status
+      updatedAt: new Date()
+    });
 
-//     if (!originalRequest) {
-//       return NextResponse.json({ error: "Request not found" }, { status: 404 });
-//     }
+    // 3. Delete from the "Order place Purchase" collection
+    await sourceCollection.deleteOne({ _id: new ObjectId(id) });
 
-//     // --- CASE A: MOVING FROM REQUEST TO ORDER PLACE ---
-//     if (status === "Order Place") {
-//       await collection.updateOne(
-//         { _id: new ObjectId(id) },
-//         { 
-//           $set: { 
-//             status: "Order Place",
-//             qty: Number(orderQty) || originalRequest.qty,
-//             rate: Number(rate),
-//             vendor: vendor,
-//             updatedAt: new Date()
-//           } 
-//         }
-//       );
-//       return NextResponse.json({ success: true, message: "Order placed successfully" });
-//     }
-
-//     // --- CASE B: RECEIVING ITEMS (SPLIT LOGIC) ---
-//     if (status === "Received Purchase") {
-//       const requestedQty = Number(originalRequest.qty);
-//       const incomingQty = Number(receivedQty);
-
-//       if (incomingQty < requestedQty && incomingQty > 0) {
-//         // Step 1: Update original with remaining balance (stays in Order Place)
-//         await collection.updateOne(
-//           { _id: new ObjectId(id) },
-//           { $set: { qty: requestedQty - incomingQty, updatedAt: new Date() } }
-//         );
-
-//         // Step 2: Create new record for received portion
-//         const { _id, ...rest } = originalRequest;
-//         await collection.insertOne({
-//           ...rest,
-//           qty: incomingQty,
-//           receivedQty: incomingQty,
-//           status: "Received Purchase",
-//           createdAt: new Date(),
-//           splitFrom: new ObjectId(id)
-//         });
-
-//         return NextResponse.json({ success: true, message: "Partial receipt split" });
-//       } 
-      
-//       // Full Receipt Update
-//       await collection.updateOne(
-//         { _id: new ObjectId(id) },
-//         { 
-//           $set: { 
-//             status: "Received Purchase", 
-//             receivedQty: incomingQty,
-//             qty: incomingQty,
-//             updatedAt: new Date()
-//           } 
-//         }
-//       );
-//       return NextResponse.json({ success: true });
-//     }
-
-//     // --- CASE C: GENERAL STATUS UPDATE (e.g., Return) ---
-//     if (status) {
-//         await collection.updateOne(
-//             { _id: new ObjectId(id) },
-//             { $set: { status, updatedAt: new Date() } }
-//         );
-//         return NextResponse.json({ success: true });
-//     }
-
-//     return NextResponse.json({ error: "No valid status provided" }, { status: 400 });
-
-//   } catch (error: any) {
-//     console.error("PATCH Error:", error);
-//     return NextResponse.json({ error: error.message }, { status: 500 });
-//   }
-// }
-
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
 // --- DELETE: Removes a Request ---
 export async function DELETE(
   req: Request, 

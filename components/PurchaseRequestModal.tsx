@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { FiX, FiShoppingCart, FiEdit3, FiLayers, FiSave, FiPackage } from "react-icons/fi";
+import { FiX, FiShoppingCart, FiEdit3, FiLayers, FiSave, FiPackage, FiSearch } from "react-icons/fi";
 
 interface ModalProps {
   isOpen: boolean;
@@ -11,13 +11,12 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
   const [items, setItems] = useState<{itemName: string, unit: string, currentStock: number}[]>([]);
   const [loading, setLoading] = useState(false);
   
-  // Cleaned up formData: Removed 'status' field from inputs as it's auto-added
   const [formData, setFormData] = useState({
     itemName: "",
     unit: "",
     qty: 0,
     remark: "",
-    status: "Purchase Request" // This remains the default value sent to DB
+    status: "Purchase Request"
   });
 
   useEffect(() => {
@@ -28,18 +27,21 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
     }
   }, [isOpen]);
 
-  const handleItemChange = (name: string) => {
-    const selectedItem = items.find(i => i.itemName === name);
+  // Handle manual typing and selection
+  const handleTextChange = (value: string) => {
+    // Find if the typed text matches an existing item to auto-fill the unit
+    const selectedItem = items.find(i => i.itemName.toLowerCase() === value.toLowerCase());
+    
     setFormData({ 
       ...formData, 
-      itemName: name, 
-      unit: selectedItem?.unit || "unit" 
+      itemName: value, // Keep the raw text the user typed
+      unit: selectedItem?.unit || formData.unit || "unit" 
     });
   };
 
- const handleSave = async () => {
+  const handleSave = async () => {
     if (!formData.itemName || formData.qty <= 0) {
-      alert("Please select an item and enter quantity.");
+      alert("Please enter an item name and quantity.");
       return;
     }
 
@@ -48,11 +50,10 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
       const res = await fetch("/api/purchase", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: Map 'qty' from your state to 'prQty' for the API
         body: JSON.stringify({
-          itemName: formData.itemName,
+          itemName: formData.itemName.toUpperCase(), // Ensure consistency in DB
           unit: formData.unit,
-          prQty: formData.qty, // This matches your backend destructuring
+          prQty: formData.qty,
           remark: formData.remark,
           status: formData.status
         }),
@@ -78,7 +79,6 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-[2.5rem] w-full max-w-2xl overflow-hidden shadow-2xl border border-white/20">
         
-        {/* Header */}
         <div className="bg-[#0f172a] p-8 text-white flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400">
@@ -96,28 +96,27 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
 
         <div className="p-8 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* Item Select */}
             <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Inventory Item</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Search or Type Item Name</label>
               <div className="relative">
-                <FiPackage className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <select 
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all appearance-none cursor-pointer"
-                  onChange={(e) => handleItemChange(e.target.value)}
+                <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  list="inventory-items"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all uppercase"
+                  placeholder="Start typing item name..."
                   value={formData.itemName}
-                >
-                  <option value="">Choose item from stock...</option>
+                  onChange={(e) => handleTextChange(e.target.value)}
+                />
+                <datalist id="inventory-items">
                   {items.map((item, idx) => (
                     <option key={idx} value={item.itemName}>
-                      {item.itemName} — ({item.unit})
+                      {item.unit} stock available
                     </option>
                   ))}
-                </select>
+                </datalist>
               </div>
             </div>
 
-            {/* Qty Input - Now spanning full width or paired with unit */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Required Quantity</label>
               <div className="relative">
@@ -135,7 +134,6 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
               </div>
             </div>
 
-            {/* Remark */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Additional Remarks</label>
               <div className="relative">
@@ -161,9 +159,7 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
                 Saving to Log...
               </span>
             ) : (
-              <>
-                <FiSave size={20} /> Submit Purchase Request
-              </>
+              <><FiSave size={20} /> Submit Purchase Request</>
             )}
           </button>
         </div>

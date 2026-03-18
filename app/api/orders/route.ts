@@ -16,31 +16,59 @@ export async function POST(req: Request) {
       unit, 
       remark, 
       rate, 
-      vendor 
+      vendor,
+      sku,
+      category,
+      location 
     } = body;
 
     if (!vendor) return NextResponse.json({ error: "Vendor is required" }, { status: 400 });
 
-    // 1. Save the Order into the new 'orders' collection
+    // 1. Target the NEW collection name: "Order place Purchase"
+    const orderCollection = db.collection("Order place Purchase");
+    
+
+    // 2. Generate the 3-digit Order Number (001, 002...)
+    const lastOrder = await orderCollection
+      .find({}, { projection: { orderNumber: 1 } })
+      .sort({ orderNumber: -1 }) 
+      .limit(1)
+      .toArray();
+
+    let nextNumber = 1;
+    if (lastOrder.length > 0 && lastOrder[0].orderNumber) {
+      // Convert the existing string "0015" to number 15, then add 1
+      nextNumber = parseInt(lastOrder[0].orderNumber) + 1;
+    }
+
+    // Format to at least 3 digits (e.g., 15 becomes "015", 16 becomes "016")
+    const orderID = nextNumber.toString().padStart(3, '0');
+
+    // 3. Construct the record with Master Data (SKU, Category, Location)
     const newOrder = {
+      orderNumber: orderID,
       purchaseRequestId: originalId,
-        itemName,
+      itemName,
+      sku: sku || "N/A",
+      category: category || "General",
+      location: location || "---",
       prQty: Number(prQty),
       orderQty: Number(orderQty),
       unit,
       remark,
-      rate: rate ? Number(rate) : 0, // Rate is not mandatory
+      rate: rate ? Number(rate) : 0,
       vendor,
       status: "Order Place",
-      orderedAt: new Date()
+      createdAt: new Date() 
     };
-    await db.collection("orders").insertOne(newOrder);
 
-    // 2. Logic for the remaining Quantity in Purchase Request
+    // 4. Save to the NEW collection location
+    await orderCollection.insertOne(newOrder);
+
+    // 5. Handle the Purchase Request (Update or Delete)
     const remainingQty = Number(prQty) - Number(orderQty);
 
     if (remainingQty > 0) {
-      // Keep in PR but update the quantity to the remainder
       await db.collection("purchase_requests").updateOne(
         { _id: new ObjectId(originalId) },
         { 
@@ -51,11 +79,14 @@ export async function POST(req: Request) {
         }
       );
     } else {
-      // If fully ordered, remove from PR or change status to "Completed"
       await db.collection("purchase_requests").deleteOne({ _id: new ObjectId(originalId) });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true, 
+      orderNumber: orderID 
+    });
+
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

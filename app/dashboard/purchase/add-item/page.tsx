@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { FiBox, FiTag, FiSave, FiArrowLeft, FiPlus, FiHash, FiLayers, FiCheckCircle, FiX } from "react-icons/fi";
+import { FiBox, FiTag, FiSave, FiArrowLeft, FiPlus, FiHash, FiLayers, FiCheckCircle, FiX, FiMapPin } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 
@@ -24,7 +24,8 @@ export default function AddItemPage() {
     itemName: "",
     category: "",
     unit: "",
-    sku: "Loading..." 
+    sku: "Loading...",
+    location: ""
   });
 
   // 1. Fetch Initial Data (SKU, Categories, Units)
@@ -74,7 +75,7 @@ export default function AddItemPage() {
     });
     if (res.ok) {
       setStatus("Item Registered Successfully!");
-      setFormData(prev => ({ ...prev, itemName: "", category: "", unit: "" }));
+      setFormData(prev => ({ ...prev, itemName: "", category: "", unit: "", location: "" }));
       fetchData(); // Get next SKU
       setTimeout(() => setStatus(""), 3000);
     }
@@ -176,6 +177,21 @@ export default function AddItemPage() {
                 </button>
               </div>
             </div>
+            <div className="space-y-2 md:col-span-2">
+  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">
+    Item Location
+  </label>
+  <div className="relative">
+    <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+    <input 
+      type="text" 
+      value={formData.location}
+      className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10"
+      placeholder="Warehouse Shelf, Rack No, etc. (Optional)"
+      onChange={(e) => setFormData({...formData, location: e.target.value})}
+    />
+  </div>
+</div>
           </div>
 
           <button type="submit" disabled={loading} className="w-full bg-[#0f172a] hover:bg-slate-800 text-white font-black py-5 rounded-2xl shadow-xl flex items-center justify-center gap-3 transition-all uppercase tracking-widest text-sm">
@@ -183,7 +199,7 @@ export default function AddItemPage() {
           </button>
         </form>
       </div>
-      <button onClick={() => setIsModalOpen(true)}>Open Request</button>
+      {/* <button onClick={() => setIsModalOpen(true)}>Open Request</button> */}
     <PurchaseRequestModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
 
       {/* MODALS */}
