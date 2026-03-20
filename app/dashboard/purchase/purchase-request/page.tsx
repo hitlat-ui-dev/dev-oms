@@ -110,7 +110,7 @@ export default function ViewPurchaseRequests() {
         </div>
       </div>
 
-      <PurchaseRequestModal isOpen={isRequestModalOpen} onClose={() => { setIsRequestModalOpen(false); fetchRequests(); }} />
+      {/* <PurchaseRequestModal isOpen={isRequestModalOpen} onClose={() => { setIsRequestModalOpen(false); fetchRequests(); }} /> */}
       {selectedRequest && (
         <ReceivedQtyModal 
           isOpen={isReceivedModalOpen} 
