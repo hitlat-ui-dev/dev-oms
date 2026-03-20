@@ -219,15 +219,14 @@ export default function PurchaseLogisticsPage() {
         {activeTab === "Purchase Return" && <PurchaseReturnPage />}
       </div>
 
-      <PurchaseRequestModal
-        isOpen={isRequestModalOpen}
-        stockData={sortedStock}
-        onClose={() => {
-          setIsRequestModalOpen(false);
-          fetchTabData();
-          
-        }}
-      />
+      <PurchaseRequestModal 
+  isOpen={isRequestModalOpen} 
+  stockData={sortedStock} // <--- Add this
+  onClose={() => { 
+    setIsRequestModalOpen(false); 
+    fetchTabData(); // or fetchRequests() depending on your function name
+  }} 
+/>
 
       {selectedRequest && (
         <ReceivedQtyModal

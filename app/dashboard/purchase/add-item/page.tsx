@@ -200,7 +200,7 @@ export default function AddItemPage() {
         </form>
       </div>
       {/* <button onClick={() => setIsModalOpen(true)}>Open Request</button> */}
-    <PurchaseRequestModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} stockData={[]} />
+    {/* <PurchaseRequestModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} stockData={[]} /> */}
 
       {/* MODALS */}
       {(showCategoryModal || showUnitModal) && (
