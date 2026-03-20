@@ -12,13 +12,20 @@ export default function PurchaseLogisticsPage() {
   const [prRequests, setPrRequests] = useState<any[]>([]);
   const [orderRequests, setOrderRequests] = useState<any[]>([]);
   const [receivedRequests, setReceivedRequests] = useState<any[]>([]);
-  
+
   const [activeTab, setActiveTab] = useState("Purchase Request");
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
   const [editData, setEditData] = useState<Record<string, any>>({});
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [stock, setStock] = useState([]);
 
+  const fetchVendors = async () => {
+    const res = await fetch("/api/vendors");
+    const data = await res.json();
+    setVendors(data);
+  };
   // 1. Fetch Logic (Unified)
   const fetchTabData = async () => {
     try {
@@ -33,21 +40,33 @@ export default function PurchaseLogisticsPage() {
       const res = await fetch(endpoint);
       const data = await res.json();
 
-      const safeData = Array.isArray(data) 
+      const safeData = Array.isArray(data)
         ? data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         : [];
 
       if (activeTab === "Purchase Request") setPrRequests(safeData);
       else if (activeTab === "Order Place") setOrderRequests(safeData);
       else if (activeTab === "Received Purchase") setReceivedRequests(safeData);
-      
+
     } catch (err) {
       console.error("Fetch error:", err);
     }
   };
 
   useEffect(() => {
+  // Fetch your stock collection from the DB
+  const fetchStock = async () => {
+    const res = await fetch('/api/stock'); // Example API route
+    const data = await res.json();
+    setStock(data);
+  };
+  fetchStock();
+}, []);
+
+  useEffect(() => {
+    fetchVendors();
     fetchTabData();
+    
   }, [activeTab]);
 
   const handleInputChange = (id: string, field: string, value: any) => {
@@ -91,9 +110,9 @@ export default function PurchaseLogisticsPage() {
           delete next[req._id];
           return next;
         });
-        fetchTabData(); 
+        fetchTabData();
       }
-    } catch (err) { 
+    } catch (err) {
       console.error(err);
     }
   };
@@ -108,7 +127,7 @@ export default function PurchaseLogisticsPage() {
       });
       if (res.ok) {
         alert("✅ Reverted successfully");
-        fetchTabData(); 
+        fetchTabData();
       }
     } catch (err) { console.error(err); }
   };
@@ -126,21 +145,20 @@ export default function PurchaseLogisticsPage() {
       <div className="flex justify-between mb-8 items-center">
         <div className="flex gap-2 bg-white p-1.5 rounded-2xl border border-slate-200">
           {["Purchase Request", "Order Place", "Received Purchase", "Purchase Return"].map((t) => (
-            <button 
-              key={t} onClick={() => setActiveTab(t)} 
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${
-                activeTab === t ? "bg-slate-900 text-white shadow-md" : "text-slate-400 hover:text-slate-600"
-              }`}
+            <button
+              key={t} onClick={() => setActiveTab(t)}
+              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === t ? "bg-slate-900 text-white shadow-md" : "text-slate-400 hover:text-slate-600"
+                }`}
             >
               {t}
             </button>
           ))}
         </div>
-        
+
         {/* Hide New Request button if on Received or Return tabs */}
         {activeTab === "Purchase Request" && (
-          <button 
-            onClick={() => setIsRequestModalOpen(true)} 
+          <button
+            onClick={() => setIsRequestModalOpen(true)}
             className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
           >
             <FiPlus /> New Request
@@ -150,26 +168,28 @@ export default function PurchaseLogisticsPage() {
 
       <div className="mt-4">
         {activeTab === "Purchase Request" && (
-          <PurchaseRequestTable 
-            data={prRequests} 
+          <PurchaseRequestTable
+            data={prRequests}
             onInputChange={handleInputChange}
+            vendors={vendors}
+            stockData={stock}
             onSave={handleSaveOrder}
             onDelete={handleDelete}
           />
         )}
 
         {activeTab === "Order Place" && (
-          <OrderPlaceTable 
-            data={orderRequests} 
-            onRefresh={fetchTabData} 
+          <OrderPlaceTable
+            data={orderRequests}
+            onRefresh={fetchTabData}
             onCancel={handleCancel}
           />
         )}
 
         {activeTab === "Received Purchase" && (
-          <ReceivedPurchaseTable 
-            data={receivedRequests} 
-            onRefresh={fetchTabData} 
+          <ReceivedPurchaseTable
+            data={receivedRequests}
+            onRefresh={fetchTabData}
           />
         )}
 
@@ -177,16 +197,18 @@ export default function PurchaseLogisticsPage() {
         {activeTab === "Purchase Return" && <PurchaseReturnPage />}
       </div>
 
-      <PurchaseRequestModal 
-        isOpen={isRequestModalOpen} 
-        onClose={() => { setIsRequestModalOpen(false); fetchTabData(); }} 
+      <PurchaseRequestModal
+        isOpen={isRequestModalOpen}
+        stockData={stock}
+        onClose={() => { setIsRequestModalOpen(false); fetchTabData(); }}
       />
-      
+
       {selectedRequest && (
-        <ReceivedQtyModal 
-          isOpen={isReceivedModalOpen} 
-          request={selectedRequest} 
-          onClose={() => { setIsReceivedModalOpen(false); setSelectedRequest(null); fetchTabData(); }} 
+        <ReceivedQtyModal
+          isOpen={isReceivedModalOpen}
+          
+          request={selectedRequest}
+          onClose={() => { setIsReceivedModalOpen(false); setSelectedRequest(null); fetchTabData(); }}
         />
       )}
     </div>

@@ -11,6 +11,21 @@ async function connectDB() {
   }
 }
 
+export async function GET() {
+  try {
+    const client = await clientPromise;
+    const db = client.db("dev_oms_db");
+    
+    // Fetching from 'vendors' collection as seen in your DB screenshot
+    const vendors = await db.collection("vendors").find({}).toArray();
+    
+    return NextResponse.json(vendors);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+
 export async function POST(req: Request) {
   try {
     await connectDB();

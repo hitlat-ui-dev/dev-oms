@@ -20,12 +20,12 @@ export async function POST(req: Request) {
       unit,
       rate,
       category,
-      orderNumber // Extract this from body
+      orderNumber 
     } = body;
 
     const remainingQty = Number(orderQty) - Number(receivedQty) - Number(damageQty);
 
-    // 1. SAVE TO STOCK
+    // 1. SAVE TO STOCK (Only increment by received quantity)
     await db.collection("stock").updateOne(
       { sku: sku },
       { 
@@ -48,14 +48,30 @@ export async function POST(req: Request) {
       receivedAt: new Date()
     });
 
+    // --- NEW SECTION: SAVE TO PURCHASE RETURN ---
+    if (Number(damageQty) > 0) {
+      await db.collection("Purchase Return").insertOne({
+        originalOrderNumber: orderNumber,
+        itemName,
+        sku,
+        vendor,
+        returnQty: Number(damageQty),
+        unit,
+        rate: Number(rate),
+        totalReturnAmount: Number(damageQty) * Number(rate),
+        reason: "Damaged during delivery",
+        status: "Pending", // You can use this for tracking credit notes
+        createdAt: new Date()
+      });
+    }
+    // --------------------------------------------
+
     // 3. HANDLE REMAINING QTY
     if (remainingQty > 0) {
       const targetCollection = moveRemainingTo === "Purchase Request" 
         ? "purchase_requests" 
         : "Order place Purchase";
 
-      // If moving to Order Place, we keep the orderNumber. 
-      // If moving to Purchase Request, we usually remove it as it's a "request" again.
       const remainingData: any = {
         itemName,
         sku,

@@ -1,16 +1,16 @@
 "use client";
-import { useState, useEffect } from "react";
-import { FiX, FiShoppingCart, FiEdit3, FiLayers, FiSave, FiPackage, FiSearch } from "react-icons/fi";
+import { useState, useMemo } from "react"; // Removed useEffect since we use props now
+import { FiX, FiShoppingCart, FiEdit3, FiLayers, FiSave, FiSearch } from "react-icons/fi";
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
+  stockData: any[]; // Data passed from parent
 }
 
-export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
-  const [items, setItems] = useState<{itemName: string, unit: string, currentStock: number}[]>([]);
+export default function PurchaseRequestModal({ isOpen, onClose, stockData }: ModalProps) {
   const [loading, setLoading] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     itemName: "",
     unit: "",
@@ -19,23 +19,22 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
     status: "Purchase Request"
   });
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/items")
-        .then(res => res.json())
-        .then(data => setItems(data.items || []));
-    }
-  }, [isOpen]);
+  // 1. Find the current item in the passed stockData for stock display
+  const currentStockInfo = useMemo(() => {
+    if (!formData.itemName) return null;
+    return stockData.find(i =>
+      i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
+    );
+  }, [formData.itemName, stockData]);
 
-  // Handle manual typing and selection
   const handleTextChange = (value: string) => {
-    // Find if the typed text matches an existing item to auto-fill the unit
-    const selectedItem = items.find(i => i.itemName.toLowerCase() === value.toLowerCase());
-    
-    setFormData({ 
-      ...formData, 
-      itemName: value, // Keep the raw text the user typed
-      unit: selectedItem?.unit || formData.unit || "unit" 
+    // Find item to auto-fill the unit (e.g., NOS or KG)
+    const selectedItem = stockData.find(i => i.itemName?.toLowerCase() === value.toLowerCase());
+
+    setFormData({
+      ...formData,
+      itemName: value,
+      unit: selectedItem?.unit || formData.unit || ""
     });
   };
 
@@ -51,20 +50,20 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          itemName: formData.itemName.toUpperCase(), // Ensure consistency in DB
+          itemName: formData.itemName.toUpperCase(),
           unit: formData.unit,
           prQty: formData.qty,
           remark: formData.remark,
-          status: formData.status
+          status: formData.status,
+          // Use currentStockInfo to fill missing details for the DB
+          sku: currentStockInfo?.sku || "N/A",
+          category: currentStockInfo?.category || "General"
         }),
       });
-      
+
       if (res.ok) {
         onClose();
         setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
-      } else {
-        const errorData = await res.json();
-        alert(`Error: ${errorData.error}`);
       }
     } catch (error) {
       console.error("Save failed:", error);
@@ -78,15 +77,16 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-[2.5rem] w-full max-w-2xl overflow-hidden shadow-2xl border border-white/20">
-        
+
+        {/* Header */}
         <div className="bg-[#0f172a] p-8 text-white flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400">
-              <FiShoppingCart size={24}/>
+              <FiShoppingCart size={24} />
             </div>
             <div>
               <h2 className="text-xl font-black uppercase tracking-tight">New Purchase Request</h2>
-              <p className="text-blue-400 text-[10px] font-black tracking-widest uppercase mt-1">Automatic Route: {formData.status}</p>
+              <p className="text-blue-400 text-[10px] font-black tracking-widest uppercase mt-1">Status: {formData.status}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white transition-colors">
@@ -95,12 +95,28 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
         </div>
 
         <div className="p-8 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Search or Type Item Name</label>
+          <div className="grid grid-cols-1 gap-6">
+
+            {/* Item Name & Stock Display */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-end px-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Name</label>
+
+                {/* DISPLAY STOCK QUANTITY (e.g., 54 NOS) */}
+                {currentStockInfo && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${(currentStockInfo.totalQty || currentStockInfo.quantity || 0) > 0
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-red-100 text-red-700'
+                    }`}>
+                    {/* Check both totalQty and quantity */}
+                    {currentStockInfo.totalQty ?? currentStockInfo.quantity ?? 0} {currentStockInfo.unit} IN STOCK
+                  </span>
+                )}
+              </div>
+
               <div className="relative">
                 <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input 
+                <input
                   list="inventory-items"
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all uppercase"
                   placeholder="Start typing item name..."
@@ -108,25 +124,27 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
                   onChange={(e) => handleTextChange(e.target.value)}
                 />
                 <datalist id="inventory-items">
-                  {items.map((item, idx) => (
+                  {/* Using stockData prop for the list */}
+                  {stockData.map((item, idx) => (
                     <option key={idx} value={item.itemName}>
-                      {item.unit} stock available
+                      {item.totalQty ?? item.quantity ?? 0} {item.unit || ""} in stock
                     </option>
                   ))}
                 </datalist>
               </div>
             </div>
 
-            <div className="space-y-2 md:col-span-2">
+            {/* Quantity */}
+            <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Required Quantity</label>
               <div className="relative">
                 <FiLayers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   className="w-full pl-12 pr-16 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:border-blue-500 transition-colors"
                   placeholder="Enter Qty needed"
                   value={formData.qty || ""}
-                  onChange={(e) => setFormData({...formData, qty: Number(e.target.value)})}
+                  onChange={(e) => setFormData({ ...formData, qty: Number(e.target.value) })}
                 />
                 <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-lg">
                   {formData.unit || "Unit"}
@@ -134,33 +152,27 @@ export default function PurchaseRequestModal({ isOpen, onClose }: ModalProps) {
               </div>
             </div>
 
-            <div className="space-y-2 md:col-span-2">
+            {/* Remarks */}
+            <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Additional Remarks</label>
               <div className="relative">
                 <FiEdit3 className="absolute left-4 top-4 text-slate-400" />
-                <textarea 
+                <textarea
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none min-h-24 resize-none focus:border-blue-500 transition-colors"
-                  placeholder="Why is this being requested? (Optional)"
+                  placeholder="Optional notes..."
                   value={formData.remark}
-                  onChange={(e) => setFormData({...formData, remark: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, remark: e.target.value })}
                 />
               </div>
             </div>
           </div>
 
-          <button 
-            onClick={handleSave} 
+          <button
+            onClick={handleSave}
             disabled={loading}
             className="w-full py-5 bg-[#1d63ff] hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-blue-200 flex items-center justify-center gap-3 transition-all active:scale-[0.98]"
           >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Saving to Log...
-              </span>
-            ) : (
-              <><FiSave size={20} /> Submit Purchase Request</>
-            )}
+            {loading ? "Processing..." : <><FiSave size={20} /> Submit Request</>}
           </button>
         </div>
       </div>

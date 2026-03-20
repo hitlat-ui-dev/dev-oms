@@ -15,7 +15,9 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
   // 1. Filter Logic
   const filteredData = useMemo(() => {
     if (!Array.isArray(data)) return [];
-    return data.filter((item) => {
+    
+    // First, filter the data
+    const filtered = data.filter((item) => {
       const dateStr = new Date(item.receivedAt).toLocaleDateString('en-CA'); // yyyy-mm-dd
       const dateMatch = filterDate ? dateStr.includes(filterDate) : true;
       const itemMatch = item.itemName?.toLowerCase().includes(filterItem.toLowerCase()) || 
@@ -24,6 +26,11 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
       const catMatch = (item.category || "").toLowerCase().includes(filterCategory.toLowerCase());
       
       return dateMatch && itemMatch && vendorMatch && catMatch;
+    });
+
+    // Second, SORT to show NEWEST data first
+    return filtered.sort((a, b) => {
+      return new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
     });
   }, [data, filterDate, filterItem, filterVendor, filterCategory]);
 
