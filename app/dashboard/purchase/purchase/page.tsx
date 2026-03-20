@@ -225,6 +225,7 @@ export default function PurchaseLogisticsPage() {
         onClose={() => {
           setIsRequestModalOpen(false);
           fetchTabData();
+          
         }}
       />
 
