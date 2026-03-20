@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { FiPlus } from "react-icons/fi";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import ReceivedQtyModal from "@/components/ReceivedQtyModal";
@@ -8,38 +8,62 @@ import OrderPlaceTable from "@/components/purchase/OrderPlaceTable";
 import ReceivedPurchaseTable from "@/components/purchase/ReceivedPurchaseTable";
 import PurchaseReturnPage from "@/components/purchase/PurchaseReturnPage";
 
+// 1. Define the Interface to fix "red line" property errors
+interface StockItem {
+  _id: string;
+  sku: string;
+  itemName: string;
+  lastUpdated?: string | Date;
+  quantity: number;
+  vendor?: string;
+  category?: string;
+  unit?: string;
+  rate?: number;
+}
+
 export default function PurchaseLogisticsPage() {
+  // 2. Properly typed State variables
   const [prRequests, setPrRequests] = useState<any[]>([]);
   const [orderRequests, setOrderRequests] = useState<any[]>([]);
   const [receivedRequests, setReceivedRequests] = useState<any[]>([]);
+  const [stock, setStock] = useState<StockItem[]>([]); // Typed as StockItem array
+  const [vendors, setVendors] = useState<any[]>([]);
 
   const [activeTab, setActiveTab] = useState("Purchase Request");
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
   const [editData, setEditData] = useState<Record<string, any>>({});
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [stock, setStock] = useState([]);
 
   const fetchVendors = async () => {
-    const res = await fetch("/api/vendors");
-    const data = await res.json();
-    setVendors(data);
+    try {
+      const res = await fetch("/api/vendors");
+      const data = await res.json();
+      setVendors(data);
+    } catch (err) {
+      console.error("Vendor fetch error:", err);
+    }
   };
-  // 1. Fetch Logic (Unified)
+
+  // 3. Unified Fetch Logic with "Newest First" sorting
   const fetchTabData = async () => {
     try {
+      // Always refresh stock to keep quantities accurate
+      const stockRes = await fetch('/api/stock');
+      const stockData = await stockRes.json();
+      setStock(stockData);
+
       let endpoint = "";
       if (activeTab === "Purchase Request") endpoint = "/api/purchase/purchase-request";
       else if (activeTab === "Order Place") endpoint = "/api/purchase/order-place";
       else if (activeTab === "Received Purchase") endpoint = "/api/purchase/purchase-received";
 
-      // Exit early if it's the Return tab (it handles its own fetching)
       if (!endpoint) return;
 
       const res = await fetch(endpoint);
       const data = await res.json();
 
+      // Sort table data by creation date (Newest First)
       const safeData = Array.isArray(data)
         ? data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         : [];
@@ -53,20 +77,20 @@ export default function PurchaseLogisticsPage() {
     }
   };
 
-  useEffect(() => {
-  // Fetch your stock collection from the DB
-  const fetchStock = async () => {
-    const res = await fetch('/api/stock'); // Example API route
-    const data = await res.json();
-    setStock(data);
-  };
-  fetchStock();
-}, []);
+  // 4. Memoized Sorting for Stock (Fixes the red line error)
+  const sortedStock = useMemo(() => {
+    if (!stock || !Array.isArray(stock)) return [];
+    return [...stock].sort((a, b) => {
+      // Use fallback date string for items missing the lastUpdated field
+      const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
+      const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
+      return dateB - dateA; // Descending order
+    });
+  }, [stock]);
 
   useEffect(() => {
     fetchVendors();
     fetchTabData();
-    
   }, [activeTab]);
 
   const handleInputChange = (id: string, field: string, value: any) => {
@@ -155,7 +179,6 @@ export default function PurchaseLogisticsPage() {
           ))}
         </div>
 
-        {/* Hide New Request button if on Received or Return tabs */}
         {activeTab === "Purchase Request" && (
           <button
             onClick={() => setIsRequestModalOpen(true)}
@@ -172,7 +195,7 @@ export default function PurchaseLogisticsPage() {
             data={prRequests}
             onInputChange={handleInputChange}
             vendors={vendors}
-            stockData={stock}
+            stockData={sortedStock} 
             onSave={handleSaveOrder}
             onDelete={handleDelete}
           />
@@ -193,22 +216,27 @@ export default function PurchaseLogisticsPage() {
           />
         )}
 
-        {/* FIXED: Changed to match button casing */}
         {activeTab === "Purchase Return" && <PurchaseReturnPage />}
       </div>
 
       <PurchaseRequestModal
         isOpen={isRequestModalOpen}
-        stockData={stock}
-        onClose={() => { setIsRequestModalOpen(false); fetchTabData(); }}
+        stockData={sortedStock}
+        onClose={() => {
+          setIsRequestModalOpen(false);
+          fetchTabData();
+        }}
       />
 
       {selectedRequest && (
         <ReceivedQtyModal
           isOpen={isReceivedModalOpen}
-          
           request={selectedRequest}
-          onClose={() => { setIsReceivedModalOpen(false); setSelectedRequest(null); fetchTabData(); }}
+          onClose={() => { 
+            setIsReceivedModalOpen(false); 
+            setSelectedRequest(null); 
+            fetchTabData(); 
+          }}
         />
       )}
     </div>
