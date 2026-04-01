@@ -30,7 +30,7 @@ export default function DashboardPage() {
     { name: "Stock", path: "/dashboard/stock", sub: "MANAGE NOW", icon: <FiPackage />, color: "bg-[#00a86b]", role: ["Owner", "Manager", "Storekeeper"] },
     { name: "Orders", path: "/dashboard/orders", sub: "MANAGE NOW", icon: <FiRefreshCw />, color: "bg-[#f20505]", role: ["Owner", "Manager", "Office"] },
     { name: "Reports", path: "/dashboard/reports", sub: "MANAGE NOW", icon: <FiFileText />, color: "bg-[#8b2ef5]", role: ["Owner", "Manager"] },
-    { name: "My Companies", path: "/dashboard/companies", sub: "MANAGE NOW", icon: <FiBriefcase />, color: "bg-[#ff5100]", role: ["Owner"] },
+    // { name: "My Companies", path: "/dashboard/companies", sub: "MANAGE NOW", icon: <FiBriefcase />, color: "bg-[#ff5100]", role: ["Owner"] },
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"] },
   ];
 

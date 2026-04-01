@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiRotateCcw, FiArrowLeft } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiRotateCcw, FiArrowLeft, FiBriefcase } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 
 export default function OrdersDashboard() {
@@ -29,11 +29,19 @@ export default function OrdersDashboard() {
       path: "/dashboard/orders/sale-return",
       color: "bg-rose-600",
       shadow: "shadow-rose-200"
+    },
+    {
+      title: "My Companies",
+      desc: "Manage corporate profiles",
+      icon: <FiBriefcase size={24} />,
+      path: "/dashboard/orders/companies",
+      color: "bg-slate-800",
+      shadow: "shadow-slate-200"
     }
   ];
 
   return (
-    <div className="p-4 md:p-12 max-w-5xl mx-auto">
+    <div className="p-4 md:p-12 max-w-7xl mx-auto">
       {/* Navigation Header */}
       <button 
         onClick={() => router.push("/dashboard")} 
@@ -49,7 +57,7 @@ export default function OrdersDashboard() {
       </div>
 
       {/* Action Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
         {actions.map((item, index) => (
           <button
             key={index}
