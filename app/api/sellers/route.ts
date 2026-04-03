@@ -16,10 +16,20 @@ async function connectDB() {
 export async function GET() {
   try {
     await connectDB();
-    const sellers = await Seller.find({}).sort({ createdAt: -1 });
-    return NextResponse.json(sellers, { status: 200 });
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to fetch sellers" }, { status: 500 });
+    
+    // Check if the model exists before querying to avoid "Schema not found" errors
+    const sellers = await Seller.find({}).sort({ createdAt: -1 }).lean(); 
+    
+    // Always return an array, even if empty, to prevent frontend .map() crashes
+    return NextResponse.json(sellers || [], { status: 200 });
+  } catch (error: any) {
+    // Logging the actual error to your terminal helps you find the root cause
+    console.error("Sellers Fetch Error:", error.message);
+    
+    return NextResponse.json(
+      { error: "Failed to fetch sellers", details: error.message }, 
+      { status: 500 }
+    );
   }
 }
 
