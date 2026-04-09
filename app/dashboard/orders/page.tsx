@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiRotateCcw, FiArrowLeft, FiBriefcase } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 
 export default function OrdersDashboard() {
@@ -7,12 +7,12 @@ export default function OrdersDashboard() {
 
   const actions = [
     {
-      title: "Add Seller",
-      desc: "Register new sales person",
-      icon: <FiUserPlus size={24} />,
-      path: "/dashboard/orders/add-seller",
-      color: "bg-blue-600",
-      shadow: "shadow-blue-200"
+      title: "Orders",
+      desc: "View all sales orders",
+      icon: <FiList size={24} />,
+      path: "/dashboard/orders/orders", // Path for the list page
+      color: "bg-indigo-600",
+      shadow: "shadow-indigo-200"
     },
     {
       title: "Add Order",
@@ -23,12 +23,12 @@ export default function OrdersDashboard() {
       shadow: "shadow-emerald-200"
     },
     {
-      title: "Sale Return",
-      desc: "Manage product returns",
-      icon: <FiRotateCcw size={24} />,
-      path: "/dashboard/orders/sale-return",
-      color: "bg-rose-600",
-      shadow: "shadow-rose-200"
+      title: "Add Seller",
+      desc: "Register new sales person",
+      icon: <FiUserPlus size={24} />,
+      path: "/dashboard/orders/add-seller",
+      color: "bg-blue-600",
+      shadow: "shadow-blue-200"
     },
     {
       title: "My Companies",
