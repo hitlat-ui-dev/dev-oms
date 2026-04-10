@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { FiSearch, FiExternalLink } from "react-icons/fi";
 
+
 const TABS = [
   "ALL", "RECEIVE ORDER", "TO CHECK", "HISAB", 
   "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER"
@@ -42,7 +43,7 @@ export default function OrdersListPage() {
   if (loading) return <div className="p-12 text-center font-black animate-pulse">LOADING...</div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-[1800px] mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-full mx-auto space-y-6">
       {/* Header & Search */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -77,7 +78,7 @@ export default function OrdersListPage() {
 
       {/* Main Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xl overflow-x-auto">
-        <table className="w-full text-left border-collapse min-w-[1200px]">
+        <table className="w-full text-left border-collapse min-w-full">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               <th className="p-4 text-[10px] font-black uppercase text-slate-400 w-12">SR</th>
@@ -103,7 +104,7 @@ export default function OrdersListPage() {
                 <td className="p-4 font-bold uppercase text-slate-700">{order.instituteName}</td>
                 
                 {/* Item Details Block */}
-                <td className="p-4 min-w-[250px]">
+                <td className="p-4 min-w-60">
                   <div className="font-black text-slate-900">{order.itemName}</div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     <span className="bg-slate-100 text-[9px] px-1.5 py-0.5 rounded border border-slate-200">SKU: {order.itemId?.slice(-6) || "N/A"}</span>
@@ -128,7 +129,7 @@ export default function OrdersListPage() {
                 {/* PR/OP Qty Placeholder */}
                 <td className="p-4 text-center font-bold text-rose-500">{order.prOpQty || 0}</td>
                 
-                <td className="p-4 text-slate-400 italic max-w-[150px] truncate">{order.remark || "—"}</td>
+                <td className="p-4 text-slate-400 italic max-w-40 truncate">{order.remark || "—"}</td>
                 
                 <td className="p-4">
                   <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${getStatusColor(order.status)}`}>

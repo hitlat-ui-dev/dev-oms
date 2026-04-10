@@ -13,7 +13,7 @@ export default function OrdersDashboard() {
       path: "/dashboard/orders/orders", // Path for the list page
       color: "bg-indigo-600",
       shadow: "shadow-indigo-200"
-    },
+    }, 
     {
       title: "Add Order",
       desc: "Create new sales order",
