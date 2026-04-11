@@ -18,6 +18,7 @@ const SellerOrderSchema = new Schema({
   totalAmount: { type: Number, required: true },
   remark: { type: String },
   status: { type: String, default: "Pending" },
+  isPaid: { type: Boolean, default: false },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

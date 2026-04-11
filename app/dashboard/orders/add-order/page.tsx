@@ -181,10 +181,10 @@ export default function AddSellerOrderPage() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here) *</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here) </label>
             <input 
               type="text" 
-              required
+            
               className="w-full p-4 bg-slate-50 border rounded-2xl font-bold focus:ring-2 focus:ring-blue-400 outline-none" 
               placeholder="Paste GEM Link..."
               value={formData.contractNo}
