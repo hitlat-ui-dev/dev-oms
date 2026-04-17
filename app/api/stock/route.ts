@@ -20,6 +20,7 @@ export async function GET() {
         itemName: item.itemName || "Unknown Item",
         category: item.category || "General",
         location: item.location || "---",
+        reQty: item.reQty || 0,
         totalQty: item.quantity || 0, // Matching your 'quantity' field in DB
         unit: item.unit || "pcs",
         rateDisplay: rateDisplay

@@ -13,7 +13,7 @@ const SellerOrderSchema = new Schema({
   contractDate: { type: String },
   contractNo: { type: String }, 
   contractUrl: { type: String },
-  orderQty: { type: Number, required: true },
+  reQty: { type: Number, required: true },
   rate: { type: Number, default: 0 },
   totalAmount: { type: Number, required: true },
   remark: { type: String },

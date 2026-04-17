@@ -68,6 +68,7 @@ export default function StockPage() {
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Item Name</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Category</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Location</th>
+                <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Required Qty</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Available Qty</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right">Last Rate</th>
               </tr>
@@ -98,6 +99,14 @@ export default function StockPage() {
                       {item.location}
                     </span>
                   </td>
+                  <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
+        <div className="flex flex-col items-center">
+          <span className="text-sm font-black text-blue-800">
+            {item.reQty?.toLocaleString() || 0}
+          </span>
+          <span className="text-[8px] font-black text-slate-400 uppercase">Total Logged</span>
+        </div>
+      </td>
 
                   <td className="py-4 px-6 text-center border-r border-slate-50">
                     <div className="flex flex-col items-center">

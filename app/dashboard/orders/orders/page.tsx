@@ -27,6 +27,7 @@ export default function OrdersListPage() {
     };
     fetchOrders();
   }, []);
+console.log(orders);
 
   const handlePaymentToggle = async (orderId: string, currentStatus: boolean) => {
     try {
@@ -42,7 +43,42 @@ export default function OrdersListPage() {
       setOrders(prev => prev.map(o => o._id === orderId ? { ...o, isPaid: currentStatus } : o));
     }
   };
+  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+    // 1. Get the specific order data
+    const orderToUpdate = orders.find(o => o._id === orderId);
 
+    // 2. Specialized confirmation message for stock deduction
+    const confirmMsg = newStatus === "READY TO SHIP"
+      ? `⚠️ WARNING: Changing to READY TO SHIP will deduct ${orderToUpdate?.reQty} ${orderToUpdate?.unit} from your Stock Inventory. Proceed?`
+      : `Change status to ${newStatus}?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      // 3. Optimistic UI update
+      setOrders(prev => prev.map(o => o._id === orderId ? { ...o, status: newStatus } : o));
+
+      // 4. Send update to API
+      const res = await fetch(`/api/seller-orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: newStatus,
+          // We pass these just in case the backend needs them for matching
+          itemId: orderToUpdate?.itemId,
+          itemName: orderToUpdate?.itemName
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to update status");
+
+    } catch (err) {
+      alert("Error updating status. Please refresh the page.");
+      // Revert UI on error
+      const originalOrders = await (await fetch("/api/seller-orders")).json();
+      setOrders(originalOrders);
+    }
+  };
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
       const matchesStatus = activeTab === "ALL" || order.status === activeTab;
@@ -81,11 +117,10 @@ export default function OrdersListPage() {
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap ${
-              activeTab === tab 
-                ? "bg-slate-900 text-white shadow-md" 
+            className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap ${activeTab === tab
+                ? "bg-slate-900 text-white shadow-md"
                 : "bg-slate-50 text-slate-500 hover:bg-slate-200"
-            }`}
+              }`}
           >
             {tab}
           </button>
@@ -107,7 +142,8 @@ export default function OrdersListPage() {
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Cat.</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Item Details</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Contract</th>
-              <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 text-center">Qty</th>
+              <th className="px-3 py-3 text-[11px] font-bold uppercase text-slate-600 text-center">PR - OP Qty</th>
+              <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 text-center">O-Qty</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 text-right">Rate</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 text-right">Total</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 text-center">Status</th>
@@ -138,14 +174,14 @@ export default function OrdersListPage() {
 
                 <td className="px-3 py-2 font-black text-blue-800/60 uppercase">{order.category}</td>
 
-                <td className="px-3 py-2 max-w-[200px]">
+                <td className="px-3 py-2 max-w-52">
                   <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
                   <div className="text-[9px] text-slate-400">SKU: {order.itemId?.slice(-6)}</div>
                 </td>
 
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
-                    <span className="truncate max-w-[100px] font-medium text-slate-600">{order.contractNo}</span>
+                    <span className="truncate max-w-24 font-medium text-slate-600">{order.contractNo}</span>
                     {order.contractUrl && (
                       <a href={order.contractUrl} target="_blank" className="text-blue-500">
                         <FiExternalLink size={11} />
@@ -153,9 +189,19 @@ export default function OrdersListPage() {
                     )}
                   </div>
                 </td>
-
+                <td className="px-3 py-2 text-center border-x border-slate-50">
+  <div className="flex flex-col items-center">
+    <span className="font-black text-slate-800 text-[12px]">
+      {order.prQty} — {order.opQty}
+    </span>
+    <div className="flex gap-2 text-[7px] font-bold text-slate-400 uppercase tracking-tighter">
+      <span>PR</span>
+      <span>OP</span>
+    </div>
+  </div>
+</td>
                 <td className="px-3 py-2 text-center leading-tight">
-                  <div className="font-black text-[12px]">{order.orderQty}</div>
+                  <div className="font-black text-[12px]">{order.reQty}</div>
                   <div className="text-[9px] font-bold text-slate-400 uppercase">{order.unit}</div>
                 </td>
 
@@ -163,9 +209,34 @@ export default function OrdersListPage() {
                 <td className="px-3 py-2 font-black text-slate-900 text-right">₹{order.totalAmount?.toLocaleString()}</td>
 
                 <td className="px-3 py-2 text-center">
-                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getStatusColor(order.status)}`}>
-                    {order.status || "PENDING"}
-                  </span>
+                  {activeTab === "TO CHECK" || activeTab === "READY TO SHIP" ? (
+                    <select
+                      className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border cursor-pointer outline-none ${getStatusColor(order.status)}`}
+                      value={order.status}
+                      onChange={(e) => handleStatusUpdate(order._id, e.target.value)}
+                    >
+                      {activeTab === "TO CHECK" && (
+                        <>
+                          <option value="TO CHECK">TO CHECK</option>
+                          <option value="HISAB">HISAB</option>
+                          <option value="READY TO SHIP">READY TO SHIP</option>
+                          <option value="CANCELL ORDER">CANCELL</option>
+                        </>
+                      )}
+                      {activeTab === "READY TO SHIP" && (
+                        <>
+                          <option value="READY TO SHIP">READY TO SHIP</option>
+                          <option value="DELIVERY">DELIVERY</option>
+                          <option value="HISAB">HISAB</option>
+                          <option value="CANCELL ORDER">CANCEL</option>
+                        </>
+                      )}
+                    </select>
+                  ) : (
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getStatusColor(order.status)}`}>
+                      {order.status || "PENDING"}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
