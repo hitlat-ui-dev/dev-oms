@@ -19,6 +19,8 @@ const SellerOrderSchema = new Schema({
   remark: { type: String },
   status: { type: String, default: "Pending" },
   isPaid: { type: Boolean, default: false },
+  transportName: { type: String, default: "" },
+transportRemark: { type: String, default: "" },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

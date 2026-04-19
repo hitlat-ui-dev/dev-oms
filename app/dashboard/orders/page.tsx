@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 
 export default function OrdersDashboard() {
@@ -31,6 +31,14 @@ export default function OrdersDashboard() {
       shadow: "shadow-blue-200"
     },
     {
+      title: "Transpoter",
+      desc: "Register logistics partner",
+      icon: <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" height="24" width="24" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>,
+      path: "/dashboard/orders/add-transporter",
+      color: "bg-fuchsia-600", // Distinct purple/pink color
+      shadow: "shadow-fuchsia-200"
+    },
+    {
       title: "My Companies",
       desc: "Manage corporate profiles",
       icon: <FiBriefcase size={24} />,
@@ -57,12 +65,12 @@ export default function OrdersDashboard() {
       </div>
 
       {/* Action Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
         {actions.map((item, index) => (
           <button
             key={index}
             onClick={() => router.push(item.path)}
-            className="group relative bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 text-left overflow-hidden"
+            className="group relative bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 text-left overflow-hidden"
           >
             {/* Background Decoration */}
             <div className={`absolute -right-4 -top-4 w-24 h-24 ${item.color} opacity-[0.03] rounded-full group-hover:scale-150 transition-transform duration-500`} />
@@ -80,9 +88,9 @@ export default function OrdersDashboard() {
               </p>
             </div>
 
-            <div className="mt-8 flex items-center text-[10px] font-black text-blue-600 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* <div className="mt-8 flex items-center text-[10px] font-black text-blue-600 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
               Open Module →
-            </div>
+            </div> */}
           </button>
         ))}
       </div>
