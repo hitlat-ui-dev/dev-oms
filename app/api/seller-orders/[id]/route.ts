@@ -9,25 +9,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
 
-    // Ensure Mongoose is connected for the Model queries
     if (mongoose.connection.readyState !== 1) {
       await mongoose.connect(process.env.MONGODB_URI as string);
     }
 
     const updateData = await req.json();
 
-    // 1. Find Original
+    // 1. Find Original Order
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-    // --- LOGIC A: PARTIAL RETURN (SPLIT ORDER) ---
+    // ================================================================
+    // LOGIC A: PARTIAL RETURN (SPLIT ORDER)
+    // ================================================================
     if (updateData.status === "RETURN ORDER" && updateData.isPartial) {
       const returnQty = Number(updateData.reQty);
       const remainingQty = originalOrder.reQty - returnQty;
 
-      // Create a clean object for the new return record
       const returnOrderObj = originalOrder.toObject();
-      delete returnOrderObj._id; // Remove original ID so Mongo creates a new one
+      delete returnOrderObj._id;
       if (returnOrderObj.createdAt) delete returnOrderObj.createdAt;
       if (returnOrderObj.updatedAt) delete returnOrderObj.updatedAt;
 
@@ -36,24 +36,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         reQty: returnQty,
         totalAmount: returnQty * originalOrder.rate,
         status: "RETURN ORDER",
-        orderNo: `${originalOrder.orderNo}-R`, // Unique suffix
+        orderNo: `${originalOrder.orderNo}-R`,
         isPaid: false
       };
 
       await SellerOrder.create(returnOrderData);
 
-      // Update original order to represent only what the customer kept
       const updatedOriginal = await SellerOrder.findByIdAndUpdate(
         id,
         {
           reQty: remainingQty,
           totalAmount: remainingQty * originalOrder.rate,
-          // Status stays "DELIVERY"
         },
         { new: true }
       );
 
-      // Add partial quantity back to stock
       const itemName = originalOrder.itemName?.trim();
       if (itemName) {
         const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
@@ -63,7 +60,74 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json(updatedOriginal, { status: 200 });
     }
 
-    // --- LOGIC B: STANDARD UPDATE (FULL RETURN / STATUS CHANGE) ---
+    // ================================================================
+    // LOGIC C: PARTIAL READY TO SHIP (SPLIT ORDER)
+    // ================================================================
+    if (updateData.status === "READY TO SHIP" && updateData.isPartialFulfillment) {
+      const shipQty = Number(updateData.shipQty);
+      const remainingQty = originalOrder.reQty - shipQty;
+
+      // 1. Create the Shipped Child Order
+      const shippedOrderObj = originalOrder.toObject();
+      delete shippedOrderObj._id;
+      if (shippedOrderObj.createdAt) delete shippedOrderObj.createdAt;
+      if (shippedOrderObj.updatedAt) delete shippedOrderObj.updatedAt;
+
+      const shippedOrderData = {
+        ...shippedOrderObj,
+        reQty: shipQty,
+        totalAmount: shipQty * originalOrder.rate,
+        status: "READY TO SHIP",
+        orderNo: `${originalOrder.orderNo}-P1`,
+      };
+      await SellerOrder.create(shippedOrderData);
+
+      // 2. Update Original Order (Keep in TO CHECK with leftover qty)
+      const updatedOriginal = await SellerOrder.findByIdAndUpdate(
+        id,
+        {
+          reQty: remainingQty,
+          totalAmount: remainingQty * originalOrder.rate,
+        },
+        { new: true }
+      );
+
+      // 3. Deduct ONLY the shipped amount from stock
+      const itemName = originalOrder.itemName?.trim();
+      if (itemName) {
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+        await db.collection("stock").updateOne(stockFilter, { 
+          $inc: { quantity: -shipQty } 
+        });
+      }
+
+      return NextResponse.json(updatedOriginal, { status: 200 });
+    }
+
+    // ================================================================
+    // LOGIC B: STANDARD UPDATE (FULL STATUS CHANGE)
+    // ================================================================
+    
+    // 1. STOCK CHECK: Only for full transitions to Ready to Ship
+    if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
+      const itemName = originalOrder.itemName?.trim();
+      const orderQty = Number(updateData.reQty || originalOrder.reQty || 0);
+
+      if (itemName) {
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+        const stockItem = await db.collection("stock").findOne(stockFilter);
+
+        if (!stockItem || (stockItem.quantity || 0) < orderQty) {
+          const available = stockItem?.quantity || 0;
+          return NextResponse.json(
+            { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` }, 
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    // 2. Perform standard update
     const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
 
     const adjustQty = Number(updateData.reQty || updated.reQty || 0);
@@ -84,17 +148,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
       } 
       else if (updateData.activeTab === "READY TO SHIP") {
-        // Only trigger for full returns or cancellations in this block
         if (["HISAB", "CANCELL ORDER", "RETURN ORDER"].includes(updateData.status)) {
           await db.collection("stock").updateOne(stockFilter, { 
             $inc: { quantity: adjustQty } 
           });
-          console.log(`✅ ${updateData.status}: Restored ${adjustQty} to stock.`);
         }
       }
     }
 
     return NextResponse.json(updated, { status: 200 });
+
   } catch (error: any) {
     console.error("PATCH Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,5 +1,5 @@
 "use client";
-import AddItemModal from "@/components/AddItemModal";
+import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { FiSearch, FiExternalLink, FiTruck, FiRotateCcw } from "react-icons/fi";
 
@@ -10,7 +10,7 @@ const TABS = [
 
 export default function OrdersListPage() {
   const [orders, setOrders] = useState<any[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showOrderModal, setShowOrderModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
@@ -23,6 +23,9 @@ export default function OrdersListPage() {
   });
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnQty, setReturnQty] = useState(0);
+  const [showPartialShipModal, setShowPartialShipModal] = useState(false);
+  const [shipQty, setShipQty] = useState(0);
+  const [availableStock, setAvailableStock] = useState(0);
 
   // 1. Move fetchOrders outside of useEffect so other functions can call it
   const fetchOrders = useCallback(async () => {
@@ -66,45 +69,102 @@ export default function OrdersListPage() {
       if (!res.ok) throw new Error("Failed to save");
     } catch (err) {
       alert("Payment status failed to save. Reverting...");
-      fetchOrders(); 
+      fetchOrders();
     }
   };
 
   const handleStatusUpdate = async (orderId: string, newStatus: string) => {
-    const orderToUpdate = orders.find(o => o._id === orderId);
-    if (!orderToUpdate) return;
+  const orderToUpdate = orders.find(o => o._id === orderId);
+  if (!orderToUpdate) return;
 
-    if (newStatus === "DELIVERY") {
-      setSelectedOrderId(orderId);
-      setShowDeliveryModal(true);
-      return;
-    }
-    if (newStatus === "RETURN ORDER") {
-      setSelectedOrderId(orderId);
-      setReturnQty(orderToUpdate.reQty);
-      setShowReturnModal(true);
-      return;
-    }
-
-    if (!window.confirm(`Change status to ${newStatus}?`)) return;
-
+  // --- NEW LOGIC FOR PARTIAL SHIPMENT CHECK ---
+  if (newStatus === "READY TO SHIP" && activeTab === "TO CHECK") {
     try {
-      const res = await fetch(`/api/seller-orders/${orderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: newStatus,
-          activeTab: activeTab,
-          itemName: orderToUpdate.itemName,
-          reQty: orderToUpdate.reQty,
-        }),
-      });
-      if (res.ok) fetchOrders();
+      // Fetch current stock for this item
+      const stockRes = await fetch(`/api/stock?search=${orderToUpdate.itemName}`);
+      const stocks = await stockRes.json();
+      const currentStock = stocks.find((s: any) => s.itemName === orderToUpdate.itemName)?.quantity || 0;
+
+      if (currentStock < orderToUpdate.reQty) {
+        setSelectedOrderId(orderId);
+        setAvailableStock(currentStock);
+        setShipQty(currentStock); // Pre-fill with what we have
+        setShowPartialShipModal(true);
+        return; // Stop standard update and wait for modal
+      }
     } catch (err) {
-      alert("Error updating status.");
+      console.error("Stock check failed", err);
+    }
+  }
+
+  // Standard Logic remains below...
+  if (newStatus === "DELIVERY") {
+    setSelectedOrderId(orderId);
+    setShowDeliveryModal(true);
+    return;
+  }
+  if (newStatus === "RETURN ORDER") {
+    setSelectedOrderId(orderId);
+    setReturnQty(orderToUpdate.reQty);
+    setShowReturnModal(true);
+    return;
+  }
+
+  if (!window.confirm(`Change status to ${newStatus}?`)) return;
+
+  try {
+    const res = await fetch(`/api/seller-orders/${orderId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: newStatus,
+        activeTab: activeTab,
+        itemName: orderToUpdate.itemName,
+        reQty: orderToUpdate.reQty,
+      }),
+    });
+    
+    if (res.ok) {
+      fetchOrders();
+    } else {
+      const errorData = await res.json();
+      alert(errorData.error || "Something went wrong");
       fetchOrders();
     }
+  } catch (err) {
+    alert("Error updating status.");
+    fetchOrders();
+  }
   };
+  const submitPartialShipment = async () => {
+  const orderToUpdate = orders.find(o => o._id === selectedOrderId);
+  if (!orderToUpdate) return;
+
+  if (shipQty <= 0) return alert("Shipping quantity must be greater than 0");
+  if (shipQty >= orderToUpdate.reQty) return alert("For full quantity, use standard update");
+
+  try {
+    const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "READY TO SHIP",
+        isPartialFulfillment: true,
+        shipQty: shipQty,
+        itemName: orderToUpdate.itemName
+      }),
+    });
+
+    if (res.ok) {
+      setShowPartialShipModal(false);
+      setSelectedOrderId(null);
+      fetchOrders();
+      alert(`Split Successful: ${shipQty} moved to Ready to Ship. Remaining kept in To Check.`);
+    }
+  } catch (err) {
+    alert("Error processing partial shipment");
+  }
+};
 
   const submitDelivery = async () => {
     if (!deliveryData.transportName) return alert("Please select a transporter");
@@ -130,14 +190,14 @@ export default function OrdersListPage() {
       alert("Error saving delivery details");
     }
   };
-  
+
   const submitReturn = async () => {
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
 
     // Safety check: Don't allow returning more than available
     if (returnQty > orderToUpdate.reQty) {
-        return alert("Return quantity cannot exceed order quantity");
+      return alert("Return quantity cannot exceed order quantity");
     }
 
     const isPartial = returnQty < orderToUpdate.reQty;
@@ -149,7 +209,7 @@ export default function OrdersListPage() {
         body: JSON.stringify({
           status: "RETURN ORDER",
           activeTab: "READY TO SHIP", // Tab context for stock logic
-          reQty: returnQty, 
+          reQty: returnQty,
           isPartial: isPartial,
           itemName: orderToUpdate.itemName
         }),
@@ -158,7 +218,7 @@ export default function OrdersListPage() {
       if (res.ok) {
         setShowReturnModal(false);
         setSelectedOrderId(null);
-        fetchOrders(); 
+        fetchOrders();
         alert(isPartial ? `Split Successful: ${returnQty} returned, ${orderToUpdate.reQty - returnQty} remains delivered.` : "Order fully returned.");
       }
     } catch (err) {
@@ -186,12 +246,11 @@ export default function OrdersListPage() {
         <div>
           <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
           <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
-          
+
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
-        >Add New Item</button>
+        <button onClick={() => setShowOrderModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded">
+          Add New Order
+        </button>
         <div className="relative">
           <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
           <input
@@ -270,7 +329,7 @@ export default function OrdersListPage() {
                 </td>
                 <td className="px-3 py-2 font-bold text-slate-500 text-right">₹{order.rate}</td>
                 <td className="px-3 py-2 font-black text-slate-900 text-right">₹{order.totalAmount?.toLocaleString()}</td>
-                
+
                 {activeTab === "DELIVERY" && (
                   <td className="px-3 py-2 min-w-[180px]">
                     <div className="flex flex-col gap-0.5">
@@ -327,47 +386,51 @@ export default function OrdersListPage() {
         </table>
       </div>
 
-      <AddItemModal
-  isOpen={isModalOpen} 
-  onClose={() => setIsModalOpen(false)} 
-      />
-      
+      {showOrderModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <SellerOrderForm
+            isModal={true}
+            onClose={() => setShowOrderModal(false)}
+          />
+        </div>
+      )}
+
       {/* --- MODALS --- */}
       {showDeliveryModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl border border-slate-100">
-             <div className="flex items-center gap-3 mb-6">
-               <div className="p-3 bg-emerald-500 text-white rounded-2xl">
-                 <FiTruck size={24} />
-               </div>
-               <h2 className="text-xl font-black uppercase tracking-tight">Delivery Details</h2>
-             </div>
-             <div className="space-y-5">
-               <div className="space-y-1">
-                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Select Transport</label>
-                 <select
-                   className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500"
-                   value={deliveryData.transportName}
-                   onChange={(e) => setDeliveryData({ ...deliveryData, transportName: e.target.value })}
-                 >
-                   <option value="">Choose Transporter...</option>
-                   {transporters.map(t => <option key={t._id} value={t.name}>{t.name}</option>)}
-                 </select>
-               </div>
-               <div className="space-y-1">
-                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Remark</label>
-                 <textarea
-                   className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none min-h-[100px] resize-none"
-                   placeholder="LR No, Vehicle No, etc."
-                   value={deliveryData.transportRemark}
-                   onChange={(e) => setDeliveryData({ ...deliveryData, transportRemark: e.target.value })}
-                 />
-               </div>
-               <div className="flex gap-3 pt-2">
-                 <button onClick={() => setShowDeliveryModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
-                 <button onClick={submitDelivery} className="flex-1 p-4 bg-emerald-500 text-white rounded-2xl font-black uppercase text-[10px]">Confirm</button>
-               </div>
-             </div>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-emerald-500 text-white rounded-2xl">
+                <FiTruck size={24} />
+              </div>
+              <h2 className="text-xl font-black uppercase tracking-tight">Delivery Details</h2>
+            </div>
+            <div className="space-y-5">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Select Transport</label>
+                <select
+                  className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={deliveryData.transportName}
+                  onChange={(e) => setDeliveryData({ ...deliveryData, transportName: e.target.value })}
+                >
+                  <option value="">Choose Transporter...</option>
+                  {transporters.map(t => <option key={t._id} value={t.name}>{t.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Remark</label>
+                <textarea
+                  className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none min-h-[100px] resize-none"
+                  placeholder="LR No, Vehicle No, etc."
+                  value={deliveryData.transportRemark}
+                  onChange={(e) => setDeliveryData({ ...deliveryData, transportRemark: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowDeliveryModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+                <button onClick={submitDelivery} className="flex-1 p-4 bg-emerald-500 text-white rounded-2xl font-black uppercase text-[10px]">Confirm</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -409,6 +472,49 @@ export default function OrdersListPage() {
           </div>
         </div>
       )}
+      {/* --- PARTIAL SHIPMENT MODAL --- */}
+{showPartialShipModal && (
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+    <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="p-3 bg-blue-600 text-white rounded-2xl"><FiTruck size={24} /></div>
+        <div>
+          <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Partial Ship</h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase">Insufficient Stock Split</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="bg-slate-50 p-3 rounded-2xl">
+          <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Order Qty</p>
+          <p className="font-black text-slate-800 text-lg">{orders.find(o => o._id === selectedOrderId)?.reQty}</p>
+        </div>
+        <div className="bg-blue-50 p-3 rounded-2xl">
+          <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
+          <p className="font-black text-blue-800 text-lg">{availableStock}</p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Qty to Ship Now</label>
+          <input
+            type="number"
+            className="w-full p-4 bg-slate-100 border-none rounded-2xl font-black text-xl text-center outline-none focus:ring-2 focus:ring-blue-500"
+            value={shipQty}
+            onChange={(e) => setShipQty(Number(e.target.value))}
+          />
+          <p className="text-[9px] text-center text-slate-400 mt-2 font-bold">The remaining will stay in "TO CHECK"</p>
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <button onClick={() => setShowPartialShipModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+          <button onClick={submitPartialShipment} className="flex-1 p-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Ship Partial</button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
