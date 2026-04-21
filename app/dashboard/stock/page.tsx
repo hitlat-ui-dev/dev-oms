@@ -1,4 +1,5 @@
 "use client";
+import AddItemModal from "@/components/AddItemModal";
 import { useState, useEffect, useMemo } from "react";
 import { FiMapPin, FiTag, FiPackage, FiTrendingUp, FiSearch } from "react-icons/fi";
 
@@ -6,6 +7,7 @@ export default function StockPage() {
   const [stock, setStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const fetchStock = async () => {
     try {
@@ -38,7 +40,10 @@ export default function StockPage() {
           <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Inventory Master List</h1>
           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Warehouse Live Stock Balance</p>
         </div>
-        
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
+        >Add New Item</button>
         <div className="flex items-center gap-4 w-full md:w-auto">
           {/* Search Bar */}
           <div className="relative flex-1 md:w-64">
@@ -139,6 +144,10 @@ export default function StockPage() {
           </div>
         )}
       </div>
+      <AddItemModal
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+            />
     </div>
   );
 }

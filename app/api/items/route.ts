@@ -34,6 +34,27 @@ export async function POST(req: Request) {
     await connectDB();
     const data = await req.json();
     const newItem = await Item.create(data);
+
+    // Add in stock
+    if (!mongoose.connection.db) {
+      throw new Error("Database connection not ready");
+    }
+    const stockCollection = mongoose.connection.db.collection("stock");
+
+    await stockCollection.insertOne({
+      itemId: newItem._id,
+      sku: newItem.sku, // e.g., "S1107"
+      itemName: newItem.itemName,
+      category: newItem.category,
+      unit: newItem.unit,
+      location: newItem.location || "---",
+      quantity: 0,
+      rate: 0,
+      vendor: "New Registration",
+      reQty: 0,
+      lastUpdated: new Date()
+    });
+
     return NextResponse.json(newItem, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: "Duplicate SKU or Invalid Data" }, { status: 400 });

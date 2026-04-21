@@ -7,7 +7,7 @@ export async function GET() {
     const db = client.db("dev_oms_db");
 
     // Fetch all stock items
-    const stockItems = await db.collection("stock").find({}).toArray();
+    const stockItems = await db.collection("stock").find({}).sort({ _id: -1 }).toArray();
 
     // Format data for the frontend
     const formattedStock = stockItems.map((item) => {

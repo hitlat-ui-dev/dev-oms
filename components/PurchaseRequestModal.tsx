@@ -39,6 +39,21 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
   };
 
   const handleSave = async () => {
+    const isValidItem = stockData.some(
+    (i) => i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
+  );
+
+  if (!isValidItem) {
+    alert("Please select a valid item from the list. You cannot create a request for a new item here.");
+    return;
+  }
+
+  if (formData.qty <= 0) {
+    alert("Please enter a valid quantity.");
+    return;
+  }
+
+  setLoading(true);
     if (!formData.itemName || formData.qty <= 0) {
       alert("Please enter an item name and quantity.");
       return;

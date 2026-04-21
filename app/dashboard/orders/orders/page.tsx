@@ -1,4 +1,5 @@
 "use client";
+import AddItemModal from "@/components/AddItemModal";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { FiSearch, FiExternalLink, FiTruck, FiRotateCcw } from "react-icons/fi";
 
@@ -9,6 +10,7 @@ const TABS = [
 
 export default function OrdersListPage() {
   const [orders, setOrders] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
@@ -184,7 +186,12 @@ export default function OrdersListPage() {
         <div>
           <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
           <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
+          
         </div>
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
+        >Add New Item</button>
         <div className="relative">
           <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
           <input
@@ -320,6 +327,11 @@ export default function OrdersListPage() {
         </table>
       </div>
 
+      <AddItemModal
+  isOpen={isModalOpen} 
+  onClose={() => setIsModalOpen(false)} 
+      />
+      
       {/* --- MODALS --- */}
       {showDeliveryModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
