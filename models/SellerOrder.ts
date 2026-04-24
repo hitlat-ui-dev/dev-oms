@@ -10,6 +10,7 @@ const SellerOrderSchema = new Schema({
   itemName: { type: String, required: true },
   category: { type: String },
   unit: { type: String },
+  sku: { type: String },
   contractDate: { type: String },
   contractNo: { type: String }, 
   contractUrl: { type: String },

@@ -1,7 +1,7 @@
 "use client";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { FiSearch, FiExternalLink, FiTruck, FiRotateCcw } from "react-icons/fi";
+import { FiSearch, FiExternalLink, FiTruck, FiRotateCcw, FiEdit } from "react-icons/fi";
 
 const TABS = [
   "ALL", "TO CHECK", "HISAB",
@@ -26,6 +26,8 @@ export default function OrdersListPage() {
   const [showPartialShipModal, setShowPartialShipModal] = useState(false);
   const [shipQty, setShipQty] = useState(0);
   const [availableStock, setAvailableStock] = useState(0);
+  const [editingOrder, setEditingOrder] = useState<any>(null);
+  const [stocks, setStocks] = useState<any[]>([]);
 
   // 1. Move fetchOrders outside of useEffect so other functions can call it
   const fetchOrders = useCallback(async () => {
@@ -57,6 +59,17 @@ export default function OrdersListPage() {
     };
     loadTransporters();
   }, []);
+  // Add this to your existing useEffect that fetches orders
+const fetchStocks = async () => {
+  const res = await fetch("/api/stock");
+  const data = await res.json();
+  setStocks(Array.isArray(data) ? data : []);
+};
+
+useEffect(() => {
+  fetchOrders();
+  fetchStocks(); // Load stocks so we can look up quantities
+}, []);
 
   const handlePaymentToggle = async (orderId: string, currentStatus: boolean) => {
     try {
@@ -74,97 +87,97 @@ export default function OrdersListPage() {
   };
 
   const handleStatusUpdate = async (orderId: string, newStatus: string) => {
-  const orderToUpdate = orders.find(o => o._id === orderId);
-  if (!orderToUpdate) return;
+    const orderToUpdate = orders.find(o => o._id === orderId);
+    if (!orderToUpdate) return;
 
-  // --- NEW LOGIC FOR PARTIAL SHIPMENT CHECK ---
-  if (newStatus === "READY TO SHIP" && activeTab === "TO CHECK") {
+    // --- NEW LOGIC FOR PARTIAL SHIPMENT CHECK ---
+    if (newStatus === "READY TO SHIP" && activeTab === "TO CHECK") {
+      try {
+        // Fetch current stock for this item
+        const stockRes = await fetch(`/api/stock?search=${orderToUpdate.itemName}`);
+        const stocks = await stockRes.json();
+        const currentStock = stocks.find((s: any) => s.itemName === orderToUpdate.itemName)?.quantity || 0;
+
+        if (currentStock < orderToUpdate.reQty) {
+          setSelectedOrderId(orderId);
+          setAvailableStock(currentStock);
+          setShipQty(currentStock); // Pre-fill with what we have
+          setShowPartialShipModal(true);
+          return; // Stop standard update and wait for modal
+        }
+      } catch (err) {
+        console.error("Stock check failed", err);
+      }
+    }
+
+    // Standard Logic remains below...
+    if (newStatus === "DELIVERY") {
+      setSelectedOrderId(orderId);
+      setShowDeliveryModal(true);
+      return;
+    }
+    if (newStatus === "RETURN ORDER") {
+      setSelectedOrderId(orderId);
+      setReturnQty(orderToUpdate.reQty);
+      setShowReturnModal(true);
+      return;
+    }
+
+    if (!window.confirm(`Change status to ${newStatus}?`)) return;
+
     try {
-      // Fetch current stock for this item
-      const stockRes = await fetch(`/api/stock?search=${orderToUpdate.itemName}`);
-      const stocks = await stockRes.json();
-      const currentStock = stocks.find((s: any) => s.itemName === orderToUpdate.itemName)?.quantity || 0;
+      const res = await fetch(`/api/seller-orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: newStatus,
+          activeTab: activeTab,
+          itemName: orderToUpdate.itemName,
+          reQty: orderToUpdate.reQty,
+        }),
+      });
 
-      if (currentStock < orderToUpdate.reQty) {
-        setSelectedOrderId(orderId);
-        setAvailableStock(currentStock);
-        setShipQty(currentStock); // Pre-fill with what we have
-        setShowPartialShipModal(true);
-        return; // Stop standard update and wait for modal
+      if (res.ok) {
+        fetchOrders();
+      } else {
+        const errorData = await res.json();
+        alert(errorData.error || "Something went wrong");
+        fetchOrders();
       }
     } catch (err) {
-      console.error("Stock check failed", err);
-    }
-  }
-
-  // Standard Logic remains below...
-  if (newStatus === "DELIVERY") {
-    setSelectedOrderId(orderId);
-    setShowDeliveryModal(true);
-    return;
-  }
-  if (newStatus === "RETURN ORDER") {
-    setSelectedOrderId(orderId);
-    setReturnQty(orderToUpdate.reQty);
-    setShowReturnModal(true);
-    return;
-  }
-
-  if (!window.confirm(`Change status to ${newStatus}?`)) return;
-
-  try {
-    const res = await fetch(`/api/seller-orders/${orderId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: newStatus,
-        activeTab: activeTab,
-        itemName: orderToUpdate.itemName,
-        reQty: orderToUpdate.reQty,
-      }),
-    });
-    
-    if (res.ok) {
-      fetchOrders();
-    } else {
-      const errorData = await res.json();
-      alert(errorData.error || "Something went wrong");
+      alert("Error updating status.");
       fetchOrders();
     }
-  } catch (err) {
-    alert("Error updating status.");
-    fetchOrders();
-  }
   };
   const submitPartialShipment = async () => {
-  const orderToUpdate = orders.find(o => o._id === selectedOrderId);
-  if (!orderToUpdate) return;
+    const orderToUpdate = orders.find(o => o._id === selectedOrderId);
+    if (!orderToUpdate) return;
 
-  if (shipQty <= 0) return alert("Shipping quantity must be greater than 0");
-  if (shipQty >= orderToUpdate.reQty) return alert("For full quantity, use standard update");
+    if (shipQty <= 0) return alert("Shipping quantity must be greater than 0");
+    if (shipQty >= orderToUpdate.reQty) return alert("For full quantity, use standard update");
 
-  try {
-    const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: "READY TO SHIP",
-        isPartialFulfillment: true,
-        shipQty: shipQty,
-        itemName: orderToUpdate.itemName
-      }),
-    });
+    try {
+      const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "READY TO SHIP",
+          isPartialFulfillment: true,
+          shipQty: shipQty,
+          itemName: orderToUpdate.itemName
+        }),
+      });
 
-    if (res.ok) {
-      setShowPartialShipModal(false);
-      setSelectedOrderId(null);
-      fetchOrders();
-      alert(`Split Successful: ${shipQty} moved to Ready to Ship. Remaining kept in To Check.`);
+      if (res.ok) {
+        setShowPartialShipModal(false);
+        setSelectedOrderId(null);
+        fetchOrders();
+        alert(`Split Successful: ${shipQty} moved to Ready to Ship. Remaining kept in To Check.`);
+      }
+    } catch (err) {
+      alert("Error processing partial shipment");
     }
-  } catch (err) {
-    alert("Error processing partial shipment");
-  }
-};
+  };
 
   const submitDelivery = async () => {
     if (!deliveryData.transportName) return alert("Please select a transporter");
@@ -282,7 +295,7 @@ export default function OrdersListPage() {
             <tr className="divide-x divide-slate-200">
               {activeTab === "ALL" && <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">Paid</th>}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Order No</th>
-              <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Date</th>
+              {/* <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Date</th> */}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Firm / Buyer</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Cat.</th>
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Item Details</th>
@@ -303,8 +316,10 @@ export default function OrdersListPage() {
                     <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer" checked={order.isPaid || false} onChange={() => handlePaymentToggle(order._id, order.isPaid)} />
                   </td>
                 )}
-                <td className="px-3 py-2 font-black text-blue-600">{order.orderNo}</td>
-                <td className="px-3 py-2 font-bold whitespace-nowrap text-slate-500">{order.contractDate || "N/A"}</td>
+                <td className="px-3 py-2 font-black text-blue-600">{order.orderNo}
+                  <span className="text-[9px] font-bold text-slate-400 block">{order.contractDate || "N/A"}</span>
+                </td>
+                
                 <td className="px-3 py-2 max-w-[160px]">
                   <div className="font-black text-slate-800 uppercase truncate leading-tight">{order.firmCode}</div>
                   <div className="text-[9px] font-bold text-slate-400 uppercase truncate">{order.instituteName}</div>
@@ -312,7 +327,12 @@ export default function OrdersListPage() {
                 <td className="px-3 py-2 font-black text-blue-800/60 uppercase">{order.category}</td>
                 <td className="px-3 py-2 max-w-52">
                   <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
-                  <div className="text-[9px] text-slate-400">SKU: {order.itemId?.slice(-6)}</div>
+                  <div className="text-[9px] text-slate-400">SKU: {order.sku},
+                    <b className="text-green-500">Stock: </b>
+                    <span className="font-bold text-slate-700">
+                      {stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
+                    </span>
+                  </div>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1">
@@ -379,6 +399,11 @@ export default function OrdersListPage() {
                       {order.status || "PENDING"}
                     </span>
                   )}
+                  {activeTab === "TO CHECK" && (
+                    <button onClick={() => { setEditingOrder(order); setShowOrderModal(true); }} className="hover:underline hover:text-blue-800 float-right text-xs transition-all text-red-600">
+                      <FiEdit />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -390,7 +415,12 @@ export default function OrdersListPage() {
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <SellerOrderForm
             isModal={true}
-            onClose={() => setShowOrderModal(false)}
+            onClose={() => {
+              setShowOrderModal(false);
+              setEditingOrder(null); // Clear data after closing
+              fetchOrders();
+            }}
+            initialData={editingOrder} // Pass the order to the form
           />
         </div>
       )}
@@ -473,48 +503,48 @@ export default function OrdersListPage() {
         </div>
       )}
       {/* --- PARTIAL SHIPMENT MODAL --- */}
-{showPartialShipModal && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
-    <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 bg-blue-600 text-white rounded-2xl"><FiTruck size={24} /></div>
-        <div>
-          <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Partial Ship</h2>
-          <p className="text-[10px] font-bold text-slate-400 uppercase">Insufficient Stock Split</p>
-        </div>
-      </div>
+      {showPartialShipModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-blue-600 text-white rounded-2xl"><FiTruck size={24} /></div>
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Partial Ship</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Insufficient Stock Split</p>
+              </div>
+            </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="bg-slate-50 p-3 rounded-2xl">
-          <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Order Qty</p>
-          <p className="font-black text-slate-800 text-lg">{orders.find(o => o._id === selectedOrderId)?.reQty}</p>
-        </div>
-        <div className="bg-blue-50 p-3 rounded-2xl">
-          <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
-          <p className="font-black text-blue-800 text-lg">{availableStock}</p>
-        </div>
-      </div>
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="bg-slate-50 p-3 rounded-2xl">
+                <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Order Qty</p>
+                <p className="font-black text-slate-800 text-lg">{orders.find(o => o._id === selectedOrderId)?.reQty}</p>
+              </div>
+              <div className="bg-blue-50 p-3 rounded-2xl">
+                <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
+                <p className="font-black text-blue-800 text-lg">{availableStock}</p>
+              </div>
+            </div>
 
-      <div className="space-y-4">
-        <div className="space-y-1">
-          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Qty to Ship Now</label>
-          <input
-            type="number"
-            className="w-full p-4 bg-slate-100 border-none rounded-2xl font-black text-xl text-center outline-none focus:ring-2 focus:ring-blue-500"
-            value={shipQty}
-            onChange={(e) => setShipQty(Number(e.target.value))}
-          />
-          <p className="text-[9px] text-center text-slate-400 mt-2 font-bold">The remaining will stay in "TO CHECK"</p>
-        </div>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Qty to Ship Now</label>
+                <input
+                  type="number"
+                  className="w-full p-4 bg-slate-100 border-none rounded-2xl font-black text-xl text-center outline-none focus:ring-2 focus:ring-blue-500"
+                  value={shipQty}
+                  onChange={(e) => setShipQty(Number(e.target.value))}
+                />
+                <p className="text-[9px] text-center text-slate-400 mt-2 font-bold">The remaining will stay in "TO CHECK"</p>
+              </div>
 
-        <div className="flex gap-3 pt-2">
-          <button onClick={() => setShowPartialShipModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
-          <button onClick={submitPartialShipment} className="flex-1 p-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Ship Partial</button>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowPartialShipModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+                <button onClick={submitPartialShipment} className="flex-1 p-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Ship Partial</button>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-  </div>
-)}
+      )}
     </div>
   );
 }

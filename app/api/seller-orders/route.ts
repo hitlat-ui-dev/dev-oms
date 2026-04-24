@@ -44,6 +44,7 @@ export async function POST(req: Request) {
       orderNo: newOrderNo,
       reQty: orderQty,
       totalAmount,
+      sku: data.sku || "",
       status: data.status || "TO CHECK",
     });
 

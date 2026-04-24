@@ -6,9 +6,10 @@ import { useRouter } from "next/navigation";
 interface SellerOrderFormProps {
   onClose?: () => void; // Used for Modal
   isModal?: boolean;
+  initialData?: any;
 }
 
-export default function SellerOrderForm({ onClose, isModal = false }: SellerOrderFormProps) {
+export default function SellerOrderForm({ onClose, initialData, isModal = false }: SellerOrderFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [sellers, setSellers] = useState<any[]>([]);
@@ -23,13 +24,21 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
     itemName: "",
     category: "",
     unit: "",
+    sku: "",
     contractDate: "",
     contractNo: "",
     contractUrl: "",
     orderQty: "" as any,
+    reQty: 0,
     rate: "" as any,
     remark: ""
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData(initialData);
+    }
+  }, [initialData]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -53,7 +62,14 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
     loadData();
   }, []);
 
-  const totalAmount = useMemo(() => formData.orderQty * formData.rate, [formData.orderQty, formData.rate]);
+  // const totalAmount = useMemo(() => formData.orderQty * formData.rate, [formData.orderQty, formData.rate]);
+  const totalAmount = useMemo(() => {
+  // Use reQty if available, otherwise orderQty, fallback to 0
+  const qty = formData.reQty ?? formData.orderQty ?? 0;
+  const rate = formData.rate ?? 0;
+  
+  return qty * rate;
+}, [formData.reQty, formData.orderQty, formData.rate]);
 
   const handleContractPaste = (e: React.ClipboardEvent) => {
     const html = e.clipboardData.getData("text/html");
@@ -71,23 +87,59 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
     setFormData({ ...formData, contractNo: plainText });
   };
 
+  // const handleSubmit = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   setLoading(true);
+  //   try {
+  //     const res = await fetch("/api/seller-orders", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ ...formData, totalAmount })
+  //     });
+
+  //     if (res.ok) {
+  //         alert("Order Saved Successfully!");
+  //         window.location.reload();
+  //       if (isModal && onClose) {
+  //           onClose();
+  //       } else {
+  //           window.location.reload();
+  //       }
+  //     } else {
+  //       const err = await res.json();
+  //       alert(`Error: ${err.error || "Failed to save"}`);
+  //     }
+  //   } catch (error) {
+  //     alert("Check your server connection.");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    //console.log("Data being sent to DB:", formData);
     setLoading(true);
+
     try {
-      const res = await fetch("/api/seller-orders", {
-        method: "POST",
+      // Decide if we are updating or creating
+      const isEditing = !!initialData?._id;
+      const method = isEditing ? "PATCH" : "POST";
+      const url = isEditing ? `/api/seller-orders/${initialData._id}` : "/api/seller-orders";
+
+      const res = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...formData, totalAmount })
       });
 
       if (res.ok) {
-          alert("Order Saved Successfully!");
-          window.location.reload();
+        alert(isEditing ? "Order Updated Successfully!" : "Order Saved Successfully!");
+
         if (isModal && onClose) {
-            onClose();
+          onClose(); // This will trigger fetchOrders() in your main page
         } else {
-            window.location.reload();
+          window.location.reload();
         }
       } else {
         const err = await res.json();
@@ -99,10 +151,9 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
       setLoading(false);
     }
   };
-
   return (
     <div className={`${isModal ? "bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-5xl" : "space-y-8"}`}>
-      
+
       {/* Header logic: Back button for page, Close button for Modal */}
       {!isModal && (
         <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 font-bold text-xs uppercase tracking-widest mb-4">
@@ -121,10 +172,10 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
-          
+
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
-            <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({...formData, firmCode: e.target.value})}>
+            <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
               <option value="">Select Firm</option>
               {firms.map((f: any) => <option key={f._id} value={f.firmCode}>{f.firmCode} - {f.firmName}</option>)}
             </select>
@@ -133,8 +184,8 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
             <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.sellerId} onChange={(e) => {
-                const s: any = sellers.find((x: any) => x._id === e.target.value);
-                setFormData({...formData, sellerId: e.target.value, instituteName: s?.instituteName || ""});
+              const s: any = sellers.find((x: any) => x._id === e.target.value);
+              setFormData({ ...formData, sellerId: e.target.value, instituteName: s?.instituteName || "" });
             }}>
               <option value="">Select Institute</option>
               {sellers.map((s: any) => <option key={s._id} value={s._id}>{s.instituteName}</option>)}
@@ -144,8 +195,8 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Name (Category | Unit) *</label>
             <select required className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none" value={formData.itemId} onChange={(e) => {
-                const i: any = stocks.find((x: any) => x._id === e.target.value);
-                setFormData({...formData, itemId: e.target.value, itemName: i?.itemName || "", category: i?.category || "", unit: i?.unit || ""});
+              const i: any = stocks.find((x: any) => x._id === e.target.value);
+              setFormData({ ...formData, itemId: e.target.value, itemName: i?.itemName || "", category: i?.category || "", unit: i?.unit || "", sku: i?.sku || "" });
             }}>
               <option value="">Select Item</option>
               {stocks.map((i: any) => <option key={i._id} value={i._id}>{i.itemName} — {i.category} ({i.unit})</option>)}
@@ -154,23 +205,39 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
-            <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({...formData, contractDate: e.target.value})} />
+            <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({ ...formData, contractDate: e.target.value })} />
           </div>
 
           <div className="md:col-span-2 space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here)</label>
-            <input type="text" className="w-full p-4 bg-slate-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Paste GEM Link..." value={formData.contractNo} onPaste={handleContractPaste} onChange={(e) => setFormData({...formData, contractNo: e.target.value})} />
+            <input type="text" className="w-full p-4 bg-slate-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Paste GEM Link..." value={formData.contractNo} onPaste={handleContractPaste} onChange={(e) => setFormData({ ...formData, contractNo: e.target.value })} />
             {formData.contractUrl && <p className="text-[9px] text-blue-600 font-bold px-2 italic truncate">URL: {formData.contractUrl}</p>}
           </div>
 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
-            <input type="number" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter quantity" value={formData.orderQty} onChange={(e) => setFormData({...formData, orderQty: Number(e.target.value)})} />
+            {/* <input type="number" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter quantity" value={formData.orderQty} onChange={(e) => setFormData({...formData, orderQty: Number(e.target.value)})} /> */}
+            <input
+              type="number"
+              required
+              className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
+              placeholder="Enter quantity"
+              // Priority 1: reQty (for edits/splits), Priority 2: orderQty (for new orders), Fallback: 0
+              value={formData.reQty ?? formData.orderQty ?? 0}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setFormData({
+                  ...formData,
+                  reQty: val,   // Always update reQty so the UI stays in sync
+                  orderQty: val // Keep orderQty updated for new records
+                });
+              }}
+            />
           </div>
 
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
-            <input type="number" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({...formData, rate: Number(e.target.value)})} />
+            <input type="number" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
           </div>
 
           <div className="px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white">
@@ -180,7 +247,7 @@ export default function SellerOrderForm({ onClose, isModal = false }: SellerOrde
 
           <div className="md:col-span-2 space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
-            <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({...formData, remark: e.target.value})} />
+            <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
           </div>
 
           <button type="submit" disabled={loading} className=" bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest">
