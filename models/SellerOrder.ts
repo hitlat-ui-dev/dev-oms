@@ -12,7 +12,7 @@ const SellerOrderSchema = new Schema({
   unit: { type: String },
   sku: { type: String },
   contractDate: { type: String },
-  contractNo: { type: String }, 
+  contractNo: { type: String },
   contractUrl: { type: String },
   reQty: { type: Number, required: true },
   rate: { type: Number, default: 0 },
@@ -21,7 +21,8 @@ const SellerOrderSchema = new Schema({
   status: { type: String, default: "Pending" },
   isPaid: { type: Boolean, default: false },
   transportName: { type: String, default: "" },
-transportRemark: { type: String, default: "" },
+  transportRemark: { type: String, default: "" },
+  deliveryDate: { type: String, default: "" },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

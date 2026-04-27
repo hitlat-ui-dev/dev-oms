@@ -63,13 +63,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // ================================================================
     // LOGIC C: PARTIAL READY TO SHIP (SPLIT ORDER)
     // ================================================================
-    if (updateData.status === "READY TO SHIP" && updateData.isPartialFulfillment) {
-      const shipQty = Number(updateData.shipQty);
+    const shipQty = Number(updateData.shipQty);
+
+    // CHANGE: Only enter this block if shipQty is LESS than total order qty
+    if (
+      updateData.status === "READY TO SHIP" &&
+      updateData.isPartialFulfillment &&
+      shipQty < originalOrder.reQty
+    ) {
+
       const remainingQty = originalOrder.reQty - shipQty;
 
-      // 1. Create the Shipped Child Order
+      // 1. GENERATE SEQUENTIAL ORDER NUMBER (P1, P2, etc.)
+      const baseOrderNo = originalOrder.orderNo.split('-P')[0];
+      
+      const partialCount = await SellerOrder.countDocuments({
+        orderNo: { $regex: new RegExp(`^${baseOrderNo}-P`) }
+      });
+
+      const nextPNumber = partialCount + 1;
+      const newOrderNo = `${baseOrderNo}-P${nextPNumber}`;
+
+      // 2. Create the Shipped Child Order
       const shippedOrderObj = originalOrder.toObject();
       delete shippedOrderObj._id;
+
       if (shippedOrderObj.createdAt) delete shippedOrderObj.createdAt;
       if (shippedOrderObj.updatedAt) delete shippedOrderObj.updatedAt;
 
@@ -78,7 +96,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         reQty: shipQty,
         totalAmount: shipQty * originalOrder.rate,
         status: "READY TO SHIP",
-        orderNo: `${originalOrder.orderNo}-P1`,
+        orderNo: newOrderNo,
       };
       await SellerOrder.create(shippedOrderData);
 
@@ -96,8 +114,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const itemName = originalOrder.itemName?.trim();
       if (itemName) {
         const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
-        await db.collection("stock").updateOne(stockFilter, { 
-          $inc: { quantity: -shipQty } 
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: -shipQty }
         });
       }
 
@@ -107,22 +125,30 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // ================================================================
     // LOGIC B: STANDARD UPDATE (FULL STATUS CHANGE)
     // ================================================================
-    
+
     // 1. STOCK CHECK: Only for full transitions to Ready to Ship
     if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
       const itemName = originalOrder.itemName?.trim();
-      const orderQty = Number(updateData.reQty || originalOrder.reQty || 0);
+      
+      // FIX: Check shipQty from modal first, then reQty, then original
+      const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
       if (itemName) {
         const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
         const stockItem = await db.collection("stock").findOne(stockFilter);
+        const available = stockItem?.quantity || 0;
 
-        if (!stockItem || (stockItem.quantity || 0) < orderQty) {
-          const available = stockItem?.quantity || 0;
-          return NextResponse.json(
-            { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` }, 
-            { status: 400 }
-          );
+        // If stock is insufficient, we only block if it's NOT a "Partial Fulfillment" 
+        // request that happens to be for the full amount.
+        if (available < orderQty) {
+          // If you want to allow shipping even with 0 stock when using the modal:
+          // You can check if updateData.shipQty exists to bypass this block.
+          if (!updateData.shipQty) { 
+            return NextResponse.json(
+              { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` },
+              { status: 400 }
+            );
+          }
         }
       }
     }
@@ -138,19 +164,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       if (updateData.activeTab === "TO CHECK") {
         if (updateData.status === "READY TO SHIP") {
-          await db.collection("stock").updateOne(stockFilter, { 
-            $inc: { reQty: -adjustQty, quantity: -adjustQty } 
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: -adjustQty, quantity: -adjustQty }
           });
         } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER") {
-          await db.collection("stock").updateOne(stockFilter, { 
-            $inc: { reQty: -adjustQty } 
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: -adjustQty }
           });
         }
-      } 
+      }
       else if (updateData.activeTab === "READY TO SHIP") {
         if (["HISAB", "CANCELL ORDER", "RETURN ORDER"].includes(updateData.status)) {
-          await db.collection("stock").updateOne(stockFilter, { 
-            $inc: { quantity: adjustQty } 
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { quantity: adjustQty }
+          });
+        }
+      }
+      else if (updateData.activeTab === "CANCELL ORDER") {
+        if (updateData.status === "TO CHECK") {
+          // Put the quantity back into the "Pending" (reQty) pool
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: adjustQty }
           });
         }
       }

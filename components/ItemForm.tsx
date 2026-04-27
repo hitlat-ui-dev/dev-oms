@@ -1,20 +1,21 @@
 "use client";
 import { useState, useEffect } from "react";
-import { 
-  FiBox, FiTag, FiSave, FiPlus, FiHash, 
-  FiLayers, FiCheckCircle, FiX, FiMapPin 
+import {
+  FiBox, FiTag, FiSave, FiPlus, FiHash,
+  FiLayers, FiCheckCircle, FiX, FiMapPin
 } from "react-icons/fi";
 
 interface ItemFormProps {
   onSuccess?: () => void;
+  initialData?: any;
 }
 
-export default function ItemForm({ onSuccess }: ItemFormProps) {
+export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [categories, setCategories] = useState<{ _id: string; name: string }[]>([]);
   const [units, setUnits] = useState<{ _id: string; name: string }[]>([]);
-  
+
   // Quick-add modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showUnitModal, setShowUnitModal] = useState(false);
@@ -23,10 +24,31 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
   const [formData, setFormData] = useState({
     itemName: "",
     category: "",
+    totalQty: 0,
+    reQty: 0,
     unit: "",
     sku: "Loading...",
-    location: ""
+    location: "",
+    rateDisplay: 0,
+    itemId: "" // <--- ADD THIS
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        itemName: initialData.itemName || "",
+        sku: initialData.sku || "",
+        category: initialData.category || "GENERAL",
+        unit: initialData.unit || "PCS",
+        totalQty: initialData.totalQty || 0,
+        reQty: initialData.reQty ?? initialData.totalQty ?? 0,
+        location: initialData.location || "---",
+        rateDisplay: initialData.rateDisplay || "₹ 0",
+        itemId: initialData.itemId || "" // <--- ADD THIS
+      });
+    }
+  }, [initialData]);
+
 
   // Fetch Initial Data
   const fetchData = async () => {
@@ -36,7 +58,7 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
         fetch("/api/categories"),
         fetch("/api/units")
       ]);
-      
+
       const itemData = await itemRes.json();
       const catData = await catRes.json();
       const unitData = await unitRes.json();
@@ -55,7 +77,7 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
   const handleQuickAdd = async (type: "category" | "unit") => {
     if (!newName) return;
     const endpoint = type === "category" ? "/api/categories" : "/api/units";
-    
+
     const res = await fetch(endpoint, {
       method: "POST",
       body: JSON.stringify({ name: newName }),
@@ -74,27 +96,38 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
-    const res = await fetch("/api/items", {
-      method: "POST",
-      body: JSON.stringify(formData),
-      headers: { "Content-Type": "application/json" }
-    });
 
-    if (res.ok) {
-      setStatus("Item Registered Successfully!");
-      setFormData({
-        itemName: "",
-        category: "",
-        unit: "",
-        sku: "Loading...",
-        location: ""
+    const isEditing = !!initialData?._id;
+    const url = isEditing ? `/api/items/${initialData._id}` : "/api/items";
+
+    // Create a clean object with ONLY the fields you want to update
+    const payload = isEditing
+      ? {
+        itemId: formData.itemId,
+        itemName: formData.itemName,
+        category: formData.category,
+        unit: formData.unit,
+        location: formData.location,
+        sku: formData.sku
+      }
+      : formData;
+
+    try {
+      const res = await fetch(url, {
+        method: "PATCH",
+        body: JSON.stringify(formData), // Just send the whole formData
+        headers: { "Content-Type": "application/json" }
       });
-      fetchData(); // Get next SKU
-      if (onSuccess) onSuccess(); 
-      setTimeout(() => setStatus(""), 3000);
+
+      if (res.ok) {
+        setStatus("Update Successful!");
+        if (onSuccess) setTimeout(() => onSuccess(), 1000);
+      }
+    } catch (error) {
+      setStatus("Error updating data.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -107,17 +140,17 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          
+
           {/* Item Name */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Name</label>
             <div className="relative">
               <FiBox className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input 
+              <input
                 type="text" required value={formData.itemName}
                 className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
                 placeholder="Enter product name"
-                onChange={(e) => setFormData({...formData, itemName: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
               />
             </div>
           </div>
@@ -137,18 +170,18 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <FiTag className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <select 
+                <select
                   required value={formData.category}
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
-                  onChange={(e) => setFormData({...formData, category: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                 >
                   <option value="">Select Category</option>
                   {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
-              <button 
-                type="button" 
-                onClick={() => setShowCategoryModal(true)} 
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(true)}
                 className="p-4 bg-blue-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-200"
               >
                 <FiPlus size={24} />
@@ -162,18 +195,18 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <FiLayers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                <select 
+                <select
                   required value={formData.unit}
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
-                  onChange={(e) => setFormData({...formData, unit: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
                 >
                   <option value="">Select Unit</option>
                   {units.map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
                 </select>
               </div>
-              <button 
-                type="button" 
-                onClick={() => setShowUnitModal(true)} 
+              <button
+                type="button"
+                onClick={() => setShowUnitModal(true)}
                 className="p-4 bg-emerald-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-emerald-200"
               >
                 <FiPlus size={24} />
@@ -186,20 +219,20 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Location</label>
             <div className="relative">
               <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={formData.location}
                 className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
                 placeholder="Warehouse Shelf, Rack No, etc. (Optional)"
-                onChange={(e) => setFormData({...formData, location: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
               />
             </div>
           </div>
         </div>
 
-        <button 
-          type="submit" 
-          disabled={loading} 
+        <button
+          type="submit"
+          disabled={loading}
           className="w-full bg-[#0f172a] hover:bg-slate-800 text-white font-black py-5 rounded-2xl shadow-xl flex items-center justify-center gap-3 transition-all uppercase tracking-[0.2em] text-xs disabled:opacity-70"
         >
           <FiSave size={18} /> {loading ? "Registering..." : "Save New Item"}
@@ -214,8 +247,8 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
               <h3 className="font-black uppercase tracking-widest text-[10px]">
                 Add New {showCategoryModal ? "Category" : "Unit"}
               </h3>
-              <button 
-                onClick={() => {setShowCategoryModal(false); setShowUnitModal(false); setNewName("")}} 
+              <button
+                onClick={() => { setShowCategoryModal(false); setShowUnitModal(false); setNewName("") }}
                 className="text-white/60 hover:text-white"
               >
                 <FiX size={20} />
@@ -224,20 +257,19 @@ export default function ItemForm({ onSuccess }: ItemFormProps) {
             <div className="p-8 space-y-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Name</label>
-                <input 
-                  type="text" 
-                  value={newName} 
+                <input
+                  type="text"
+                  value={newName}
                   autoFocus
-                  onChange={(e) => setNewName(e.target.value)} 
-                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:border-blue-500" 
-                  placeholder="Type name here..." 
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:border-blue-500"
+                  placeholder="Type name here..."
                 />
               </div>
-              <button 
-                onClick={() => handleQuickAdd(showCategoryModal ? "category" : "unit")} 
-                className={`w-full py-4 rounded-2xl font-black text-white uppercase tracking-widest text-[10px] transition-all shadow-lg ${
-                  showCategoryModal ? 'bg-blue-600 shadow-blue-100' : 'bg-emerald-600 shadow-emerald-100'
-                }`}
+              <button
+                onClick={() => handleQuickAdd(showCategoryModal ? "category" : "unit")}
+                className={`w-full py-4 rounded-2xl font-black text-white uppercase tracking-widest text-[10px] transition-all shadow-lg ${showCategoryModal ? 'bg-blue-600 shadow-blue-100' : 'bg-emerald-600 shadow-emerald-100'
+                  }`}
               >
                 Save {showCategoryModal ? "Category" : "Unit"}
               </button>

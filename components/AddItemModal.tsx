@@ -6,9 +6,10 @@ import { FiX } from "react-icons/fi";
 interface AddItemModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialData?: any;
 }
 
-export default function AddItemModal({ isOpen, onClose }: AddItemModalProps) {
+export default function AddItemModal({ isOpen, onClose, initialData }: AddItemModalProps) {
   // If isOpen is false, return nothing (popup is hidden)
   if (!isOpen) return null;
 
@@ -23,7 +24,9 @@ export default function AddItemModal({ isOpen, onClose }: AddItemModalProps) {
       {/* 2. The Actual Popup Box */}
       <div className="relative bg-white rounded-[2.5rem] w-full max-w-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
         <div className="bg-[#0f172a] p-6 text-white flex justify-between items-center">
-          <h2 className="font-black uppercase tracking-widest text-xs text-blue-400">Inventory Registration</h2>
+          <h2 className="font-black uppercase tracking-widest text-xs text-blue-400">
+            {initialData ? "Edit Stock Item" : "Inventory Registration"}
+          </h2>
           <button onClick={onClose} className="hover:bg-white/10 p-2 rounded-lg transition-colors">
             <FiX size={20} />
           </button>
@@ -31,7 +34,7 @@ export default function AddItemModal({ isOpen, onClose }: AddItemModalProps) {
 
         <div className="p-8 max-h-[85vh] overflow-y-auto">
           {/* 3. YOUR FORM CODE GOES HERE */}
-          <ItemForm onSuccess={onClose} />
+          <ItemForm onSuccess={onClose} initialData={initialData} />
         </div>
       </div>
     </div>

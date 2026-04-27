@@ -1,13 +1,15 @@
 "use client";
 import AddItemModal from "@/components/AddItemModal";
 import { useState, useEffect, useMemo } from "react";
-import { FiMapPin, FiTag, FiPackage, FiTrendingUp, FiSearch } from "react-icons/fi";
+import { FiMapPin, FiTag, FiPackage, FiTrendingUp, FiSearch, FiEdit } from "react-icons/fi";
+
 
 export default function StockPage() {
   const [stock, setStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
 
   const fetchStock = async () => {
     try {
@@ -23,9 +25,18 @@ export default function StockPage() {
 
   useEffect(() => { fetchStock(); }, []);
 
+  const handleEdit = (item: any) => {
+    setEditingItem(item);
+    setIsModalOpen(true);
+  };
+
+  const handleAddNew = () => {
+    setEditingItem(null);
+    setIsModalOpen(true);
+  };
   // Filter logic for search
   const filteredStock = useMemo(() => {
-    return stock.filter(item => 
+    return stock.filter(item =>
       item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.category.toLowerCase().includes(searchQuery.toLowerCase())
@@ -40,7 +51,7 @@ export default function StockPage() {
           <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">Inventory Master List</h1>
           <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Warehouse Live Stock Balance</p>
         </div>
-        <button 
+        <button
           onClick={() => setIsModalOpen(true)}
           className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
         >Add New Item</button>
@@ -48,7 +59,7 @@ export default function StockPage() {
           {/* Search Bar */}
           <div className="relative flex-1 md:w-64">
             <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input 
+            <input
               type="text"
               placeholder="Search SKU or Item..."
               className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:border-blue-500 transition-all"
@@ -58,8 +69,8 @@ export default function StockPage() {
           </div>
 
           <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[100px]">
-             <span className="text-[10px] font-black text-slate-400 uppercase block">Total SKUs</span>
-             <span className="text-xl font-black text-blue-600 leading-none">{filteredStock.length}</span>
+            <span className="text-[10px] font-black text-slate-400 uppercase block">Total SKUs</span>
+            <span className="text-xl font-black text-blue-600 leading-none">{filteredStock.length}</span>
           </div>
         </div>
       </div>
@@ -76,6 +87,7 @@ export default function StockPage() {
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Required Qty</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Available Qty</th>
                 <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right">Last Rate</th>
+                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -105,22 +117,22 @@ export default function StockPage() {
                     </span>
                   </td>
                   <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
-        <div className="flex flex-col items-center">
-          <span className="text-sm font-black text-blue-800">
-            {item.reQty?.toLocaleString() || 0}
-          </span>
-          <span className="text-[8px] font-black text-slate-400 uppercase">Total Logged</span>
-        </div>
-      </td>
+                    <div className="flex flex-col items-center">
+                      <span className="text-sm font-black text-blue-800">
+                        {item.reQty?.toLocaleString() || 0}
+                      </span>
+                      <span className="text-[8px] font-black text-slate-400 uppercase">Total Req Qty</span>
+                    </div>
+                  </td>
 
                   <td className="py-4 px-6 text-center border-r border-slate-50">
                     <div className="flex flex-col items-center">
-                       <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
-                         {item.totalQty.toLocaleString()}
-                       </span>
-                       <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
-                         {item.unit}
-                       </span>
+                      <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
+                        {item.totalQty.toLocaleString()}
+                      </span>
+                      <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
+                        {item.unit}
+                      </span>
                     </div>
                   </td>
 
@@ -132,6 +144,14 @@ export default function StockPage() {
                       </span>
                     </div>
                   </td>
+                  <td className="py-4 px-4 uppercase font-bold text-xs text-red-600">
+                    <button
+                      onClick={() => handleEdit(item)}
+                      className="hover:underline hover:text-blue-800 transition-all cursor-pointer"
+                    >
+                      <FiEdit />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -140,14 +160,19 @@ export default function StockPage() {
 
         {filteredStock.length === 0 && !loading && (
           <div className="py-20 text-center">
-             <p className="text-slate-400 font-black uppercase tracking-widest text-xs">No matching stock found</p>
+            <p className="text-slate-400 font-black uppercase tracking-widest text-xs">No matching stock found</p>
           </div>
         )}
       </div>
       <AddItemModal
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-            />
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingItem(null);
+          fetchStock(); // Refresh list after saving
+        }}
+        initialData={editingItem}
+      />
     </div>
   );
 }
