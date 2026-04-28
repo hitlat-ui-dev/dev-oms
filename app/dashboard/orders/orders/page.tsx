@@ -1,7 +1,8 @@
 "use client";
+import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
-import { useState, useEffect, useCallback } from "react";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle } from "react-icons/fi";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus } from "react-icons/fi";
 
 const TABS = [
   "ALL", "TO CHECK", "HISAB",
@@ -36,6 +37,48 @@ export default function OrdersListPage() {
     date: ""
   });
   const [moveToCheck, setMoveToCheck] = useState(false);
+  const [partialError, setPartialError] = useState("");
+
+  const [stock, setStock] = useState<StockItem[]>([]);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  interface StockItem {
+    _id: string;
+    sku: string;
+    itemName: string;
+    lastUpdated?: string | Date;
+    quantity: number;
+    vendor?: string;
+    category?: string;
+    unit?: string;
+    rate?: number;
+  }
+
+  useEffect(() => {
+    fetchTabData();
+  }, []);
+  const fetchTabData = async () => {
+    try {
+      const stockRes = await fetch('/api/stock');
+      const stockData = await stockRes.json();
+      // Ensure we set the array correctly (some APIs return { data: [] })
+      setStock(Array.isArray(stockData) ? stockData : stockData.items || []);
+    } catch (error) {
+      console.error("Failed to fetch stock:", error);
+    }
+  }
+  const sortedStock = useMemo(() => {
+    if (!stock || !Array.isArray(stock)) return [];
+    return [...stock].sort((a, b) => {
+      // Use fallback date string for items missing the lastUpdated field
+      const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
+      const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
+      return dateB - dateA; // Descending order
+    });
+  }, [stock]);
+
+
 
   const filteredOrders = orders.filter(order => {
     // 1. Tab Status must match
@@ -222,6 +265,11 @@ export default function OrdersListPage() {
   // };
 
   const submitPartialShipment = async () => {
+    if (shipQty <= 0) {
+      setPartialError("Please add quantity to ship!");
+      return;
+    }
+    setPartialError("");
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
 
@@ -339,29 +387,29 @@ export default function OrdersListPage() {
     }
   };
 
-const handleMarkAsReceived = async (order: any) => {
-  if (!window.confirm(`Add ${order.reQty} units of ${order.itemName} back to stock?`)) return;
+  const handleMarkAsReceived = async (order: any) => {
+    if (!window.confirm(`Add ${order.reQty} units of ${order.itemName} back to stock?`)) return;
 
-  try {
-    const res = await fetch(`/api/seller-orders/${order._id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: "RETURN RECEIVED", // This status triggers the stock add
-        activeTab: "RETURN ORDER",
-        reQty: order.reQty,
-        itemName: order.itemName
-      }),
-    });
+    try {
+      const res = await fetch(`/api/seller-orders/${order._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "RETURN RECEIVED", // This status triggers the stock add
+          activeTab: "RETURN ORDER",
+          reQty: order.reQty,
+          itemName: order.itemName
+        }),
+      });
 
-    if (res.ok) {
-      alert("Stock updated successfully!");
-      fetchOrders(); // Refresh to show the updated status
+      if (res.ok) {
+        alert("Stock updated successfully!");
+        fetchOrders(); // Refresh to show the updated status
+      }
+    } catch (error) {
+      alert("System error");
     }
-  } catch (error) {
-    alert("System error");
-  }
-};
+  };
 
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
@@ -375,12 +423,18 @@ const handleMarkAsReceived = async (order: any) => {
             <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
             <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
           </div>
-          <button
-            onClick={() => setShowOrderModal(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
-          >
-            Add New Order
-          </button>
+          <div>
+            <button
+              onClick={() => setIsRequestModalOpen(true)}
+              className="bg-blue-600 mr-2 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
+            >Add Purchase Req</button>
+            <button
+              onClick={() => setShowOrderModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
+            >
+              Add New Order
+            </button>
+          </div>
         </div>
 
         {/* Row 2: The New Filter Grid */}
@@ -563,7 +617,7 @@ const handleMarkAsReceived = async (order: any) => {
                     </div>
                   </td>
                 )}
-                
+
                 {/* {activeTab === "CANCELL ORDER" && (
                   <td className="px-3 py-2">
                     <button
@@ -576,7 +630,7 @@ const handleMarkAsReceived = async (order: any) => {
                   </td>
                 )} */}
                 <td className="px-3 py-2 text-center">
-                  {["TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER"].includes(activeTab) ? (
+                  {["TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "HISAB"].includes(activeTab) ? (
                     <select
                       className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border cursor-pointer outline-none ${getStatusColor(order.status)}`}
                       value={order.status}
@@ -610,13 +664,19 @@ const handleMarkAsReceived = async (order: any) => {
                           <option value="TO CHECK">TO CHECK</option>
                         </>
                       )}
+                      {activeTab === "HISAB" && (
+                        <>
+                          <option value="HISAB">HISAB</option>
+                          <option value="TO CHECK">TO CHECK</option>
+                        </>
+                      )}
                     </select>
                   ) : (
-                      activeTab !== "RETURN ORDER" && (
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getStatusColor(order.status)}`}>
-                      {order.status || "PENDING"}
-                        </span>
-                      )
+                    activeTab !== "RETURN ORDER" && (
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getStatusColor(order.status)}`}>
+                        {order.status || "PENDING"}
+                      </span>
+                    )
                   )}
                   {activeTab === "TO CHECK" && (
                     <button onClick={() => { setEditingOrder(order); setShowOrderModal(true); }} className="hover:underline hover:text-blue-800 float-right text-xs transition-all text-red-600">
@@ -624,28 +684,28 @@ const handleMarkAsReceived = async (order: any) => {
                     </button>
                   )}
                   {activeTab === "RETURN ORDER" && (
-                  <button
-                    onClick={() => handleMarkAsReceived(order)}
-                    // Check if status is already RECEIVED to disable the button
-                    disabled={order.status === "RETURN RECEIVED"}
-                    className={`flex items-center gap-2 p-2 rounded-xl transition-all font-black text-[10px] uppercase ${order.status === "RETURN RECEIVED"
+                    <button
+                      onClick={() => handleMarkAsReceived(order)}
+                      // Check if status is already RECEIVED to disable the button
+                      disabled={order.status === "RETURN RECEIVED"}
+                      className={`flex items-center gap-2 p-2 rounded-xl transition-all font-black text-[10px] uppercase ${order.status === "RETURN RECEIVED"
                         ? "bg-slate-100 text-slate-400 cursor-not-allowed" // Disabled Style
                         : "bg-green-50 text-green-600 hover:bg-green-600 hover:text-white" // Active Style
-                      }`}
-                  >
-                    {order.status === "RETURN RECEIVED" ? (
-                      <>
-                        <FiCheckCircle size={16} />
-                        Stock Added
-                      </>
-                    ) : (
-                      <>
-                        <FiCheckCircle size={16} />
-                        Received Stock
-                      </>
-                    )}
-                  </button>
-                )}
+                        }`}
+                    >
+                      {order.status === "RETURN RECEIVED" ? (
+                        <>
+                          <FiCheckCircle size={16} />
+                          Stock Added
+                        </>
+                      ) : (
+                        <>
+                          <FiCheckCircle size={16} />
+                          Received Stock
+                        </>
+                      )}
+                    </button>
+                  )}
 
                 </td>
               </tr>
@@ -810,7 +870,19 @@ const handleMarkAsReceived = async (order: any) => {
               </div>
               <div className="bg-blue-50 p-3 rounded-2xl">
                 <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
-                <p className="font-black text-blue-800 text-lg">{availableStock}</p>
+                <p className="font-black text-blue-800 text-lg">
+                  {(() => {
+                    // 1. Find the order object using the ID you stored when clicking "Ship"
+                    const currentOrder = orders.find(o => o._id === selectedOrderId);
+
+                    // 2. Use the EXACT logic from your <td>
+                    if (currentOrder) {
+                      return stocks.find(s => s._id === currentOrder.itemId)?.reQty ?? 0;
+                    }
+
+                    return 0;
+                  })()}
+                </p>
               </div>
             </div>
 
@@ -823,7 +895,17 @@ const handleMarkAsReceived = async (order: any) => {
                   value={shipQty}
                   onChange={(e) => setShipQty(Number(e.target.value))}
                 />
-                <p className="text-[9px] text-center text-slate-400 mt-2 font-bold">The remaining will stay in "TO CHECK"</p>
+                <p className="text-[9px] text-left text-slate-400 mt-2 font-bold uppercase">
+                  The remaining will stay in "TO CHECK"
+                </p>
+                {partialError ? (
+                  <p className="text-[10px] text-center text-red-500 mt-2 font-black uppercase italic animate-pulse">
+                    {partialError}
+                  </p>
+                ) : (
+                  <p></p>
+                )}
+
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -834,7 +916,16 @@ const handleMarkAsReceived = async (order: any) => {
           </div>
         </div>
       )}
+      <PurchaseRequestModal
+        isOpen={isRequestModalOpen}
+        stockData={sortedStock} // <--- Add this
+        onClose={() => {
+          setIsRequestModalOpen(false);
+          fetchTabData(); // or fetchRequests() depending on your function name
+        }}
+      />
     </div>
+
   );
 }
 

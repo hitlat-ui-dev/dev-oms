@@ -248,6 +248,14 @@ if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN 
           });
         }
       }
+      else if (updateData.activeTab === "HISAB") {
+        if (updateData.status === "TO CHECK") {
+          // Put the quantity back into the "Pending" (reQty) pool
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: adjustQty }
+          });
+        }
+      }
     }
 
     return NextResponse.json(updated, { status: 200 });
