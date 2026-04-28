@@ -19,13 +19,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-    // ================================================================
-    // LOGIC A: PARTIAL RETURN (SPLIT ORDER)
-    // ================================================================
-    if (updateData.status === "RETURN ORDER" && updateData.isPartial) {
-      const returnQty = Number(updateData.reQty);
-      const remainingQty = originalOrder.reQty - returnQty;
 
+    // ================================================================
+    // LOGIC A: RETURN ORDER (WITH MOVE TO TO-CHECK FEATURE)
+    // ================================================================
+    if (updateData.status === "RETURN ORDER") {
+      const returnQty = Number(updateData.reQty);
+      const itemName = originalOrder.itemName?.trim();
+      const stockFilter = itemName ? { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } } : null;
+
+      // Get the base order number (removes any existing -1, -2, etc.)
+      const baseOrderNo = originalOrder.orderNo.split('-')[0];
+      const returnRecordCount = await SellerOrder.countDocuments({
+        orderNo: { $regex: new RegExp(`^${baseOrderNo}-Re`) }
+      });
+      const nextReNumber = returnRecordCount + 1;
+      const returnOrderNo = `${baseOrderNo}-Re${nextReNumber}`;
+
+      // 1. Create the Return Record Order
       const returnOrderObj = originalOrder.toObject();
       delete returnOrderObj._id;
       if (returnOrderObj.createdAt) delete returnOrderObj.createdAt;
@@ -36,28 +47,54 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         reQty: returnQty,
         totalAmount: returnQty * originalOrder.rate,
         status: "RETURN ORDER",
-        orderNo: `${originalOrder.orderNo}-R`,
+        orderNo: returnOrderNo,
         isPaid: false
       };
-
       await SellerOrder.create(returnOrderData);
 
-      const updatedOriginal = await SellerOrder.findByIdAndUpdate(
-        id,
-        {
-          reQty: remainingQty,
-          totalAmount: remainingQty * originalOrder.rate,
-        },
-        { new: true }
-      );
+      // 2. NEW: Create a duplicate "TO CHECK" order if requested
+      if (updateData.moveToCheck) {
+        const resubOrderNo = `${baseOrderNo}-RE-N${nextReNumber}`;
+        const toCheckOrderData = {
+          ...returnOrderObj,
+          reQty: returnQty,
+          totalAmount: returnQty * originalOrder.rate,
+          status: "TO CHECK",
+          orderNo: resubOrderNo,
+          isPaid: false
+        };
+        await SellerOrder.create(toCheckOrderData);
 
-      const itemName = originalOrder.itemName?.trim();
-      if (itemName) {
-        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
-        await db.collection("stock").updateOne(stockFilter, { $inc: { quantity: returnQty } });
+        // Increase reQty (Pending Stock) for the new TO CHECK order
+        if (stockFilter) {
+          await db.collection("stock").updateOne(stockFilter, { $inc: { reQty: returnQty } });
+        }
       }
 
-      return NextResponse.json(updatedOriginal, { status: 200 });
+      // 3. Update or Delete the Original Order
+      let updatedOriginal = null;
+      if (updateData.isPartial) {
+        const remainingQty = originalOrder.reQty - returnQty;
+        updatedOriginal = await SellerOrder.findByIdAndUpdate(
+          id,
+          {
+            reQty: remainingQty,
+            totalAmount: remainingQty * originalOrder.rate,
+          },
+          { new: true }
+        );
+      } else {
+        // If full return, delete or move original out of Delivery
+        updatedOriginal = await SellerOrder.findByIdAndDelete(id);
+      }
+
+      // 4. Update Main Stock (Add items back to physical quantity)
+
+      // if (stockFilter) {
+      //   await db.collection("stock").updateOne(stockFilter, { $inc: { quantity: returnQty } });
+      // }
+
+      return NextResponse.json(updatedOriginal || { success: true }, { status: 200 });
     }
 
     // ================================================================
@@ -76,7 +113,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       // 1. GENERATE SEQUENTIAL ORDER NUMBER (P1, P2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-P')[0];
-      
+
       const partialCount = await SellerOrder.countDocuments({
         orderNo: { $regex: new RegExp(`^${baseOrderNo}-P`) }
       });
@@ -129,7 +166,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // 1. STOCK CHECK: Only for full transitions to Ready to Ship
     if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
       const itemName = originalOrder.itemName?.trim();
-      
+
       // FIX: Check shipQty from modal first, then reQty, then original
       const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
@@ -143,7 +180,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         if (available < orderQty) {
           // If you want to allow shipping even with 0 stock when using the modal:
           // You can check if updateData.shipQty exists to bypass this block.
-          if (!updateData.shipQty) { 
+          if (!updateData.shipQty) {
             return NextResponse.json(
               { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` },
               { status: 400 }
@@ -152,6 +189,29 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
       }
     }
+
+    // Inside your Logic B (Standard Updates)
+if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN ORDER") {
+  
+  // 1. Clean the Item Name (Removes accidental spaces)
+  const itemName = updateData.itemName?.trim();
+  const returnQty = Number(updateData.reQty);
+
+  if (itemName) {
+    // 2. Use Case-Insensitive Matching
+    const stockFilter = { 
+      itemName: { $regex: new RegExp(`^${itemName}$`, "i") } 
+    };
+    
+    // 3. Update the Stock
+    const stockUpdate = await db.collection("stock").updateOne(stockFilter, { 
+      $inc: { quantity: returnQty } 
+    });
+
+    // LOGGING: Check your terminal to see if it actually found the item
+    console.log(`Stock update result for ${itemName}:`, stockUpdate.modifiedCount);
+  }
+}
 
     // 2. Perform standard update
     const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });

@@ -100,6 +100,8 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
     const isEditing = !!initialData?._id;
     const url = isEditing ? `/api/items/${initialData._id}` : "/api/items";
 
+    const method = isEditing ? "PATCH" : "POST";
+
     // Create a clean object with ONLY the fields you want to update
     const payload = isEditing
       ? {
@@ -114,7 +116,7 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
 
     try {
       const res = await fetch(url, {
-        method: "PATCH",
+        method: method,
         body: JSON.stringify(formData), // Just send the whole formData
         headers: { "Content-Type": "application/json" }
       });

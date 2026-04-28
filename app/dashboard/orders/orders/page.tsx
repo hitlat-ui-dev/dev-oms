@@ -1,11 +1,11 @@
 "use client";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback } from "react";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw } from "react-icons/fi";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle } from "react-icons/fi";
 
 const TABS = [
   "ALL", "TO CHECK", "HISAB",
-  "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER"
+  "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"
 ];
 
 export default function OrdersListPage() {
@@ -35,6 +35,7 @@ export default function OrdersListPage() {
     buyerName: "",
     date: ""
   });
+  const [moveToCheck, setMoveToCheck] = useState(false);
 
   const filteredOrders = orders.filter(order => {
     // 1. Tab Status must match
@@ -316,22 +317,51 @@ export default function OrdersListPage() {
           activeTab: "READY TO SHIP", // Tab context for stock logic
           reQty: returnQty,
           isPartial: isPartial,
-          itemName: orderToUpdate.itemName
+          itemName: orderToUpdate.itemName,
+          moveToCheck: moveToCheck
         }),
       });
 
       if (res.ok) {
         setShowReturnModal(false);
         setSelectedOrderId(null);
+        setMoveToCheck(false);
         fetchOrders();
-        alert(isPartial ? `Split Successful: ${returnQty} returned, ${orderToUpdate.reQty - returnQty} remains delivered.` : "Order fully returned.");
+        //alert(isPartial ? `Split Successful: ${returnQty} returned, ${orderToUpdate.reQty - returnQty} remains delivered.` : "Order fully returned.");
+
+        const statusMessage = isPartial
+          ? `Split Successful: ${returnQty} returned.`
+          : "Order fully returned.";
+        alert(moveToCheck ? `${statusMessage} New order created in TO CHECK.` : statusMessage);
       }
     } catch (err) {
       alert("Error processing return");
     }
   };
 
-  
+const handleMarkAsReceived = async (order: any) => {
+  if (!window.confirm(`Add ${order.reQty} units of ${order.itemName} back to stock?`)) return;
+
+  try {
+    const res = await fetch(`/api/seller-orders/${order._id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "RETURN RECEIVED", // This status triggers the stock add
+        activeTab: "RETURN ORDER",
+        reQty: order.reQty,
+        itemName: order.itemName
+      }),
+    });
+
+    if (res.ok) {
+      alert("Stock updated successfully!");
+      fetchOrders(); // Refresh to show the updated status
+    }
+  } catch (error) {
+    alert("System error");
+  }
+};
 
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
@@ -533,6 +563,7 @@ export default function OrdersListPage() {
                     </div>
                   </td>
                 )}
+                
                 {/* {activeTab === "CANCELL ORDER" && (
                   <td className="px-3 py-2">
                     <button
@@ -581,15 +612,40 @@ export default function OrdersListPage() {
                       )}
                     </select>
                   ) : (
+                      activeTab !== "RETURN ORDER" && (
                     <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getStatusColor(order.status)}`}>
                       {order.status || "PENDING"}
-                    </span>
+                        </span>
+                      )
                   )}
                   {activeTab === "TO CHECK" && (
                     <button onClick={() => { setEditingOrder(order); setShowOrderModal(true); }} className="hover:underline hover:text-blue-800 float-right text-xs transition-all text-red-600">
                       <FiEdit />
                     </button>
                   )}
+                  {activeTab === "RETURN ORDER" && (
+                  <button
+                    onClick={() => handleMarkAsReceived(order)}
+                    // Check if status is already RECEIVED to disable the button
+                    disabled={order.status === "RETURN RECEIVED"}
+                    className={`flex items-center gap-2 p-2 rounded-xl transition-all font-black text-[10px] uppercase ${order.status === "RETURN RECEIVED"
+                        ? "bg-slate-100 text-slate-400 cursor-not-allowed" // Disabled Style
+                        : "bg-green-50 text-green-600 hover:bg-green-600 hover:text-white" // Active Style
+                      }`}
+                  >
+                    {order.status === "RETURN RECEIVED" ? (
+                      <>
+                        <FiCheckCircle size={16} />
+                        Stock Added
+                      </>
+                    ) : (
+                      <>
+                        <FiCheckCircle size={16} />
+                        Received Stock
+                      </>
+                    )}
+                  </button>
+                )}
 
                 </td>
               </tr>
@@ -708,6 +764,23 @@ export default function OrdersListPage() {
                   value={returnQty}
                   onChange={(e) => setReturnQty(Number(e.target.value))}
                 />
+              </div>
+
+              {/* NEW: Move to To Check Checkbox */}
+              <div
+                className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-all"
+                onClick={() => setMoveToCheck(!moveToCheck)}
+              >
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 accent-rose-500 rounded-lg cursor-pointer"
+                  checked={moveToCheck}
+                  onChange={() => setMoveToCheck(!moveToCheck)}
+                />
+                <div>
+                  <p className="text-[11px] font-black text-slate-700 uppercase">Move to "To Check" Tabs?</p>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase leading-none">Creates a new order for checking</p>
+                </div>
               </div>
 
               <div className="flex gap-3 pt-2">
