@@ -2,7 +2,10 @@
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus } from "react-icons/fi";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload } from "react-icons/fi";
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
 
 const TABS = [
   "ALL", "TO CHECK", "HISAB",
@@ -36,8 +39,10 @@ export default function OrdersListPage() {
     buyerName: "",
     date: ""
   });
+
   const [moveToCheck, setMoveToCheck] = useState(false);
   const [partialError, setPartialError] = useState("");
+  const [sellers, setSellers] = useState<Seller[]>([]);
 
   const [stock, setStock] = useState<StockItem[]>([]);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -58,12 +63,20 @@ export default function OrdersListPage() {
   useEffect(() => {
     fetchTabData();
   }, []);
+
   const fetchTabData = async () => {
     try {
       const stockRes = await fetch('/api/stock');
       const stockData = await stockRes.json();
       // Ensure we set the array correctly (some APIs return { data: [] })
       setStock(Array.isArray(stockData) ? stockData : stockData.items || []);
+
+      // Fetch Sellers/Buyer DB Data (For the PDF details)
+      const sellerRes = await fetch('/api/sellers');
+      const sellerData = await sellerRes.json();
+
+      // This fills the 'sellers' variable so the red line disappears
+      setSellers(Array.isArray(sellerData) ? sellerData : []);
     } catch (error) {
       console.error("Failed to fetch stock:", error);
     }
@@ -411,6 +424,90 @@ export default function OrdersListPage() {
     }
   };
 
+  interface Seller {
+  _id: string;
+  buyerName: string;
+  instituteName: string;
+  mobile: string;
+  address: string;
+  place: string;
+}
+
+  const downloadDeliveryChallan = (filteredOrders: any[], sellerDB: any[]) => {
+    const doc = new jsPDF();
+
+    // 1. Group orders by Buyer Name
+    const grouped = filteredOrders.reduce((acc: any, order) => {
+      const key = order.buyerName || "General Buyer";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(order);
+      return acc;
+    }, {});
+
+    Object.keys(grouped).forEach((buyerKey, index) => {
+      if (index > 0) doc.addPage();
+
+      const items = grouped[buyerKey];
+      // 2. Fetch Buyer Info from Seller DB (image_21e812.png)
+      const sellerInfo = (sellers as Seller[]).find(s => s.buyerName === buyerKey) || ({} as Seller);
+
+      // --- Header Title ---
+      doc.setFontSize(22);
+      doc.setFont("helvetica", "bold");
+      doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
+
+      // --- Buyer Address Section (Dynamic from Seller DB) ---
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.text("To,", 14, 35);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${buyerKey}`, 14, 42); // PANKAJBHAI
+      doc.setFont("helvetica", "normal");
+      doc.text([
+        `Institute: ${sellerInfo.instituteName || 'N/A'}`, // Matches your DB
+        `Address: ${sellerInfo.address || '---'}`,       // Matches your DB
+        `Place: ${sellerInfo.place || '---'}`,           // Matches your DB
+        `Mobile: ${sellerInfo.mobile || '---'}`          // Matches your DB (was "mobile" in your image)
+      ], 14, 48);
+
+      // --- Items Table (Including Order details) ---
+      autoTable(doc, {
+        startY: 75,
+        head: [['Sr.', 'Item Name / Firm', 'Qty', 'Order Info', 'Delivery Data']],
+        body: items.map((order: any, i: number) => [
+          i + 1,
+          `${order.itemName}\n(Firm: ${order.firmName || 'N/A'})`,
+          order.reQty,
+          `No: ${order.orderNo}\nDate: ${order.orderDate}\nCont: ${order.contractNo || 'N/A'}`,
+          order.deliveryInfo || '---'
+        ]),
+        theme: 'grid',
+        headStyles: { textColor: 20, fontStyle: 'bold' },
+        styles: { fontSize: 9, cellPadding: 3 }
+      });
+
+      // --- Footer: Receiver Sign ---
+      const finalY = (doc as any).lastAutoTable.finalY + 20;
+      doc.line(140, finalY + 15, 190, finalY + 15);
+      doc.setFont("helvetica", "bold");
+      doc.text("Sign for Receiver", 165, finalY + 20, { align: "center" });
+
+      // --- Legal Terms ---
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("Terms & Conditions:", 14, finalY + 35);
+      doc.setFont("helvetica", "normal");
+      const terms = [
+        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect must be reported immediately.",
+        "2. If damage is found, report immediately to Dispatch Dept at +91 8200093336.",
+        "3. Material replacement requests must be communicated immediately."
+      ];
+      doc.text(terms, 14, finalY + 40, { maxWidth: 180 });
+    });
+
+    doc.save(`Delivery_Challan_${new Date().getTime()}.pdf`);
+  };
+
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
@@ -498,6 +595,14 @@ export default function OrdersListPage() {
             {tab}
           </button>
         ))}
+        {activeTab === "DELIVERY" && (
+          <button
+            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[])}
+            className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
+          >
+            <FiDownload className="text-xl" /> Download Challan
+          </button>
+        )}
       </div>
 
       {/* Table Container */}
