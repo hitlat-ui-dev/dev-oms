@@ -1,30 +1,54 @@
 "use client";
 import { useState, useMemo } from "react";
-import { FiSave, FiSearch, FiCalendar, FiUser, FiTag } from "react-icons/fi";
+import { FiSave, FiSearch, FiCalendar, FiUser, FiTag, FiDownload } from "react-icons/fi";
 
-export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[], onRefresh: () => void }) {
+interface ReceivedPurchaseTableProps {
+  data: any[];
+  onRefresh: () => void;
+  // Add these value props:
+  filterDate: string;
+  filterItem: string;
+  filterVendor: string;
+  filterCategory: string;
+  // Keep your setter props:
+  setFilterDate: (val: string) => void;
+  setFilterItem: (val: string) => void;
+  setFilterVendor: (val: string) => void;
+  setFilterCategory: (val: string) => void;
+}
+
+export default function ReceivedPurchaseTable({ 
+  data, 
+  onRefresh,
+  filterDate,      // Add this
+  filterItem,      // Add this
+  filterVendor,    // Add this
+  filterCategory,
+  setFilterDate,
+  setFilterItem,
+  setFilterVendor,
+  setFilterCategory 
+}: ReceivedPurchaseTableProps) {
   const [editState, setEditState] = useState<Record<string, any>>({});
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
 
   // Filter States
-  const [filterDate, setFilterDate] = useState("");
-  const [filterItem, setFilterItem] = useState("");
-  const [filterVendor, setFilterVendor] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
+  
 
   // 1. Filter Logic
   const filteredData = useMemo(() => {
     if (!Array.isArray(data)) return [];
-    
+
     // First, filter the data
     const filtered = data.filter((item) => {
+      
       const dateStr = new Date(item.receivedAt).toLocaleDateString('en-CA'); // yyyy-mm-dd
       const dateMatch = filterDate ? dateStr.includes(filterDate) : true;
-      const itemMatch = item.itemName?.toLowerCase().includes(filterItem.toLowerCase()) || 
-                         item.sku?.toLowerCase().includes(filterItem.toLowerCase());
+      const itemMatch = item.itemName?.toLowerCase().includes(filterItem.toLowerCase()) ||
+        item.sku?.toLowerCase().includes(filterItem.toLowerCase());
       const vendorMatch = (item.vendor || "").toLowerCase().includes(filterVendor.toLowerCase());
       const catMatch = (item.category || "").toLowerCase().includes(filterCategory.toLowerCase());
-      
+
       return dateMatch && itemMatch && vendorMatch && catMatch;
     });
 
@@ -44,7 +68,7 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
   const handleUpdate = async (item: any) => {
     const updates = editState[item._id];
     setIsUpdating(item._id);
-    
+
     try {
       const res = await fetch("/api/received-purchase", {
         method: "PATCH",
@@ -63,7 +87,7 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
           delete newState[item._id];
           return newState;
         });
-        onRefresh(); 
+        onRefresh();
       }
     } catch (err) {
       alert("❌ Update failed");
@@ -72,6 +96,7 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
     }
   };
 
+  
   return (
     <div className="flex flex-col gap-4">
       {/* 2. Filter Bar */}
@@ -80,14 +105,20 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
           <label className="text-[10px] font-black uppercase text-slate-400 mb-1.5 block px-1">Date</label>
           <div className="relative">
             <FiCalendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input type="date" className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500" onChange={(e) => setFilterDate(e.target.value)} />
+            <input type="date"
+              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500"
+              onChange={(e) => setFilterDate(e.target.value)}
+            />
           </div>
         </div>
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 mb-1.5 block px-1">Item / SKU</label>
           <div className="relative">
             <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input type="text" placeholder="Search item..." className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500" onChange={(e) => setFilterItem(e.target.value)} />
+            <input type="text"
+              placeholder="Search item..."
+              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500"
+              onChange={(e) => setFilterItem(e.target.value)} />
           </div>
         </div>
         <div>
@@ -136,9 +167,9 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
                 </td>
                 <td className="py-4 px-6 text-[10px] font-bold text-slate-400 uppercase">{item.category || "General"}</td>
                 <td className="py-4 px-6 text-[10px] font-black text-slate-600 uppercase">{item.vendor}</td>
-                
+
                 <td className="py-4 px-6 text-center">
-                  <input 
+                  <input
                     type="number"
                     className="w-16 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5 text-xs font-black text-blue-700 text-center outline-none focus:ring-2 focus:ring-blue-500"
                     value={editState[item._id]?.receivedQty ?? item.receivedQty}
@@ -149,7 +180,7 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
                 <td className="py-4 px-6 text-center">
                   <div className="flex items-center justify-center gap-1">
                     <span className="text-xs font-bold text-slate-400">₹</span>
-                    <input 
+                    <input
                       type="number"
                       className="w-20 bg-green-50 border border-green-100 rounded-lg px-2 py-1.5 text-xs font-black text-green-700 text-center outline-none focus:ring-2 focus:ring-green-500"
                       value={editState[item._id]?.rate ?? item.rate}
@@ -160,7 +191,7 @@ export default function ReceivedPurchaseTable({ data, onRefresh }: { data: any[]
 
                 <td className="py-4 px-6 text-right">
                   {editState[item._id] && (
-                    <button 
+                    <button
                       onClick={() => handleUpdate(item)}
                       disabled={isUpdating === item._id}
                       className="p-2.5 bg-slate-900 text-white rounded-xl hover:bg-black transition-all shadow-md active:scale-95 disabled:opacity-50"

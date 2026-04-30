@@ -770,7 +770,16 @@ export default function OrdersListPage() {
                     {order.contractNo || "N/A"},
                     {order.contractUrl && <a href={order.contractUrl} target="_blank" className="text-blue-500 inline-block ml-1"><FiExternalLink size={11} /></a>}
                   </div>
-                  <div className="text-[9px] text-slate-800">{order.contractDate || "N/A"}</div>
+                  <div className="text-[9px] text-slate-800">
+                    {/* {order.contractDate || "N/A"} */}
+                    {order.contractDate
+                      ? new Date(order.contractDate).toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: '2-digit'
+                      }).replace(/\//g, '-')
+                      : "N/A"}
+                  </div>
                 </td>
 
                 <td className="px-3 py-2 text-center leading-tight">

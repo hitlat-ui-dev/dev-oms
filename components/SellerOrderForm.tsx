@@ -121,6 +121,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     //console.log("Data being sent to DB:", formData);
     setLoading(true);
 
+    if (!formData.reQty || formData.reQty <= 0) {
+      alert("Please enter a quantity more than 0");
+      return; // STOP the function here
+    }
+    
     try {
       // Decide if we are updating or creating
       const isEditing = !!initialData?._id;
@@ -224,8 +229,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               required
               className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
               placeholder="Enter quantity"
-              // Priority 1: reQty (for edits/splits), Priority 2: orderQty (for new orders), Fallback: 0
-              value={formData.reQty ?? formData.orderQty ?? 0}
+              value={formData.reQty ?? formData.orderQty ?? ""}
               onChange={(e) => {
                 const val = Number(e.target.value);
                 setFormData({

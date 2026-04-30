@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiPlus } from "react-icons/fi";
+import { FiDownload, FiPlus } from "react-icons/fi";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import ReceivedQtyModal from "@/components/ReceivedQtyModal";
 import PurchaseRequestTable from "@/components/purchase/PurchaseRequestTable";
 import OrderPlaceTable from "@/components/purchase/OrderPlaceTable";
 import ReceivedPurchaseTable from "@/components/purchase/ReceivedPurchaseTable";
 import PurchaseReturnPage from "@/components/purchase/PurchaseReturnPage";
+import * as XLSX from 'xlsx';
 
 // 1. Define the Interface to fix "red line" property errors
 interface StockItem {
@@ -35,6 +36,11 @@ export default function PurchaseLogisticsPage() {
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
   const [editData, setEditData] = useState<Record<string, any>>({});
 
+  const [filterDate, setFilterDate] = useState("");
+  const [filterItem, setFilterItem] = useState("");
+  const [filterVendor, setFilterVendor] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
+
   const fetchVendors = async () => {
     try {
       const res = await fetch("/api/vendors");
@@ -44,6 +50,7 @@ export default function PurchaseLogisticsPage() {
       console.error("Vendor fetch error:", err);
     }
   };
+
 
   // 3. Unified Fetch Logic with "Newest First" sorting
   const fetchTabData = async () => {
@@ -164,6 +171,47 @@ export default function PurchaseLogisticsPage() {
     } catch (err) { alert("Delete failed"); }
   };
 
+  // inside PurchaseLogisticsPage component
+  const filteredReceivedData = useMemo(() => {
+    return receivedRequests.filter((item) => {
+      const matchesItem = !filterItem ||
+        item.itemName?.toLowerCase().includes(filterItem.toLowerCase()) ||
+        item.sku?.toLowerCase().includes(filterItem.toLowerCase());
+
+      const matchesVendor = !filterVendor ||
+        item.vendor?.toLowerCase().includes(filterVendor.toLowerCase());
+
+      const matchesCategory = !filterCategory ||
+        item.category?.toLowerCase().includes(filterCategory.toLowerCase());
+
+      const matchesDate = !filterDate ||
+        (item.createdAt && new Date(item.createdAt).toISOString().split('T')[0] === filterDate);
+
+      return matchesItem && matchesVendor && matchesCategory && matchesDate;
+    });
+  }, [receivedRequests, filterItem, filterVendor, filterCategory, filterDate]);
+
+  // Update handleExportExcel to use filteredReceivedData
+  const handleExportExcel = () => {
+    if (filteredReceivedData.length === 0) return alert("No data to export");
+
+    const reportData = filteredReceivedData.map(item => ({
+      "Order ID": item.orderNo || item.orderNumber || "N/A",
+      "Date": new Date(item.createdAt).toLocaleDateString(),
+      "Item Name": item.itemName,
+      "SKU": item.sku || "N/A",
+      "Vendor": item.vendor,
+      "Category": item.category || "General",
+      "Rec Qty": item.receivedQty || 0,
+      "Rate": item.rate || 0,
+      "Total": (item.rate || 0) * (item.receivedQty || 0)
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(reportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Filtered Received Orders");
+    XLSX.writeFile(wb, "Received_Orders_Report.xlsx");
+  };
   return (
     <div className="pt-4 px-4 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
       <div className="flex justify-between mb-8 items-center">
@@ -178,15 +226,23 @@ export default function PurchaseLogisticsPage() {
             </button>
           ))}
         </div>
-
-        {activeTab === "Purchase Request" && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => setIsRequestModalOpen(true)}
-            className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
+            onClick={handleExportExcel}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-emerald-100 transition-all active:scale-95 uppercase"
           >
-            <FiPlus /> New Request
+            <FiDownload className="text-sm" />
+            Excel Report
           </button>
-        )}
+          {activeTab === "Purchase Request" && (
+            <button
+              onClick={() => setIsRequestModalOpen(true)}
+              className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
+            >
+              <FiPlus /> New Request
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-4">
@@ -195,7 +251,7 @@ export default function PurchaseLogisticsPage() {
             data={prRequests}
             onInputChange={handleInputChange}
             vendors={vendors}
-            stockData={sortedStock} 
+            stockData={sortedStock}
             onSave={handleSaveOrder}
             onDelete={handleDelete}
           />
@@ -211,31 +267,42 @@ export default function PurchaseLogisticsPage() {
 
         {activeTab === "Received Purchase" && (
           <ReceivedPurchaseTable
-            data={receivedRequests}
+            data={filteredReceivedData}
             onRefresh={fetchTabData}
+
+            // Pass the state values:
+            filterDate={filterDate}
+            filterItem={filterItem}
+            filterVendor={filterVendor}
+            filterCategory={filterCategory}
+            // Pass the setters:
+            setFilterDate={setFilterDate}
+            setFilterItem={setFilterItem}
+            setFilterVendor={setFilterVendor}
+            setFilterCategory={setFilterCategory}
           />
         )}
 
         {activeTab === "Purchase Return" && <PurchaseReturnPage />}
       </div>
 
-      <PurchaseRequestModal 
-  isOpen={isRequestModalOpen} 
-  stockData={sortedStock} // <--- Add this
-  onClose={() => { 
-    setIsRequestModalOpen(false); 
-    fetchTabData(); // or fetchRequests() depending on your function name
-  }} 
-/>
+      <PurchaseRequestModal
+        isOpen={isRequestModalOpen}
+        stockData={sortedStock} // <--- Add this
+        onClose={() => {
+          setIsRequestModalOpen(false);
+          fetchTabData(); // or fetchRequests() depending on your function name
+        }}
+      />
 
       {selectedRequest && (
         <ReceivedQtyModal
           isOpen={isReceivedModalOpen}
           request={selectedRequest}
-          onClose={() => { 
-            setIsReceivedModalOpen(false); 
-            setSelectedRequest(null); 
-            fetchTabData(); 
+          onClose={() => {
+            setIsReceivedModalOpen(false);
+            setSelectedRequest(null);
+            fetchTabData();
           }}
         />
       )}

@@ -152,7 +152,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (itemName) {
         const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
         await db.collection("stock").updateOne(stockFilter, {
-          $inc: { quantity: -shipQty }
+          $inc: { quantity: -shipQty, reQty: -shipQty }
         });
       }
 
