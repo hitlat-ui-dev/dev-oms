@@ -105,23 +105,52 @@ export async function POST(req: Request) {
 export async function PATCH(req: NextRequest) {
   try {
     const client = await clientPromise;
-    const db = client.db("dev_oms_db"); // Ensure DB name is explicit
+    const db = client.db("dev_oms_db");
     const { id, receivedQty, rate } = await req.json();
 
     if (!id) return NextResponse.json({ error: "ID is required" }, { status: 400 });
 
-    // Updated collection name to match POST route
-    const updateResult = await db.collection("purchase_received").updateOne(
+    // 1. Find the existing record to get the old values
+    // Note: Ensure your collection name is consistent (you used "Received purchase" in POST)
+    const existingRecord = await db.collection("Received purchase").findOne({ 
+      _id: new ObjectId(id) 
+    });
+
+    if (!existingRecord) {
+      return NextResponse.json({ error: "Record not found" }, { status: 404 });
+    }
+
+    const oldQty = Number(existingRecord.receivedQty || 0);
+    const newQty = Number(receivedQty);
+    const qtyDifference = newQty - oldQty; // e.g., 55 - 50 = +5
+
+    // 2. Update the "Received purchase" log
+    const updateResult = await db.collection("Received purchase").updateOne(
       { _id: new ObjectId(id) },
       { 
         $set: { 
-          receivedQty: Number(receivedQty), 
+          receivedQty: newQty, 
           rate: Number(rate) 
         } 
       }
     );
 
-    return NextResponse.json({ success: true, modifiedCount: updateResult.modifiedCount });
+    // 3. Sync with STOCK DB
+    // Use $inc with the difference (qtyDifference)
+    await db.collection("stock").updateOne(
+      { sku: existingRecord.sku },
+      { 
+        $inc: { quantity: qtyDifference },
+        $set: { lastUpdated: new Date() }
+      }
+    );
+
+    return NextResponse.json({ 
+      success: true, 
+      newTotalReceived: newQty, 
+      stockAdjustedBy: qtyDifference 
+    });
+
   } catch (error: any) {
     console.error("Update Error:", error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

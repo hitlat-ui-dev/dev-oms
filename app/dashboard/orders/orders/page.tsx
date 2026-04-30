@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { LuRotateCcw } from "react-icons/lu";
 
 
 const TABS = [
@@ -37,12 +38,15 @@ export default function OrdersListPage() {
     category: "",
     firm: "",
     buyerName: "",
-    date: ""
+    startDate: "", // Change from 'date' to 'startDate'
+    endDate: ""
   });
 
   const [moveToCheck, setMoveToCheck] = useState(false);
   const [partialError, setPartialError] = useState("");
-  const [sellers, setSellers] = useState<Seller[]>([]);
+
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [sellers, setSellers] = useState<any[]>([]);
 
   const [stock, setStock] = useState<StockItem[]>([]);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -66,21 +70,32 @@ export default function OrdersListPage() {
 
   const fetchTabData = async () => {
     try {
+      // 1. YOUR ORIGINAL STOCK LOGIC (Kept exactly the same)
       const stockRes = await fetch('/api/stock');
       const stockData = await stockRes.json();
-      // Ensure we set the array correctly (some APIs return { data: [] })
       setStock(Array.isArray(stockData) ? stockData : stockData.items || []);
 
-      // Fetch Sellers/Buyer DB Data (For the PDF details)
+      // 2. YOUR ORIGINAL SELLERS LOGIC (Kept exactly the same)
       const sellerRes = await fetch('/api/sellers');
       const sellerData = await sellerRes.json();
-
-      // This fills the 'sellers' variable so the red line disappears
       setSellers(Array.isArray(sellerData) ? sellerData : []);
+
+      // 3. NEW COMPANY LOGIC (Added as a separate try-catch so it cannot break the others)
+      try {
+        const companyRes = await fetch('/api/companies');
+        if (companyRes.ok) {
+          const companyData = await companyRes.json();
+          setCompanies(Array.isArray(companyData) ? companyData : []);
+        }
+      } catch (companyError) {
+        console.error("Optional Companies fetch failed, but Stock/Sellers are safe.");
+      }
+
     } catch (error) {
-      console.error("Failed to fetch stock:", error);
+      // This maintains your existing error logging
+      console.error("Failed to fetch dashboard data:", error);
     }
-  }
+  };
   const sortedStock = useMemo(() => {
     if (!stock || !Array.isArray(stock)) return [];
     return [...stock].sort((a, b) => {
@@ -112,15 +127,39 @@ export default function OrdersListPage() {
       .includes(filters.buyerName.toLowerCase().trim());
 
     // 3. Date check
-    const matchesDate = !filters.date || (
-      order.createdAt && order.createdAt.toString().substring(0, 10) === filters.date
-    ) || (
-        order.orderDate && order.orderDate.toString().substring(0, 10) === filters.date
-      );
+    const orderDateStr = order.orderDate || order.createdAt || "";
+    const orderTime = orderDateStr ? new Date(orderDateStr).setHours(0, 0, 0, 0) : null;
 
-    // ALL conditions must be true for the row to appear
+    // Convert filter inputs to timestamps for comparison
+    const start = filters.startDate ? new Date(filters.startDate).setHours(0, 0, 0, 0) : null;
+    const end = filters.endDate ? new Date(filters.endDate).setHours(23, 59, 59, 999) : null;
+
+    let matchesDate = true;
+    if (orderTime) {
+      if (start && end) {
+        matchesDate = orderTime >= start && orderTime <= end;
+      } else if (start) {
+        matchesDate = orderTime >= start;
+      } else if (end) {
+        matchesDate = orderTime <= end;
+      }
+    } else if (start || end) {
+      // If user is filtering by date but order has no date, hide it
+      matchesDate = false;
+    }
+
     return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
   });
+  const clearFilters = () => {
+    setFilters({
+      itemName: "",
+      category: "",
+      firm: "",
+      buyerName: "",
+      startDate: "",
+      endDate: ""
+    });
+  };
 
 
   // 1. Move fetchOrders outside of useEffect so other functions can call it
@@ -184,6 +223,7 @@ export default function OrdersListPage() {
     }
   };
 
+
   const handleStatusUpdate = async (orderId: string, newStatus: string) => {
     const orderToUpdate = orders.find(o => o._id === orderId);
     if (!orderToUpdate) return;
@@ -195,6 +235,7 @@ export default function OrdersListPage() {
         const stockRes = await fetch(`/api/stock?search=${orderToUpdate.itemName}`);
         const stocks = await stockRes.json();
         const currentStock = stocks.find((s: any) => s.itemName === orderToUpdate.itemName)?.quantity || 0;
+
 
         if (currentStock < orderToUpdate.reQty) {
           setSelectedOrderId(orderId);
@@ -286,9 +327,17 @@ export default function OrdersListPage() {
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
 
+    const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
+    const avStock = stockData?.totalQty ?? 0;
+
     if (shipQty > orderToUpdate.reQty) return alert("Quantity exceeds order limit");
 
     const shipQtyNum = Number(shipQty);
+
+    if (shipQtyNum > avStock) {
+      alert(`Available quantity is low! You only have ${avStock} in stock.`);
+      return; // Stop the execution here
+    }
     const isFullQty = shipQtyNum === orderToUpdate.reQty;
 
     try {
@@ -425,89 +474,124 @@ export default function OrdersListPage() {
   };
 
   interface Seller {
-  _id: string;
-  buyerName: string;
-  instituteName: string;
-  mobile: string;
-  address: string;
-  place: string;
-}
+    _id?: string;
+    buyerName?: string;
+    instituteName?: string;
+    mobile?: string;
+    address?: string;
+    place?: string;
+  }
 
-  const downloadDeliveryChallan = (filteredOrders: any[], sellerDB: any[]) => {
+  const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[]) => {
     const doc = new jsPDF();
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, '0');
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const yy = String(today.getFullYear()).slice(-2);
+    const formattedDate = `${dd}-${mm}-${yy}`;
 
-    // 1. Group orders by Buyer Name
-    const grouped = filteredOrders.reduce((acc: any, order) => {
-      const key = order.buyerName || "General Buyer";
+    // 1. Group by sellerId
+    const groupedBySeller = filteredOrders.reduce((acc: any, order) => {
+      const key = order.sellerId || "unknown";
       if (!acc[key]) acc[key] = [];
       acc[key].push(order);
       return acc;
     }, {});
 
-    Object.keys(grouped).forEach((buyerKey, index) => {
+    // Variable to store the name for the final filename
+    let fileNameBase = "Challan";
+
+    Object.keys(groupedBySeller).forEach((sellerId, index) => {
       if (index > 0) doc.addPage();
 
-      const items = grouped[buyerKey];
-      // 2. Fetch Buyer Info from Seller DB (image_21e812.png)
-      const sellerInfo = (sellers as Seller[]).find(s => s.buyerName === buyerKey) || ({} as Seller);
+      const items = groupedBySeller[sellerId];
+      // Fix: Cast the found seller to the Seller interface to remove red lines
+      const sellerInfo = (sellers.find(s => s._id === sellerId) as Seller) || {};
 
-      // --- Header Title ---
+      // Capture the name of the first seller for the filename
+      if (index === 0) {
+        fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || "Challan";
+      }
+
+      // --- Header ---
       doc.setFontSize(22);
       doc.setFont("helvetica", "bold");
       doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
 
-      // --- Buyer Address Section (Dynamic from Seller DB) ---
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
+
+      // --- Buyer Details ---
       doc.setFontSize(11);
       doc.setFont("helvetica", "normal");
       doc.text("To,", 14, 35);
       doc.setFont("helvetica", "bold");
-      doc.text(`${buyerKey}`, 14, 42); // PANKAJBHAI
+      doc.text(`${sellerInfo.buyerName || items[0].buyerName || 'Valued Customer'}`, 14, 42);
+
       doc.setFont("helvetica", "normal");
       doc.text([
-        `Institute: ${sellerInfo.instituteName || 'N/A'}`, // Matches your DB
-        `Address: ${sellerInfo.address || '---'}`,       // Matches your DB
-        `Place: ${sellerInfo.place || '---'}`,           // Matches your DB
-        `Mobile: ${sellerInfo.mobile || '---'}`          // Matches your DB (was "mobile" in your image)
+        `Institute: ${sellerInfo.instituteName || items[0].instituteName || 'N/A'}`,
+        `Address: ${sellerInfo.address || '---'}`,
+        `Place: ${sellerInfo.place || '---'}`,
+        `Mobile: ${sellerInfo.mobile || '---'}`
       ], 14, 48);
 
-      // --- Items Table (Including Order details) ---
+      // --- Items Table ---
       autoTable(doc, {
         startY: 75,
-        head: [['Sr.', 'Item Name / Firm', 'Qty', 'Order Info', 'Delivery Data']],
-        body: items.map((order: any, i: number) => [
-          i + 1,
-          `${order.itemName}\n(Firm: ${order.firmName || 'N/A'})`,
-          order.reQty,
-          `No: ${order.orderNo}\nDate: ${order.orderDate}\nCont: ${order.contractNo || 'N/A'}`,
-          order.deliveryInfo || '---'
-        ]),
+        head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
+        body: items.map((order: any, i: number) => {
+          const company = companies.find(c => c.firmCode === order.firmCode);
+
+          const orderDisplay = `${order.orderNo}\n${order.createdAt
+            ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
+            : "N/A"}`;
+
+          const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
+            ? `${order.contractNo}\n(${order.contractDate || ''})`
+            : '---';
+
+          const transportDetails = order.transportName
+            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}`
+            : 'Direct Delivery';
+
+          return [
+            i + 1,
+            orderDisplay,
+            order.itemName,
+            company?.firmName || order.firm || 'N/A',
+            `${order.reQty} ${order.unit || ''}`,
+            contractDisplay,
+            transportDetails
+          ];
+        }),
         theme: 'grid',
         headStyles: { textColor: 20, fontStyle: 'bold' },
-        styles: { fontSize: 9, cellPadding: 3 }
+        styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+        didDrawCell: (data) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const order = items[data.row.index];
+            if (order.contractUrl) {
+              doc.setTextColor(0, 0, 255);
+              doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
+            }
+          }
+        }
       });
 
-      // --- Footer: Receiver Sign ---
-      const finalY = (doc as any).lastAutoTable.finalY + 20;
+      // --- Footer Section ---
+      const finalY = (doc as any).lastAutoTable.finalY + 15;
+      if (finalY > 240) doc.addPage();
       doc.line(140, finalY + 15, 190, finalY + 15);
       doc.setFont("helvetica", "bold");
       doc.text("Sign for Receiver", 165, finalY + 20, { align: "center" });
-
-      // --- Legal Terms ---
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text("Terms & Conditions:", 14, finalY + 35);
-      doc.setFont("helvetica", "normal");
-      const terms = [
-        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect must be reported immediately.",
-        "2. If damage is found, report immediately to Dispatch Dept at +91 8200093336.",
-        "3. Material replacement requests must be communicated immediately."
-      ];
-      doc.text(terms, 14, finalY + 40, { maxWidth: 180 });
     });
 
-    doc.save(`Delivery_Challan_${new Date().getTime()}.pdf`);
+    // Final Save Logic
+    const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
+    doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
   };
-
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
@@ -535,7 +619,7 @@ export default function OrdersListPage() {
         </div>
 
         {/* Row 2: The New Filter Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex flex-col gap-1">
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Item Name</label>
             <input
@@ -574,13 +658,31 @@ export default function OrdersListPage() {
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Order Date</label>
-            <input
-              type="date"
-              className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-              value={filters.date}
-              onChange={(e) => setFilters({ ...filters, date: e.target.value })}
-            />
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="From Date"
+              />
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="To Date"
+              />
+            </div>
+
           </div>
+          <button
+            onClick={clearFilters}
+            className="ml-auto flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-95"
+          >
+            <LuRotateCcw />
+            <span className="text-[10px] font-black uppercase">Reset</span>
+          </button>
         </div>
       </div>
 
@@ -597,7 +699,7 @@ export default function OrdersListPage() {
         ))}
         {activeTab === "DELIVERY" && (
           <button
-            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[])}
+            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[])}
             className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
           >
             <FiDownload className="text-xl" /> Download Challan
@@ -636,7 +738,7 @@ export default function OrdersListPage() {
                   </td>
                 )}
                 <td className="px-3 py-2 font-black text-blue-600 max-w-20">{order.orderNo}
-                  <span className="text-[9px] font-bold text-slate-400 block">
+                  <span className="text-[9px] font-bold text-slate-800 block">
                     {order.createdAt
                       ? new Date(order.createdAt).toLocaleDateString('en-GB', {
                         day: '2-digit',
@@ -651,15 +753,15 @@ export default function OrdersListPage() {
                   <div className="font-black text-slate-800 uppercase truncate leading-tight">{order.firmCode}</div>
                 </td>
                 <td className="px-3 py-2 max-w-28">
-                  <div className="text-[9px] font-bold text-slate-400 uppercase truncate">{order.instituteName}</div>
+                  <div className="text-[9px] font-bold text-slate-800 uppercase truncate">{order.instituteName}</div>
                 </td>
                 <td className="px-3 py-2 font-black text-blue-800/60 uppercase">{order.category}</td>
                 <td className="px-3 py-2 max-w-44">
                   <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
-                  <div className="text-[9px] text-slate-400">SKU: {order.sku},
+                  <div className="text-[9px] text-slate-800">SKU: {order.sku},
                     <b className="text-green-500">Stock: </b>
                     <span className="font-bold text-slate-700">
-                      {stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
+                      {stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
                     </span>
                   </div>
                 </td>
@@ -668,7 +770,7 @@ export default function OrdersListPage() {
                     {order.contractNo || "N/A"},
                     {order.contractUrl && <a href={order.contractUrl} target="_blank" className="text-blue-500 inline-block ml-1"><FiExternalLink size={11} /></a>}
                   </div>
-                  <div className="text-[9px] text-slate-400">{order.contractDate || "N/A"}</div>
+                  <div className="text-[9px] text-slate-800">{order.contractDate || "N/A"}</div>
                 </td>
 
                 <td className="px-3 py-2 text-center leading-tight">
@@ -848,6 +950,7 @@ export default function OrdersListPage() {
               setEditingOrder(null); // Clear data after closing
               fetchOrders();
             }}
+            //onSuccess={() => fetchOrders()}
             initialData={editingOrder} // Pass the order to the form
           />
         </div>
@@ -982,7 +1085,7 @@ export default function OrdersListPage() {
 
                     // 2. Use the EXACT logic from your <td>
                     if (currentOrder) {
-                      return stocks.find(s => s._id === currentOrder.itemId)?.reQty ?? 0;
+                      return stocks.find(s => s._id === currentOrder.itemId)?.totalQty ?? 0;
                     }
 
                     return 0;

@@ -64,12 +64,12 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
   // const totalAmount = useMemo(() => formData.orderQty * formData.rate, [formData.orderQty, formData.rate]);
   const totalAmount = useMemo(() => {
-  // Use reQty if available, otherwise orderQty, fallback to 0
-  const qty = formData.reQty ?? formData.orderQty ?? 0;
-  const rate = formData.rate ?? 0;
-  
-  return qty * rate;
-}, [formData.reQty, formData.orderQty, formData.rate]);
+    // Use reQty if available, otherwise orderQty, fallback to 0
+    const qty = formData.reQty ?? formData.orderQty ?? 0;
+    const rate = formData.rate ?? 0;
+
+    return qty * rate;
+  }, [formData.reQty, formData.orderQty, formData.rate]);
 
   const handleContractPaste = (e: React.ClipboardEvent) => {
     const html = e.clipboardData.getData("text/html");
@@ -135,7 +135,9 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
       if (res.ok) {
         alert(isEditing ? "Order Updated Successfully!" : "Order Saved Successfully!");
-
+        if (onClose) {
+          onClose();
+        }
         if (isModal && onClose) {
           onClose(); // This will trigger fetchOrders() in your main page
         } else {
