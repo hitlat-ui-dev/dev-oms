@@ -8,11 +8,19 @@ export default function RootPage() {
   useEffect(() => {
     const user = localStorage.getItem("oms_user");
     if (user) {
+      // If session exists, go to dashboard
       router.push("/dashboard");
     } else {
+      // Otherwise, go to login
       router.push("/login");
     }
   }, [router]);
 
-  return <div className="bg-slate-900 min-h-screen text-white flex items-center justify-center">Loading Dev OMS...</div>;
+  return (
+    <div className="bg-[#f3f6f9] min-h-screen flex items-center justify-center">
+       <div className="animate-pulse text-slate-400 font-bold uppercase tracking-widest">
+         Initializing Workspace...
+       </div>
+    </div>
+  );
 }
