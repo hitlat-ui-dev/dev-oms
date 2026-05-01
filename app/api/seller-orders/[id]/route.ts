@@ -234,7 +234,12 @@ if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN 
         }
       }
       else if (updateData.activeTab === "READY TO SHIP") {
-        if (["HISAB", "CANCELL ORDER", "RETURN ORDER"].includes(updateData.status)) {
+        if (updateData.status === "FULFILLED") {
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: -adjustQty }
+          });
+        }
+        else if (["HISAB", "CANCELL ORDER", "RETURN ORDER"].includes(updateData.status)) {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { quantity: adjustQty }
           });

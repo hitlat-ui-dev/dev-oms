@@ -141,43 +141,43 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
   };
 
   const handleSaveToStock = async () => {
-  if (!selectedRequest) return;
-  if (damageQty < 0) return alert("Damage quantity cannot be negative");
+    if (!selectedRequest) return;
+    if (damageQty < 0) return alert("Damage quantity cannot be negative");
 
-  setIsSaving(true);
-  try {
-    const res = await fetch("/api/received-purchase", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        originalOrderId: selectedRequest._id,
-        orderNumber: selectedRequest.orderNumber,
-        itemName: selectedRequest.itemName,
-        sku: selectedRequest.sku,
-        category: selectedRequest.category,
-        orderQty: selectedRequest.orderQty,
-        receivedQty: Number(receivedQty),
-        damageQty: Number(damageQty), // This triggers the Return logic in backend
-        unit: selectedRequest.unit,
-        vendor: selectedRequest.vendor,
-        rate: Number(editRate), // Using the updated rate
-        moveRemainingTo: moveRemainingTo,
-      }),
-    });
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/received-purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalOrderId: selectedRequest._id,
+          orderNumber: selectedRequest.orderNumber,
+          itemName: selectedRequest.itemName,
+          sku: selectedRequest.sku,
+          category: selectedRequest.category,
+          orderQty: selectedRequest.orderQty,
+          receivedQty: Number(receivedQty),
+          damageQty: Number(damageQty), // This triggers the Return logic in backend
+          unit: selectedRequest.unit,
+          vendor: selectedRequest.vendor,
+          rate: Number(editRate), // Using the updated rate
+          moveRemainingTo: moveRemainingTo,
+        }),
+      });
 
-    if (res.ok) {
-      alert("✅ Success: Stock updated and Damage recorded in Returns.");
-      setSelectedRequest(null);
-      setDamageQty(0);
-      onRefresh();
+      if (res.ok) {
+        alert("✅ Success: Stock updated and Damage recorded in Returns.");
+        setSelectedRequest(null);
+        setDamageQty(0);
+        onRefresh();
+      }
+    } catch (err) {
+      console.error(err);
+      alert("❌ Error processing receipt");
+    } finally {
+      setIsSaving(false);
     }
-  } catch (err) {
-    console.error(err);
-    alert("❌ Error processing receipt");
-  } finally {
-    setIsSaving(false);
-  }
-};
+  };
 
 
   const handleCancelClick = async (req: any) => {
@@ -231,79 +231,81 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
 
       {/* Table */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50/80 border-b border-slate-100">
-            <tr>
-              <th className="py-3 px-4 w-10">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
-                  checked={selectedIds.length === filteredData.length && filteredData.length > 0}
-                  onChange={toggleSelectAll}
-                />
-              </th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Order ID</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Date</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Item Details</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Category</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">PR Qty</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Order Qty</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Rate</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Vendor</th>
-              <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredData.map((req) => (
-              <tr key={req._id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                <td className="py-3 px-4">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50/80 border-b border-slate-100">
+              <tr>
+                <th className="py-3 px-4 w-10">
                   <input
                     type="checkbox"
                     className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
-                    checked={selectedIds.includes(req._id)}
-                    onChange={() => toggleSelect(req._id)}
+                    checked={selectedIds.length === filteredData.length && filteredData.length > 0}
+                    onChange={toggleSelectAll}
                   />
-                </td>
-                <td className="py-3 px-4 font-black text-blue-600 text-xs">{req.orderNumber || "---"}</td>
-                <td className="py-3 px-4 text-[11px] font-bold text-slate-500">
-                  {new Date(req.orderedAt || req.createdAt).toLocaleDateString('en-GB')}
-                </td>
-                <td className="py-3 px-4">
-                  <div className="flex flex-col">
-                    <span className="text-[9px] font-bold text-blue-500 mb-1">{req.sku || "N/A"}</span>
-                    <span className="font-black text-slate-800 text-xs uppercase">{req.itemName}</span>
-                  </div>
-                </td>
-                <td className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase">{req.category || "General"}</td>
-                <td className="py-3 px-4 text-center text-xs font-bold text-slate-500">{req.prQty}</td>
-                <td className="py-3 px-4 text-center font-black text-slate-800 text-xs">{req.orderQty}</td>
-                <td className="py-3 px-4 font-bold text-blue-600 text-xs">₹{req.rate}</td>
-                <td className="py-3 px-4 text-[10px] font-black text-slate-600 uppercase">{req.vendor}</td>
-                <td className="py-3 px-4">
-                  <div className="flex justify-end gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedRequest(req);
-                        setReceivedQty(req.orderQty);
-                        // This line ensures the rate shows up in the textbox immediately
-                        setEditRate(req.rate || 0);
-                      }}
-                      className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white transition-all"
-                    >
-                      <FiCheckCircle size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleCancelClick(req)}
-                      className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all"
-                    >
-                      <FiXCircle size={14} />
-                    </button>
-                  </div>
-                </td>
+                </th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Order ID</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Date</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Item Details</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Category</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">PR Qty</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Order Qty</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Rate</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Vendor</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredData.map((req) => (
+                <tr key={req._id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                  <td className="py-3 px-4">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                      checked={selectedIds.includes(req._id)}
+                      onChange={() => toggleSelect(req._id)}
+                    />
+                  </td>
+                  <td className="py-3 px-4 font-black text-blue-600 text-xs">{req.orderNumber || "---"}</td>
+                  <td className="py-3 px-4 text-[11px] font-bold text-slate-500">
+                    {new Date(req.orderedAt || req.createdAt).toLocaleDateString('en-GB')}
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-bold text-blue-500 mb-1">{req.sku || "N/A"}</span>
+                      <span className="font-black text-slate-800 text-xs uppercase">{req.itemName}</span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 text-[10px] font-bold text-slate-500 uppercase">{req.category || "General"}</td>
+                  <td className="py-3 px-4 text-center text-xs font-bold text-slate-500">{req.prQty}</td>
+                  <td className="py-3 px-4 text-center font-black text-slate-800 text-xs">{req.orderQty}</td>
+                  <td className="py-3 px-4 font-bold text-blue-600 text-xs">₹{req.rate}</td>
+                  <td className="py-3 px-4 text-[10px] font-black text-slate-600 uppercase">{req.vendor}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setSelectedRequest(req);
+                          setReceivedQty(req.orderQty);
+                          // This line ensures the rate shows up in the textbox immediately
+                          setEditRate(req.rate || 0);
+                        }}
+                        className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white transition-all"
+                      >
+                        <FiCheckCircle size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleCancelClick(req)}
+                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all"
+                      >
+                        <FiXCircle size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Received Modal */}
@@ -319,24 +321,24 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
             <div className="p-6 space-y-4">
               {/* Item Info & Edit Rate */}
               <div className="flex justify-between items-start bg-slate-50 p-4 rounded-2xl border border-slate-100">
-  <div>
-    <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Item: {selectedRequest.sku}</span>
-    <h4 className="font-black text-slate-800 uppercase text-sm">{selectedRequest.itemName}</h4>
-    <p className="text-[10px] text-blue-600 font-bold">Ordered Qty: {selectedRequest.orderQty}</p>
-  </div>
-  
-  <div className="text-right">
-    <label className="text-[9px] font-black text-blue-500 uppercase block mb-1">Edit Rate (₹)</label>
-    <input 
-      type="number" 
-      // This will now show the rate you set in the onClick above
-      value={editRate} 
-      onChange={(e) => setEditRate(Number(e.target.value))}
-      className="w-24 p-2 bg-white border border-blue-200 rounded-lg font-black text-right text-blue-600 outline-none focus:ring-2 focus:ring-blue-400 transition-all"
-      placeholder="0.00"
-    />
-  </div>
-</div>
+                <div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Item: {selectedRequest.sku}</span>
+                  <h4 className="font-black text-slate-800 uppercase text-sm">{selectedRequest.itemName}</h4>
+                  <p className="text-[10px] text-blue-600 font-bold">Ordered Qty: {selectedRequest.orderQty}</p>
+                </div>
+
+                <div className="text-right">
+                  <label className="text-[9px] font-black text-blue-500 uppercase block mb-1">Edit Rate (₹)</label>
+                  <input
+                    type="number"
+                    // This will now show the rate you set in the onClick above
+                    value={editRate}
+                    onChange={(e) => setEditRate(Number(e.target.value))}
+                    className="w-24 p-2 bg-white border border-blue-200 rounded-lg font-black text-right text-blue-600 outline-none focus:ring-2 focus:ring-blue-400 transition-all"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
 
               {/* Quantities Grid */}
               <div className="grid grid-cols-3 gap-3">

@@ -214,32 +214,42 @@ export default function PurchaseLogisticsPage() {
   };
   return (
     <div className="pt-4 px-4 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
-      <div className="flex justify-between mb-8 items-center">
-        <div className="flex gap-2 bg-white p-1.5 rounded-2xl border border-slate-200">
-          {["Purchase Request", "Order Place", "Received Purchase", "Purchase Return"].map((t) => (
-            <button
-              key={t} onClick={() => setActiveTab(t)}
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === t ? "bg-slate-900 text-white shadow-md" : "text-slate-400 hover:text-slate-600"
-                }`}
-            >
-              {t}
-            </button>
-          ))}
+      <div className="flex flex-col lg:flex-row lg:justify-between mb-8 gap-4 items-start lg:items-center">
+        {/* Tabs Section - Stacks on Mobile, Rows on Desktop */}
+        <div className="w-full lg:w-auto bg-white p-1.5 rounded-2xl border border-slate-200">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:flex gap-1.5">
+            {["Purchase Request", "Order Place", "Received Purchase", "Purchase Return"].map((t) => (
+              <button
+                key={t}
+                onClick={() => setActiveTab(t)}
+                className={`px-2 lg:px-6 py-2.5 rounded-xl text-[9px] lg:text-[10px] font-black uppercase transition-all text-center ${activeTab === t
+                    ? "bg-slate-900 text-white shadow-md"
+                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                  }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+
+        {/* Action Buttons Container */}
+        <div className="flex items-center gap-2 w-full lg:w-auto">
           <button
             onClick={handleExportExcel}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-emerald-100 transition-all active:scale-95 uppercase"
+            className="flex-1 lg:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-4 lg:px-6 py-3 rounded-2xl font-black text-[10px] flex items-center justify-center gap-2 tracking-widest shadow-xl shadow-emerald-100 transition-all active:scale-95 uppercase"
           >
-            <FiDownload className="text-sm" />
-            Excel Report
+            <FiDownload className="text-sm shrink-0" />
+            <span className="truncate">Excel Report</span>
           </button>
+
           {activeTab === "Purchase Request" && (
             <button
               onClick={() => setIsRequestModalOpen(true)}
-              className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-[10px] flex items-center gap-2 tracking-widest shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
+              className="flex-1 lg:flex-none bg-blue-600 text-white px-4 lg:px-8 py-3 rounded-2xl font-black text-[10px] flex items-center justify-center gap-2 tracking-widest shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95 uppercase"
             >
-              <FiPlus /> New Request
+              <FiPlus className="shrink-0" />
+              <span className="truncate">New Request</span>
             </button>
           )}
         </div>

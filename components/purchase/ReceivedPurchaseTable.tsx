@@ -17,8 +17,8 @@ interface ReceivedPurchaseTableProps {
   setFilterCategory: (val: string) => void;
 }
 
-export default function ReceivedPurchaseTable({ 
-  data, 
+export default function ReceivedPurchaseTable({
+  data,
   onRefresh,
   filterDate,      // Add this
   filterItem,      // Add this
@@ -27,13 +27,13 @@ export default function ReceivedPurchaseTable({
   setFilterDate,
   setFilterItem,
   setFilterVendor,
-  setFilterCategory 
+  setFilterCategory
 }: ReceivedPurchaseTableProps) {
   const [editState, setEditState] = useState<Record<string, any>>({});
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
 
   // Filter States
-  
+
 
   // 1. Filter Logic
   const filteredData = useMemo(() => {
@@ -41,7 +41,7 @@ export default function ReceivedPurchaseTable({
 
     // First, filter the data
     const filtered = data.filter((item) => {
-      
+
       const dateStr = new Date(item.receivedAt).toLocaleDateString('en-CA'); // yyyy-mm-dd
       const dateMatch = filterDate ? dateStr.includes(filterDate) : true;
       const itemMatch = item.itemName?.toLowerCase().includes(filterItem.toLowerCase()) ||
@@ -96,7 +96,7 @@ export default function ReceivedPurchaseTable({
     }
   };
 
-  
+
   return (
     <div className="flex flex-col gap-4">
       {/* 2. Filter Bar */}
@@ -139,76 +139,78 @@ export default function ReceivedPurchaseTable({
 
       {/* 3. Table */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50/80 border-b border-slate-100">
-            <tr>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Order ID</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Date</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Item Details</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Category</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Vendor</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rec. Qty</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rate</th>
-              <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {filteredData.map((item) => (
-              <tr key={item._id} className="hover:bg-slate-50 transition-colors">
-                <td className="py-4 px-6 font-black text-blue-600 text-xs">{item.orderNumber || "---"}</td>
-                <td className="py-4 px-6 text-[11px] font-bold text-slate-500">
-                  {new Date(item.receivedAt).toLocaleDateString('en-GB')}
-                </td>
-                <td className="py-4 px-6">
-                  <div className="flex flex-col">
-                    <span className="text-[9px] font-bold text-blue-500 mb-0.5">{item.sku || "N/A"}</span>
-                    <span className="font-black text-slate-800 text-xs uppercase">{item.itemName}</span>
-                  </div>
-                </td>
-                <td className="py-4 px-6 text-[10px] font-bold text-slate-400 uppercase">{item.category || "General"}</td>
-                <td className="py-4 px-6 text-[10px] font-black text-slate-600 uppercase">{item.vendor}</td>
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50/80 border-b border-slate-100">
+              <tr>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Order ID</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Date</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Item Details</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Category</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Vendor</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rec. Qty</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rate</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {filteredData.map((item) => (
+                <tr key={item._id} className="hover:bg-slate-50 transition-colors">
+                  <td className="py-4 px-6 font-black text-blue-600 text-xs">{item.orderNumber || "---"}</td>
+                  <td className="py-4 px-6 text-[11px] font-bold text-slate-500">
+                    {new Date(item.receivedAt).toLocaleDateString('en-GB')}
+                  </td>
+                  <td className="py-4 px-6">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-bold text-blue-500 mb-0.5">{item.sku || "N/A"}</span>
+                      <span className="font-black text-slate-800 text-xs uppercase">{item.itemName}</span>
+                    </div>
+                  </td>
+                  <td className="py-4 px-6 text-[10px] font-bold text-slate-400 uppercase">{item.category || "General"}</td>
+                  <td className="py-4 px-6 text-[10px] font-black text-slate-600 uppercase">{item.vendor}</td>
 
-                <td className="py-4 px-6 text-center">
-                  <input
-                    type="number"
-                    className="w-16 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5 text-xs font-black text-blue-700 text-center outline-none focus:ring-2 focus:ring-blue-500"
-                    value={editState[item._id]?.receivedQty ?? item.receivedQty}
-                    onChange={(e) => handleLocalChange(item._id, 'receivedQty', e.target.value)}
-                  />
-                </td>
-
-                <td className="py-4 px-6 text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <span className="text-xs font-bold text-slate-400">₹</span>
+                  <td className="py-4 px-6 text-center">
                     <input
                       type="number"
-                      className="w-20 bg-green-50 border border-green-100 rounded-lg px-2 py-1.5 text-xs font-black text-green-700 text-center outline-none focus:ring-2 focus:ring-green-500"
-                      value={editState[item._id]?.rate ?? item.rate}
-                      onChange={(e) => handleLocalChange(item._id, 'rate', e.target.value)}
+                      className="w-16 bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5 text-xs font-black text-blue-700 text-center outline-none focus:ring-2 focus:ring-blue-500"
+                      value={editState[item._id]?.receivedQty ?? item.receivedQty}
+                      onChange={(e) => handleLocalChange(item._id, 'receivedQty', e.target.value)}
                     />
-                  </div>
-                </td>
+                  </td>
 
-                <td className="py-4 px-6 text-right">
-                  {editState[item._id] && (
-                    <button
-                      onClick={() => handleUpdate(item)}
-                      disabled={isUpdating === item._id}
-                      className="p-2.5 bg-slate-900 text-white rounded-xl hover:bg-black transition-all shadow-md active:scale-95 disabled:opacity-50"
-                    >
-                      <FiSave size={14} />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filteredData.length === 0 && (
-          <div className="p-10 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest">
-            No matching records found
-          </div>
-        )}
+                  <td className="py-4 px-6 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <span className="text-xs font-bold text-slate-400">₹</span>
+                      <input
+                        type="number"
+                        className="w-20 bg-green-50 border border-green-100 rounded-lg px-2 py-1.5 text-xs font-black text-green-700 text-center outline-none focus:ring-2 focus:ring-green-500"
+                        value={editState[item._id]?.rate ?? item.rate}
+                        onChange={(e) => handleLocalChange(item._id, 'rate', e.target.value)}
+                      />
+                    </div>
+                  </td>
+
+                  <td className="py-4 px-6 text-right">
+                    {editState[item._id] && (
+                      <button
+                        onClick={() => handleUpdate(item)}
+                        disabled={isUpdating === item._id}
+                        className="p-2.5 bg-slate-900 text-white rounded-xl hover:bg-black transition-all shadow-md active:scale-95 disabled:opacity-50"
+                      >
+                        <FiSave size={14} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filteredData.length === 0 && (
+            <div className="p-10 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest">
+              No matching records found
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

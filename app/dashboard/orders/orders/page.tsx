@@ -6,11 +6,10 @@ import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCirc
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { LuRotateCcw } from "react-icons/lu";
-
+import * as XLSX from 'xlsx';
 
 const TABS = [
-  "ALL", "TO CHECK", "HISAB",
-  "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"
+  "ALL", "TO CHECK",  "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
 export default function OrdersListPage() {
@@ -553,7 +552,7 @@ export default function OrdersListPage() {
             : '---';
 
           const transportDetails = order.transportName
-            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}`
+            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark}`
             : 'Direct Delivery';
 
           return [
@@ -582,16 +581,74 @@ export default function OrdersListPage() {
 
       // --- Footer Section ---
       const finalY = (doc as any).lastAutoTable.finalY + 15;
-      if (finalY > 240) doc.addPage();
-      doc.line(140, finalY + 15, 190, finalY + 15);
+
+      // Ensure footer doesn't get cut off; move to next page if too low
+      if (finalY > 230) doc.addPage();
+
       doc.setFont("helvetica", "bold");
+      doc.line(140, finalY + 15, 190, finalY + 15);
       doc.text("Sign for Receiver", 165, finalY + 20, { align: "center" });
+
+      // Terms
+      doc.setFontSize(8);
+      doc.text("Terms & Conditions:", 14, finalY + 30);
+      doc.setFont("helvetica", "normal");
+      const terms = [
+        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
+        "2. Damage or defects must be reported immediately.",
+        "3. Communication for replacement must be immediate.",
+        "4. Dispatch Dept Contact: +91 8200093336"
+      ];
+      doc.text(terms, 14, finalY + 35, { maxWidth: 180 });
     });
 
     // Final Save Logic
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
     doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
   };
+
+  const handleExportSellingReport = () => {
+    // We use filteredOrders because it already handles the "ALL" tab logic 
+    // and respects the search filters (itemName, firm, buyer, dates)
+    const reportData = filteredOrders.map((order) => {
+      return {
+        "Order No": order.orderNo,
+        "Order Date": order.createdAt
+          ? new Date(order.createdAt).toLocaleDateString('en-GB', {
+            day: '2-digit', month: '2-digit', year: 'numeric'
+          }).replace(/\//g, '-')
+          : "N/A",
+        "Firm Name": order.firmCode || "N/A",
+        "Buyer Name": order.instituteName || "N/A",
+        "Category": order.category || "N/A",
+        "Item Name": order.itemName || "N/A",
+        "SKU": order.sku || "N/A",
+        "Order Qty": order.reQty || 0,
+        "Unit": order.unit || "",
+        "Rate": order.rate || 0,
+        "Total Amount": order.totalAmount || 0,
+        "Payment Status": order.isPaid ? "PAID" : "UNPAID",
+        "Order Status": order.status || "PENDING",
+        "Remark": order.remark || ""
+      };
+    });
+
+    if (reportData.length === 0) {
+      alert("No data available to export with current filters.");
+      return;
+    }
+
+    // Create Excel Workbook
+    const ws = XLSX.utils.json_to_sheet(reportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Selling Report");
+
+    // Save the file
+    const fileName = `Selling_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
+
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
@@ -697,10 +754,19 @@ export default function OrdersListPage() {
             {tab}
           </button>
         ))}
+        <div className="flex-1" />
+        {activeTab === "ALL" && (
+        <button
+          onClick={handleExportSellingReport}
+          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all active:scale-95"
+        >
+          <FiDownload className="mr-2 text-sm" /> Selling Report
+          </button>
+          )}
         {activeTab === "DELIVERY" && (
           <button
             onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[])}
-            className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
+            className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
           >
             <FiDownload className="text-xl" /> Download Challan
           </button>
@@ -743,7 +809,7 @@ export default function OrdersListPage() {
                       ? new Date(order.createdAt).toLocaleDateString('en-GB', {
                         day: '2-digit',
                         month: '2-digit',
-                        year: '2-digit'
+                        year: 'numeric'
                       }).replace(/\//g, '-')
                       : "N/A"}
                   </span>
@@ -776,7 +842,7 @@ export default function OrdersListPage() {
                       ? new Date(order.contractDate).toLocaleDateString('en-GB', {
                         day: '2-digit',
                         month: '2-digit',
-                        year: '2-digit'
+                        year: 'numeric'
                       }).replace(/\//g, '-')
                       : "N/A"}
                   </div>
@@ -816,7 +882,16 @@ export default function OrdersListPage() {
                           {order.transportName || "No Transport"}
                         </div>
                         {/* Added Delivery Date Display */}
-                        <div className="text-[9px] font-black text-emerald-600">{order.deliveryDate || "No Date"}</div>
+                        <div className="text-[9px] font-black text-emerald-600">
+                          {order.deliveryDate
+                            ? new Date(order.deliveryDate).toLocaleDateString('en-GB', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric'
+                            }).replace(/\//g, '-')
+                            : "N/A"}
+                          {/* {order.deliveryDate || "No Date"} */}
+                        </div>
                         <div className="text-[9px] font-bold text-slate-400 truncate max-w-[150px]">
                           {order.transportRemark ? `${order.transportRemark}` : "No remark"}
                         </div>
@@ -864,6 +939,7 @@ export default function OrdersListPage() {
                         <>
                           <option value="READY TO SHIP">READY TO SHIP</option>
                           <option value="DELIVERY">DELIVERY</option>
+                          <option value="FULFILLED">FULFILLED</option>
                           <option value="HISAB">HISAB</option>
                           <option value="CANCELL ORDER">CANCEL</option>
                         </>
@@ -958,6 +1034,7 @@ export default function OrdersListPage() {
               setShowOrderModal(false);
               setEditingOrder(null); // Clear data after closing
               fetchOrders();
+              fetchStocks();
             }}
             //onSuccess={() => fetchOrders()}
             initialData={editingOrder} // Pass the order to the form
