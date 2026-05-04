@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       username: user.username,
-      role: user.role
+      permissions: user.permissions,
     });
   } catch (error) {
     return NextResponse.json({ error: "Database connection failed" }, { status: 500 });

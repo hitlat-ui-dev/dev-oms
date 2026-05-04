@@ -1,5 +1,7 @@
 "use client";
 import AddItemModal from "@/components/AddItemModal";
+import BlockGuard from "@/components/BlockGuard";
+import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import { FiMapPin, FiTag, FiPackage, FiTrendingUp, FiSearch, FiEdit } from "react-icons/fi";
 
@@ -44,6 +46,20 @@ export default function StockPage() {
   }, [stock, searchQuery]);
 
   return (
+    <BlockGuard 
+  permission="stock" 
+fallback={
+                <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
+                    <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+                    <Link
+                        href="/dashboard"
+                        className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
+                    >
+                        Go to Dashboard
+                    </Link>
+                </div>
+            }
+>
     <div className="p-4 md:p-8 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
       {/* Page Header */}
       <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -145,12 +161,14 @@ export default function StockPage() {
                     </div>
                   </td>
                   <td className="py-4 px-4 uppercase font-bold text-xs text-red-600">
+                    <BlockGuard permission="editStock">
                     <button
                       onClick={() => handleEdit(item)}
                       className="hover:underline hover:text-blue-800 transition-all cursor-pointer"
                     >
                       <FiEdit />
-                    </button>
+                      </button>
+                      </BlockGuard>
                   </td>
                 </tr>
               ))}
@@ -173,6 +191,7 @@ export default function StockPage() {
         }}
         initialData={editingItem}
       />
-    </div>
+      </div>
+      </BlockGuard>
   );
 }

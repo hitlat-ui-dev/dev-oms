@@ -31,10 +31,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }, [isLoginPage, router]);
 
   // If not mounted, return an empty body to match the server's initial HTML
-  if (!isMounted) return null;
+  if (!isMounted) {
+    return (
+      <html lang="en">
+        <body className="bg-[#f3f6f9]">
+          {/* Empty or a static splash screen to match the server */}
+        </body>
+      </html>
+    );
+  }
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className="bg-[#f3f6f9] h-screen overflow-hidden" cz-shortcut-listen="true">
         {isLoading && !isLoginPage ? (
           <div className="h-screen flex items-center justify-center bg-[#f3f6f9]">
