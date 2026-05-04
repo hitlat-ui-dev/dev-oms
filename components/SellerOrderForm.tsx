@@ -2,6 +2,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { FiSave, FiArrowLeft, FiX } from "react-icons/fi";
 import { useRouter } from "next/navigation";
+import BlockGuard from "./BlockGuard";
+import Link from "next/link";
 
 interface SellerOrderFormProps {
   onClose?: () => void; // Used for Modal
@@ -159,6 +161,20 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   };
   return (
+    <BlockGuard 
+  permission="addOrder" 
+fallback={
+                <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
+                    <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+                    <Link
+                        href="/dashboard"
+                        className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
+                    >
+                        Go to Dashboard
+                    </Link>
+                </div>
+            }
+>
     <div className={`${isModal ? "bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-5xl" : "space-y-8"}`}>
 
       {/* Header logic: Back button for page, Close button for Modal */}
@@ -261,6 +277,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
           </button>
         </form>
       </div>
-    </div>
+      </div>
+      </BlockGuard>
   );
 }

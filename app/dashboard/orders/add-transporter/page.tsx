@@ -1,4 +1,6 @@
 "use client";
+import BlockGuard from "@/components/BlockGuard";
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { FiPlus, FiSave, FiTruck, FiPhone, FiUser, FiMapPin, FiList } from "react-icons/fi";
 
@@ -83,6 +85,20 @@ export default function AddTransporterPage() {
         }
     };
     return (
+        <BlockGuard 
+  permission="addTransporter" 
+fallback={
+                <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
+                    <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+                    <Link
+                        href="/dashboard"
+                        className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
+                    >
+                        Go to Dashboard
+                    </Link>
+                </div>
+            }
+>
         <div className="p-4 md:p-12 max-w-7xl mx-auto space-y-10 bg-slate-50 min-h-screen">
 
             {/* 1. ENTRY FORM */}
@@ -226,6 +242,7 @@ export default function AddTransporterPage() {
   ))}
 </div>
             </div>
-        </div>
+            </div>
+            </BlockGuard>
     );
 }

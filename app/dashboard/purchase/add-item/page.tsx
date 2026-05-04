@@ -7,6 +7,7 @@ export default function AddItemPage() {
   const router = useRouter();
 
   return (
+    
     <div className="p-4 md:p-12 max-w-4xl mx-auto">
       <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 mb-6 font-bold text-xs uppercase tracking-widest hover:text-blue-600 transition-colors">
         <FiArrowLeft /> Back

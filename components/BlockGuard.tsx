@@ -10,6 +10,7 @@ interface BlockGuardProps {
 export default function BlockGuard({ permission, children, fallback = null }: BlockGuardProps) {
   const [user, setUser] = useState<any>(null);
   const [isMounted, setIsMounted] = useState(false);
+  
 
   useEffect(() => {
     setIsMounted(true);
@@ -20,7 +21,9 @@ export default function BlockGuard({ permission, children, fallback = null }: Bl
   if (!isMounted) return null;
 
   // BLACKLIST LOGIC: If the permission is explicitly 'true', the user is BLOCKED.
-  const isBlocked = user?.permissions?.[permission] === true;
+  const isBlocked = Array.isArray(permission)
+    ? permission.some(p => user?.permissions?.[p] === true)
+    : user?.permissions?.[permission] === true;
 
   if (isBlocked) {
     return <>{fallback}</>; // Shows nothing or a custom message

@@ -1,6 +1,8 @@
 "use client";
 import { useState, useMemo } from "react"; // Removed useEffect since we use props now
 import { FiX, FiShoppingCart, FiEdit3, FiLayers, FiSave, FiSearch } from "react-icons/fi";
+import BlockGuard from "./BlockGuard";
+import Link from "next/link";
 
 interface ModalProps {
   isOpen: boolean;
@@ -40,20 +42,20 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
 
   const handleSave = async () => {
     const isValidItem = stockData.some(
-    (i) => i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
-  );
+      (i) => i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
+    );
 
-  if (!isValidItem) {
-    alert("Please select a valid item from the list. You cannot create a request for a new item here.");
-    return;
-  }
+    if (!isValidItem) {
+      alert("Please select a valid item from the list. You cannot create a request for a new item here.");
+      return;
+    }
 
-  if (formData.qty <= 0) {
-    alert("Please enter a valid quantity.");
-    return;
-  }
+    if (formData.qty <= 0) {
+      alert("Please enter a valid quantity.");
+      return;
+    }
 
-  setLoading(true);
+    setLoading(true);
     if (!formData.itemName || formData.qty <= 0) {
       alert("Please enter an item name and quantity.");
       return;
@@ -108,88 +110,102 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
             <FiX size={28} />
           </button>
         </div>
+        <BlockGuard
+          permission="purchaseReq"
+          fallback={
+            <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
+              <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+              <Link
+                href="/dashboard"
+                className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
+              >
+                Go to Dashboard
+              </Link>
+            </div>
+          }
+        >
+          <div className="p-8 space-y-6">
+            <div className="grid grid-cols-1 gap-6">
 
-        <div className="p-8 space-y-6">
-          <div className="grid grid-cols-1 gap-6">
+              {/* Item Name & Stock Display */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-end px-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Name</label>
 
-            {/* Item Name & Stock Display */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-end px-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Name</label>
-
-                {/* DISPLAY STOCK QUANTITY (e.g., 54 NOS) */}
-                {currentStockInfo && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${(currentStockInfo.totalQty || currentStockInfo.quantity || 0) > 0
+                  {/* DISPLAY STOCK QUANTITY (e.g., 54 NOS) */}
+                  {currentStockInfo && (
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${(currentStockInfo.totalQty || currentStockInfo.quantity || 0) > 0
                       ? 'bg-emerald-100 text-emerald-700'
                       : 'bg-red-100 text-red-700'
-                    }`}>
-                    {/* Check both totalQty and quantity */}
-                    {currentStockInfo.totalQty ?? currentStockInfo.quantity ?? 0} {currentStockInfo.unit} IN STOCK
+                      }`}>
+                      {/* Check both totalQty and quantity */}
+                      {currentStockInfo.totalQty ?? currentStockInfo.quantity ?? 0} {currentStockInfo.unit} IN STOCK
+                    </span>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    list="inventory-items"
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all uppercase"
+                    placeholder="Start typing item name..."
+                    value={formData.itemName}
+                    onChange={(e) => handleTextChange(e.target.value)}
+                  />
+                  <datalist id="inventory-items">
+                    {/* Using stockData prop for the list */}
+                    {stockData.map((item, idx) => (
+                      <option key={idx} value={item.itemName}>
+                        {item.totalQty ?? item.quantity ?? 0} {item.unit || ""} in stock
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              {/* Quantity */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Required Quantity</label>
+                <div className="relative">
+                  <FiLayers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="number"
+                    className="w-full pl-12 pr-16 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:border-blue-500 transition-colors"
+                    placeholder="Enter Qty needed"
+                    value={formData.qty || ""}
+                    onChange={(e) => setFormData({ ...formData, qty: Number(e.target.value) })}
+                  />
+                  <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-lg">
+                    {formData.unit || "Unit"}
                   </span>
-                )}
+                </div>
               </div>
 
-              <div className="relative">
-                <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  list="inventory-items"
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all uppercase"
-                  placeholder="Start typing item name..."
-                  value={formData.itemName}
-                  onChange={(e) => handleTextChange(e.target.value)}
-                />
-                <datalist id="inventory-items">
-                  {/* Using stockData prop for the list */}
-                  {stockData.map((item, idx) => (
-                    <option key={idx} value={item.itemName}>
-                      {item.totalQty ?? item.quantity ?? 0} {item.unit || ""} in stock
-                    </option>
-                  ))}
-                </datalist>
+              {/* Remarks */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Additional Remarks</label>
+                <div className="relative">
+                  <FiEdit3 className="absolute left-4 top-4 text-slate-400" />
+                  <textarea
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none min-h-24 resize-none focus:border-blue-500 transition-colors"
+                    placeholder="Optional notes..."
+                    value={formData.remark}
+                    onChange={(e) => setFormData({ ...formData, remark: e.target.value })}
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Quantity */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Required Quantity</label>
-              <div className="relative">
-                <FiLayers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="number"
-                  className="w-full pl-12 pr-16 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:border-blue-500 transition-colors"
-                  placeholder="Enter Qty needed"
-                  value={formData.qty || ""}
-                  onChange={(e) => setFormData({ ...formData, qty: Number(e.target.value) })}
-                />
-                <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-lg">
-                  {formData.unit || "Unit"}
-                </span>
-              </div>
-            </div>
-
-            {/* Remarks */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Additional Remarks</label>
-              <div className="relative">
-                <FiEdit3 className="absolute left-4 top-4 text-slate-400" />
-                <textarea
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none min-h-24 resize-none focus:border-blue-500 transition-colors"
-                  placeholder="Optional notes..."
-                  value={formData.remark}
-                  onChange={(e) => setFormData({ ...formData, remark: e.target.value })}
-                />
-              </div>
-            </div>
+            <button
+              onClick={handleSave}
+              disabled={loading}
+              className="w-full py-5 bg-[#1d63ff] hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-blue-200 flex items-center justify-center gap-3 transition-all active:scale-[0.98]"
+            >
+              {loading ? "Processing..." : <><FiSave size={20} /> Submit Request</>}
+            </button>
           </div>
-
-          <button
-            onClick={handleSave}
-            disabled={loading}
-            className="w-full py-5 bg-[#1d63ff] hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-blue-200 flex items-center justify-center gap-3 transition-all active:scale-[0.98]"
-          >
-            {loading ? "Processing..." : <><FiSave size={20} /> Submit Request</>}
-          </button>
-        </div>
+        </BlockGuard>
       </div>
     </div>
   );
