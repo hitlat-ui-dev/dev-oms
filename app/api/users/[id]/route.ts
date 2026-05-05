@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 
@@ -35,10 +35,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 // DELETE: Remove a user
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest, 
+  { params }: { params: Promise<{ id: string }> } // Change: params is now a Promise
+) {
   try {
     const client = await clientPromise;
     const db = client.db();
+    
+    // Await the params to extract the id
     const { id } = await params;
 
     if (!id || id.length !== 24) {
@@ -55,6 +60,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
 
     return NextResponse.json({ message: "User deleted" });
   } catch (error) {
+    console.error("Delete error:", error);
     return NextResponse.json({ error: "Delete failed" }, { status: 500 });
   }
 }
