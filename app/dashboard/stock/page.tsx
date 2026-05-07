@@ -1,9 +1,10 @@
 "use client";
 import AddItemModal from "@/components/AddItemModal";
 import BlockGuard from "@/components/BlockGuard";
+import ItemReportModal from "@/components/ItemReportModal";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
-import { FiMapPin, FiTag, FiPackage, FiTrendingUp, FiSearch, FiEdit } from "react-icons/fi";
+import { FiMapPin, FiPackage, FiTrendingUp, FiSearch, FiEdit } from "react-icons/fi";
 
 
 export default function StockPage() {
@@ -12,6 +13,7 @@ export default function StockPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [selectedSku, setSelectedSku] = useState<string | null>(null);
 
   const fetchStock = async () => {
     try {
@@ -113,7 +115,7 @@ fallback={
                 <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
                   <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
 
-                  <td className="py-4 px-6 border-r border-slate-50">
+                  <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
                     <span className="font-black text-slate-800 text-sm uppercase flex items-center gap-2">
                       <FiPackage className="text-slate-400 group-hover:text-blue-500 transition-colors" />
                       {item.itemName}
@@ -190,7 +192,13 @@ fallback={
           fetchStock(); // Refresh list after saving
         }}
         initialData={editingItem}
-      />
+        />
+        {selectedSku && (
+        <ItemReportModal 
+          sku={selectedSku} 
+          onClose={() => setSelectedSku(null)} 
+        />
+      )}
       </div>
       </BlockGuard>
   );

@@ -8,15 +8,54 @@ export default function Header() {
   const router = useRouter();
   const [user, setUser] = useState<{ username: string, role: string } | null>(null);
 
+  // useEffect(() => {
+  //   const session = localStorage.getItem("oms_user");
+  //   if (session) {
+  //     setUser(JSON.parse(session));
+  //   }
+  // }, []);
   useEffect(() => {
     const session = localStorage.getItem("oms_user");
-    if (session) {
-      setUser(JSON.parse(session));
+    if (!session) {
+      router.push("/login");
+      return;
     }
+    setUser(JSON.parse(session));
+
+    let logoutTimer: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (logoutTimer) clearTimeout(logoutTimer);
+      
+      // 30 minutes = 30 * 60 * 1000 ms
+      logoutTimer = setTimeout(() => {
+        handleLogout();
+        alert("Session expired due to inactivity.");
+      }, 30 * 60 * 1000); 
+    };
+
+    // Events that count as "Activity"
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    
+    activityEvents.forEach(event => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    // Start timer on mount
+    resetTimer();
+
+    return () => {
+      // Cleanup listeners and timer on unmount
+      if (logoutTimer) clearTimeout(logoutTimer);
+      activityEvents.forEach(event => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
+    setUser(null);
     router.push("/login");
   };
 

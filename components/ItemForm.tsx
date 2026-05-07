@@ -26,7 +26,7 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
   const [formData, setFormData] = useState({
     itemName: "",
     category: "",
-    totalQty: 0,
+    currentStock: 0,
     reQty: 0,
     unit: "",
     sku: "Loading...",
@@ -42,7 +42,7 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         sku: initialData.sku || "",
         category: initialData.category || "GENERAL",
         unit: initialData.unit || "PCS",
-        totalQty: initialData.totalQty || 0,
+        currentStock: initialData.currentStock || 0,
         reQty: initialData.reQty ?? initialData.totalQty ?? 0,
         location: initialData.location || "---",
         rateDisplay: initialData.rateDisplay || "₹ 0",
@@ -117,18 +117,27 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
       : formData;
 
     try {
+      console.log("Step 1: Sending data to server...", formData);
       const res = await fetch(url, {
         method: method,
         body: JSON.stringify(formData), // Just send the whole formData
         headers: { "Content-Type": "application/json" }
       });
-
+const result = await res.json();
       if (res.ok) {
+        console.log("Step 2: Success! Server response:", result);
         setStatus("Update Successful!");
         if (onSuccess) setTimeout(() => onSuccess(), 1000);
-      }
-    } catch (error) {
-      setStatus("Error updating data.");
+      }else {
+            // Step 3: This will now work because 'result' is defined above
+            console.error("Step 2: Server Error Details ->", result);
+            
+            // This alert shows the exact error message from the server
+            alert(`Server Error (Status ${res.status}): ${result.error || "Unknown Error"}`);
+        }
+    } catch (err: any) {
+      console.error("Step 2: Network Error ->", err);
+        alert("Network Error: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -157,10 +166,10 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {/* Item Name */}
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Name</label>
               <div className="relative">
                 <FiBox className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -187,13 +196,12 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <FiTag className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   <select
                     required value={formData.category}
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
+                    className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   >
-                    <option value="">Select Category</option>
+                    <option value="">Category</option>
                     {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
@@ -212,13 +220,12 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unit</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <FiLayers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   <select
                     required value={formData.unit}
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
+                    className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
                     onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
                   >
-                    <option value="">Select Unit</option>
+                    <option value="">Unit</option>
                     {units.map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
                   </select>
                 </div>
@@ -231,9 +238,26 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
                 </button>
               </div>
             </div>
+            {/* Current Stock */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                Opening Stock 
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  value={formData.currentStock}
+                  className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-sm text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                  placeholder="0"
+                  onChange={(e) => setFormData({ ...formData, currentStock: Number(e.target.value) })}
+                />
+              </div>
+            </div>
 
             {/* Item Location */}
-            <div className="space-y-2 md:col-span-2">
+            <div className="space-y-2 md:col-span-3">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Location</label>
               <div className="relative">
                 <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />

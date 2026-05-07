@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   try {
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
-    
+
     // Get all returns for the table
     const returns = await db.collection("Purchase Return").find({}).sort({ createdAt: -1 }).toArray();
     // Get stock for the dropdown
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   try {
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
-    const { itemId, returnQty, vendor, itemName, sku, reason } = await req.json();
+    const { itemId, returnQty, vendor, itemName, sku, reason, userName } = await req.json();
 
     // 1. Reduce Stock from the 'stock' collection
     const stockUpdate = await db.collection("stock").updateOne(
@@ -48,6 +48,26 @@ export async function POST(req: Request) {
     };
 
     await db.collection("Purchase Return").insertOne(newReturn);
+
+    await db.collection<any>("items").updateOne(
+      { sku: sku },
+      {
+        // Subtract from total stock to fix the "CURRENT STOCK: 0" issue
+        $inc: { currentStock: -Number(returnQty) },
+
+        // Add a new row to the history array
+        $push: {
+          history: {
+            type: `PURCHASE_RETURN by ${userName || "Admin"}`,
+            qty: -Number(returnQty), // Negative for Debit column
+            date: new Date(),
+            vendorName: vendor,
+            byWhom: userName || "Admin",
+            otherDetails: `Return Reason: ${reason || "Standard Return"}`
+          }
+        }as any
+      }
+    );
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

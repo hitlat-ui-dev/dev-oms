@@ -68,6 +68,13 @@ export default function ReceivedPurchaseTable({
   const handleUpdate = async (item: any) => {
     const updates = editState[item._id];
     setIsUpdating(item._id);
+    const newQty = updates.receivedQty ?? item.receivedQty;
+
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
+    
 
     try {
       const res = await fetch("/api/received-purchase", {
@@ -75,8 +82,9 @@ export default function ReceivedPurchaseTable({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: item._id,
-          receivedQty: updates.receivedQty ?? item.receivedQty,
+          receivedQty: newQty,
           rate: updates.rate ?? item.rate,
+          userName: Login_user,
         }),
       });
 

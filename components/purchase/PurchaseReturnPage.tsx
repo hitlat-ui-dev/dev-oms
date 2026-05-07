@@ -30,6 +30,10 @@ export default function PurchaseReturnPage() {
   const handleSaveReturn = async () => {
     const selectedItem: any = stockList.find((s: any) => s._id === formData.itemId);
 
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
     if (!selectedItem || formData.returnQty <= 0) {
       return alert("Please select an item and enter a valid quantity.");
     }
@@ -50,7 +54,8 @@ export default function PurchaseReturnPage() {
           itemName: selectedItem.itemName,
           sku: selectedItem.sku,
           vendor: selectedItem.vendor,
-          category: selectedItem.category
+          category: selectedItem.category,
+          userName: Login_user,
         }),
       });
 
