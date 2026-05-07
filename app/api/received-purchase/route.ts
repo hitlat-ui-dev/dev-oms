@@ -20,7 +20,8 @@ export async function POST(req: Request) {
       unit,
       rate,
       category,
-      orderNumber
+      orderNumber,
+      userName
     } = body;
 
     const remainingQty = Number(orderQty) - Number(receivedQty) - Number(damageQty);
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
         $inc: { currentStock: Number(receivedQty) },
         $push: {
           history: {
-            type: 'PURCHASE Received', // Shows in your Modal UI
+            type: `PURCHASE Received by ${userName || "Admin"}`, // Shows in your Modal UI
             qty: Number(receivedQty),
             date: new Date(),
             vendorName: vendor,

@@ -9,7 +9,7 @@ import { LuRotateCcw } from "react-icons/lu";
 import * as XLSX from 'xlsx';
 
 const TABS = [
-  "ALL", "TO CHECK",  "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
+  "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
 export default function OrdersListPage() {
@@ -226,6 +226,7 @@ export default function OrdersListPage() {
   const handleStatusUpdate = async (orderId: string, newStatus: string) => {
     const orderToUpdate = orders.find(o => o._id === orderId);
     if (!orderToUpdate) return;
+    //console.log(orderToUpdate.instituteName);
 
     // --- NEW LOGIC FOR PARTIAL SHIPMENT CHECK ---
     if (newStatus === "READY TO SHIP" && activeTab === "TO CHECK") {
@@ -262,6 +263,10 @@ export default function OrdersListPage() {
     }
 
     if (!window.confirm(`Change status to ${newStatus}?`)) return;
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
 
     try {
       const res = await fetch(`/api/seller-orders/${orderId}`, {
@@ -272,8 +277,11 @@ export default function OrdersListPage() {
           activeTab: activeTab,
           itemName: orderToUpdate.itemName,
           reQty: orderToUpdate.reQty,
+          userName: Login_user,
+          sellerName: orderToUpdate.instituteName,
         }),
       });
+
 
       if (res.ok) {
         fetchOrders();
@@ -326,6 +334,8 @@ export default function OrdersListPage() {
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
 
+
+
     const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
     const avStock = stockData?.totalQty ?? 0;
 
@@ -339,6 +349,10 @@ export default function OrdersListPage() {
     }
     const isFullQty = shipQtyNum === orderToUpdate.reQty;
 
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
     try {
       const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
         method: "PATCH",
@@ -349,7 +363,8 @@ export default function OrdersListPage() {
           isPartialFulfillment: !isFullQty,
           shipQty: shipQtyNum,
           itemName: orderToUpdate.itemName,
-          activeTab: "TO CHECK" // Explicitly pass the tab for stock logic
+          activeTab: "TO CHECK", // Explicitly pass the tab for stock logic
+          userName: Login_user,
         }),
       });
 
@@ -451,6 +466,10 @@ export default function OrdersListPage() {
   const handleMarkAsReceived = async (order: any) => {
     if (!window.confirm(`Add ${order.reQty} units of ${order.itemName} back to stock?`)) return;
 
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
     try {
       const res = await fetch(`/api/seller-orders/${order._id}`, {
         method: "PATCH",
@@ -459,7 +478,9 @@ export default function OrdersListPage() {
           status: "RETURN RECEIVED", // This status triggers the stock add
           activeTab: "RETURN ORDER",
           reQty: order.reQty,
-          itemName: order.itemName
+          itemName: order.itemName,
+          userName: Login_user,
+          sellerName: order.instituteName
         }),
       });
 
@@ -756,13 +777,13 @@ export default function OrdersListPage() {
         ))}
         <div className="flex-1" />
         {activeTab === "ALL" && (
-        <button
-          onClick={handleExportSellingReport}
-          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all active:scale-95"
-        >
-          <FiDownload className="mr-2 text-sm" /> Selling Report
+          <button
+            onClick={handleExportSellingReport}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-all active:scale-95"
+          >
+            <FiDownload className="mr-2 text-sm" /> Selling Report
           </button>
-          )}
+        )}
         {activeTab === "DELIVERY" && (
           <button
             onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[])}

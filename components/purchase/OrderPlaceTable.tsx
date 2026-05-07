@@ -145,6 +145,11 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     if (damageQty < 0) return alert("Damage quantity cannot be negative");
 
     setIsSaving(true);
+
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+    
     try {
       const res = await fetch("/api/received-purchase", {
         method: "POST",
@@ -162,6 +167,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
           vendor: selectedRequest.vendor,
           rate: Number(editRate), // Using the updated rate
           moveRemainingTo: moveRemainingTo,
+          userName: Login_user
         }),
       });
 

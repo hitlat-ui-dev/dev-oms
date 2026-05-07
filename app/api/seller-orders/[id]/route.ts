@@ -154,6 +154,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         await db.collection("stock").updateOne(stockFilter, {
           $inc: { quantity: -shipQty, reQty: -shipQty }
         });
+
+        // Inside Logic C of your PATCH route
+        await db.collection("items").updateOne(
+          { sku: originalOrder.sku },
+          {
+            $inc: { currentStock: -shipQty },
+            $push: {
+              history: {
+                // Updated type string below
+                type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
+                qty: -shipQty,
+                date: new Date(),
+                orderNo: newOrderNo,
+                sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
+                otherDetails: `Split Order from To check to Ready to Ship. Order No: ${newOrderNo}`
+              }
+            } as any
+          }
+        );
+
+
       }
 
       return NextResponse.json(updatedOriginal, { status: 200 });
@@ -167,7 +188,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
       const itemName = originalOrder.itemName?.trim();
 
-      // FIX: Check shipQty from modal first, then reQty, then original
       const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
       if (itemName) {
@@ -191,27 +211,53 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     // Inside your Logic B (Standard Updates)
-if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN ORDER") {
-  
-  // 1. Clean the Item Name (Removes accidental spaces)
-  const itemName = updateData.itemName?.trim();
-  const returnQty = Number(updateData.reQty);
+    if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN ORDER") {
 
-  if (itemName) {
-    // 2. Use Case-Insensitive Matching
-    const stockFilter = { 
-      itemName: { $regex: new RegExp(`^${itemName}$`, "i") } 
-    };
-    
-    // 3. Update the Stock
-    const stockUpdate = await db.collection("stock").updateOne(stockFilter, { 
-      $inc: { quantity: returnQty } 
-    });
+      // 1. Clean the Item Name (Removes accidental spaces)
+      const itemName = updateData.itemName?.trim();
+      const returnQty = Number(updateData.reQty);
 
-    // LOGGING: Check your terminal to see if it actually found the item
-    console.log(`Stock update result for ${itemName}:`, stockUpdate.modifiedCount);
-  }
-}
+      if (itemName) {
+        // 2. Use Case-Insensitive Matching
+        const stockFilter = {
+          itemName: { $regex: new RegExp(`^${itemName}$`, "i") }
+        };
+
+        // 3. Update the Stock
+        const stockUpdate = await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: returnQty }
+        });
+
+        const historyFilter = {
+          $or: [
+            { sku: originalOrder.sku },
+            { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } }
+          ]
+        };
+
+        await db.collection("items").updateOne(
+          historyFilter,
+          {
+            $inc: { currentStock: returnQty },
+            $push: {
+              history: {
+                type: `RETURN RECEIVED by ${updateData.userName || "Admin"}`,
+                qty: returnQty,
+                date: new Date(),
+                orderNo: originalOrder.orderNo,
+                sellerName: updateData.sellerName || originalOrder.instituteName || "N/A",
+                otherDetails: `Item returned from ${originalOrder.orderNo}. Stock restored.`
+              }
+            } as any
+          }
+        );
+
+        console.log(`Stock restored and history saved for ${itemName}`);
+
+        // LOGGING: Check your terminal to see if it actually found the item
+        //console.log(`Stock update result for ${itemName}:`, stockUpdate.modifiedCount);
+      }
+    }
 
     // 2. Perform standard update
     const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
@@ -227,6 +273,33 @@ if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN 
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty, quantity: -adjustQty }
           });
+
+          const updated = await SellerOrder.findByIdAndUpdate(
+            id,
+            { ...updateData }, // This will now include the correct sellerName
+            { new: true }
+          );
+          //  ADD TO HISTORY
+          await db.collection("items").updateOne(
+            { sku: updated.sku || originalOrder.sku },
+            {
+              // Since it's being cancelled/moved to Hisab, we add the stock back to the total
+              $inc: { currentStock: -adjustQty },
+
+              $push: {
+                history: {
+                  type: `${updateData.status} by ${updateData.userName || "Admin"}`,
+                  qty: -adjustQty, // Negative for DEBIT column
+                  date: new Date(),
+                  orderNo: updated.orderNo,
+                  sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
+                  otherDetails: `Order confirmed so Stock deducted. It's from To Check to ${updateData.status}. `
+                }
+              } as any
+            }
+          );
+
+
         } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER") {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty }
@@ -234,15 +307,42 @@ if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN 
         }
       }
       else if (updateData.activeTab === "READY TO SHIP") {
-        if (updateData.status === "FULFILLED") {
-          await db.collection("stock").updateOne(stockFilter, {
-            $inc: { reQty: -adjustQty }
-          });
-        }
-        else if (["HISAB", "CANCELL ORDER", "RETURN ORDER"].includes(updateData.status)) {
+        // if (updateData.status === "FULFILLED") {
+        //   await db.collection("stock").updateOne(stockFilter, {
+        //     $inc: { quantity: adjustQty }
+        //   });
+        // }
+        // else 
+        if (["HISAB", "CANCELL ORDER", "RETURN ORDER", "FULFILLED"].includes(updateData.status)) {
+
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { quantity: adjustQty }
           });
+
+          const updated = await SellerOrder.findByIdAndUpdate(
+            id,
+            { ...updateData }, // This will now include the correct sellerName
+            { new: true }
+          );
+          //  ADD TO HISTORY
+          await db.collection("items").updateOne(
+            { sku: updated.sku || originalOrder.sku },
+            {
+              // Since it's being cancelled/moved to Hisab, we add the stock back to the total
+              $inc: { currentStock: adjustQty },
+
+              $push: {
+                history: {
+                  type: `${updateData.status} by ${updateData.userName || "Admin"}`,
+                  qty: adjustQty, // Positive because it's coming back to available stock
+                  date: new Date(),
+                  orderNo: updated.orderNo,
+                  sellerName: updateData.sellerName || "N/A",
+                  otherDetails: `Order moved from Ready to Ship to ${updateData.status}. Stock restored.`
+                }
+              } as any
+            }
+          );
         }
       }
       else if (updateData.activeTab === "CANCELL ORDER") {

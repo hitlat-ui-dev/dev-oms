@@ -74,8 +74,6 @@ export default function ReceivedPurchaseTable({
     const userData = session ? JSON.parse(session) : null;
     const Login_user = userData?.username || "Unknown User";
 
-    
-
     try {
       const res = await fetch("/api/received-purchase", {
         method: "PATCH",

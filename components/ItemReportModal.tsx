@@ -56,8 +56,8 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                     <td className="py-4 text-slate-500">{new Date(row.date).toLocaleDateString()}</td>
                     <td className="py-4">
                       <span className={`px-2 py-1 rounded text-[10px] font-black ${row.type === 'SELL' ? 'bg-orange-100 text-orange-700' :
-                          row.type === 'Opening Stock' ? 'bg-purple-100 text-purple-700' :
-                            'bg-green-100 text-green-700'
+                        row.type === 'Opening Stock' ? 'bg-purple-100 text-purple-700' :
+                          'bg-green-100 text-green-700'
                         }`}>
                         {row.type}
                       </span>
@@ -72,8 +72,26 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                       {row.type === 'Opening Stock' && (
                         <p className="italic text-slate-800 font-bold">Initial Stock Entry</p>
                       )}
-                      {(row.type.includes('PURCHASE') || row.type.includes('RETURN')) && (
+                      {(row.type.includes('PURCHASE') || row.type.includes('EDIT_PURCHASE')) && (
                         <p><b>Vendor:</b> {row.vendorName || 'N/A'} | <b>Inv:</b> {row.orderNo || 'N/A'}</p>
+                      )}
+                      {(row.type.includes('HISAB') || row.type.includes('CANCELL ORDER') || row.type.includes('FULFILLED')) && (
+                        <>
+                          <p><b>Seller:</b> {row.sellerName || 'N/A'} | <b> Inv:</b> {row.orderNo || 'N/A'}</p>
+                          <p className="text-[10px] text-gray-400">{row.otherDetails || 'N/A'}</p>
+                        </>
+                      )}
+                      {(row.type.includes('PARTIAL ') || row.type.includes('READY TO SHIP') ) && (
+                        <>
+                          <p><b>Seller:</b> {row.sellerName || 'N/A'} | <b> Inv:</b> {row.orderNo || 'N/A'}</p>
+                          <p className="text-[10px] text-gray-400">{row.otherDetails || 'N/A'}</p>
+                        </>
+                      )}
+                      {(row.type.includes('RETURN RECEIVED')) && (
+                        <>
+                          <p><b>Seller:</b> {row.sellerName || 'N/A'} | <b> Inv:</b> {row.orderNo || 'N/A'}</p>
+                          <p className="text-[10px] text-gray-400">{row.otherDetails || 'N/A'}</p>
+                        </>
                       )}
                     </td>
                     {/* Debit Column */}
