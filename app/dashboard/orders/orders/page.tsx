@@ -51,6 +51,9 @@ export default function OrdersListPage() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   interface StockItem {
     _id: string;
     sku: string;
@@ -422,6 +425,7 @@ export default function OrdersListPage() {
   };
 
   const submitReturn = async () => {
+    if (isSubmitting) return;
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
 
@@ -431,7 +435,7 @@ export default function OrdersListPage() {
     }
 
     const isPartial = returnQty < orderToUpdate.reQty;
-
+    setIsSubmitting(true);
     try {
       const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
         method: "PATCH",
@@ -460,6 +464,9 @@ export default function OrdersListPage() {
       }
     } catch (err) {
       alert("Error processing return");
+    }
+    finally {
+      setIsSubmitting(false); 
     }
   };
 
@@ -954,6 +961,7 @@ export default function OrdersListPage() {
                           <option value="HISAB">HISAB</option>
                           <option value="READY TO SHIP">READY TO SHIP</option>
                           <option value="CANCELL ORDER">CANCELL</option>
+                          <option value="FULFILLED">FULFILLED</option>
                         </>
                       )}
                       {activeTab === "READY TO SHIP" && (
@@ -1160,7 +1168,9 @@ export default function OrdersListPage() {
 
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setShowReturnModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
-                <button onClick={submitReturn} className="flex-1 p-4 bg-rose-500 text-white rounded-2xl font-black uppercase text-[10px]">Confirm Return</button>
+                <button onClick={submitReturn} disabled={isSubmitting} className="flex-1 p-4 bg-rose-500 text-white rounded-2xl font-black uppercase text-[10px]">
+                  {isSubmitting ? 'Processing...' : 'Confirm Return'}
+                </button>
               </div>
             </div>
           </div>

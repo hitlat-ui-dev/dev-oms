@@ -300,7 +300,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           );
 
 
-        } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER") {
+        } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER" || updateData.status === "FULFILLED") {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty }
           });
