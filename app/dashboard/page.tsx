@@ -7,7 +7,8 @@ import {
   FiRefreshCw,
   FiFileText,
   FiBriefcase,
-  FiSettings
+  FiSettings,
+  FiPrinter
 } from "react-icons/fi";
 
 
@@ -31,7 +32,14 @@ export default function DashboardPage() {
     { name: "Purchase", path: "/dashboard/purchase", sub: "MANAGE NOW", icon: <FiPlusCircle />, color: "bg-[#1d63ff]", role: ["Owner", "Manager"] },
     { name: "Stock", path: "/dashboard/stock", sub: "MANAGE NOW", icon: <FiPackage />, color: "bg-[#00a86b]", role: ["Owner", "Manager", "Storekeeper"] },
     { name: "Orders", path: "/dashboard/orders", sub: "MANAGE NOW", icon: <FiRefreshCw />, color: "bg-[#f20505]", role: ["Owner", "Manager", "Office"] },
-    { name: "Reports", path: "/dashboard/reports", sub: "MANAGE NOW", icon: <FiFileText />, color: "bg-[#8b2ef5]", role: ["Owner", "Manager"] },
+    {
+      name: "Print Label",
+      path: "/dashboard/print-labels", // Update this to your actual route
+      sub: "PRINT NOW",
+      icon: <FiPrinter />,
+      color: "bg-[#8b2ef5]",
+      role: ["Owner", "Manager"]
+    },
     // { name: "My Companies", path: "/dashboard/companies", sub: "MANAGE NOW", icon: <FiBriefcase />, color: "bg-[#ff5100]", role: ["Owner"] },
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"], permissionKey: "users", },
   ];
