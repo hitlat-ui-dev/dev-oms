@@ -46,7 +46,7 @@ export default function PrintLabelsPage() {
         });
 
         // Get the fixed contact info for the selected firm
-        const fromExtra = FIXED_CONTACTS[selectedFrom.firmCode] || { address: "TARU ADDRESS LAKHAVU, MALGODAWN ROAD, MEHSANA-2 384002", mobile: "00000 00000" };
+        const fromExtra = FIXED_CONTACTS[selectedFrom.firmCode] || { address: "4/22/76,Old malgodawn,near D bhikhabhai office,Mehsana,Gujarat-384002.", mobile: "760 001 6442" };
         const options = { angle: -90 };
 
         if (is35x6) {
@@ -58,6 +58,19 @@ export default function PrintLabelsPage() {
             doc.setFont("helvetica", "bold");
             doc.setFontSize(10);
             doc.text("SHIP TO:", colToX, yStart, options);
+
+            // --- START: ADD PLACE NAME BESIDE SHIP TO ---
+            const placeName = (selectedTo.city || "MEHSANA").toUpperCase();
+            doc.setFontSize(16); // Big font for Place
+            // Positioned beside "SHIP TO:" (higher Y in rotated view)
+            const placeY = yStart + 0.8;
+            doc.text(placeName, colToX, placeY, options);
+
+            // Add Underline for Place
+            const placeWidth = doc.getTextWidth(placeName);
+            doc.setLineWidth(0.01);
+            // Draw line based on rotated coordinates
+            doc.line(colToX - 0.04, placeY, colToX - 0.04, placeY + placeWidth);
 
             colToX -= 0.3;
             if (selectedTo.buyerName) {
@@ -83,91 +96,116 @@ export default function PrintLabelsPage() {
             doc.setFontSize(12);
             doc.text(`MOB: ${selectedTo.mobile || ""}`, colToX, yStart, options);
 
-            // 2. CENTER DIVIDER
-            doc.setLineWidth(0.01);
-            doc.line(1.8, 0.5, 1.8, 5.5);
+            // 2. CENTER DIVIDER (Adjusted to give more room to SHIP TO)
+            doc.setLineWidth(0.005);
+            doc.line(1.4, 0.5, 1.4, 5.5);
 
-            // 3. FROM SECTION (Dynamic Name + Fixed Details)
-            let colFromX = 1.5;
+            // 3. FROM SECTION (Fixed to Bottom/Right of PDF)
+            // colFromX set to 1.1 ensures it stays at the very bottom of the 3.5" width
+            let colFromX = 1.1;
+            let yStartFooter = 0.5;
 
             doc.setFont("helvetica", "bold");
             doc.setFontSize(10);
-            doc.text("FROM:", colFromX, yStart, options);
+            doc.text("FROM:", colFromX, yStartFooter, options);
 
-            colFromX -= 0.25;
+            colFromX -= 0.22;
             doc.setFontSize(12);
-            doc.text(selectedFrom.firmName.toUpperCase(), colFromX, yStart, options);
+            doc.text(selectedFrom.firmName.toUpperCase(), colFromX, yStartFooter, options);
 
             colFromX -= 0.2;
             doc.setFont("helvetica", "normal");
             doc.setFontSize(9);
+            // Using "Loha" or "High-Grade Metal" in descriptions if applicable for compliance
             const fromAddr = doc.splitTextToSize(fromExtra.address.toUpperCase(), 5.0);
-            doc.text(fromAddr, colFromX, yStart, options);
+            doc.text(fromAddr, colFromX, yStartFooter, options);
 
             colFromX -= (fromAddr.length * 0.14) + 0.05;
             doc.setFont("helvetica", "bold");
-            doc.text(`MOB: ${fromExtra.mobile}`, colFromX, yStart, options);
+            doc.setFontSize(11);
+            doc.text(`MOB: ${fromExtra.mobile}`, colFromX, yStartFooter, options);
 
         } else {
             // --- 4x4 STANDARD DESIGN ---
-            let y = 0.5;
+            // Reduced top padding from 0.5 to 0.3 for a tighter look
+            let y = 0.4;
+
+            // 1. SHIP TO & PLACE HEADER
             doc.setFont("helvetica", "bold");
             doc.setFontSize(10);
             doc.text("SHIP TO:", 0.3, y);
-            let currentY = y + 0.3;
 
+            // Get Place and Add Underline
+            const placeName = (selectedTo.city || "MEHSANA").toUpperCase();
+            doc.setFontSize(16);
+            doc.text(placeName, 1.1, y + 0.02);
+
+            // Drawing the underline for Place
+            const placeWidth = doc.getTextWidth(placeName);
+            doc.setLineWidth(0.01);
+            doc.line(1.1, y + 0.06, 1.1 + placeWidth, y + 0.06);
+
+            // Reduced gap between Header and Names
+            let currentY = y + 0.50;
+
+            // 2. BUYER NAME (Font: 16)
             if (selectedTo.buyerName) {
-                doc.setFontSize(12);
+                doc.setFontSize(18);
                 doc.setFont("helvetica", "bold");
                 const bName = (selectedTo.buyerName).toUpperCase();
                 doc.text(bName, 0.3, currentY);
-                currentY += 0.25; // Push Institute Name down
+                currentY += 0.28;
             }
 
-            doc.setFontSize(16);
+            // 3. INSTITUTE NAME (Font: 18)
+            doc.setFontSize(20);
             doc.setFont("helvetica", "bold");
             const instName = (selectedTo.instituteName || "").toUpperCase();
             const instLines = doc.splitTextToSize(instName, 3.4);
             doc.text(instLines, 0.3, currentY);
 
-            currentY += (instLines.length * 0.25) + 0.1;
+            // Tightened space between Institute Name and Address (from 0.3 to 0.15)
+            currentY += (instLines.length * 0.26) + 0.05;
 
+            // 4. ADDRESS
             doc.setFont("helvetica", "normal");
-            doc.setFontSize(10);
+            doc.setFontSize(11);
             const toAddr = doc.splitTextToSize((selectedTo.address || "").toUpperCase(), 3.4);
-            doc.text(toAddr, 0.3, currentY);
+            doc.text(toAddr, 0.3, currentY, { lineHeightFactor: 1.5 });
 
-            currentY += (toAddr.length * 0.18) + 0.1;
+            // 5. MOBILE (Increased Font: 14 and Bold)
+            currentY += (toAddr.length * 0.18) + 0.3;
             doc.setFont("helvetica", "bold");
-            doc.setFontSize(12);
+            doc.setFontSize(14);
             doc.text(`MOB: ${selectedTo.mobile || ""}`, 0.3, currentY);
 
-            const separatorY = y + 1.8;
+            // 6. FIXED FOOTER (FROM SECTION)
+            const footerY = 2.8;
 
             doc.setLineWidth(0.005);
-            doc.line(0.3, separatorY, 3.7, separatorY);
-            let fromTextY = separatorY + 0.3;
+            doc.line(0.3, footerY, 3.7, footerY);
+
+            let fromTextY = footerY + 0.22;
 
             doc.setFont("helvetica", "bold");
-doc.setFontSize(10);
-doc.text("FROM:", 0.3, fromTextY);
+            doc.setFontSize(10);
+            doc.text("FROM:", 0.3, fromTextY);
 
-            fromTextY += 0.2;
+            fromTextY += 0.18;
             doc.setFontSize(12);
             doc.text(selectedFrom.firmName.toUpperCase(), 0.3, fromTextY);
 
-            fromTextY += 0.2;
+            fromTextY += 0.18;
             doc.setFont("helvetica", "normal");
             doc.setFontSize(9);
             const fromAddr = doc.splitTextToSize(fromExtra.address.toUpperCase(), 3.4);
-            doc.text(fromAddr, 0.3, fromTextY, { maxWidth: 3.4 });
+            doc.text(fromAddr, 0.3, fromTextY, { lineHeightFactor: 1.25 });
 
-            // Move the Mobile number down based on the address length
-            fromTextY += (fromAddr.length * 0.15) + 0.1;
+            fromTextY += (fromAddr.length * 0.13) + 0.1;
             doc.setFont("helvetica", "bold");
+            doc.setFontSize(11); // Slightly larger for sender mobile too
             doc.text(`MOB: ${fromExtra.mobile}`, 0.3, fromTextY);
         }
-
         doc.save(`Label_${selectedTo.mobile || 'Order'}.pdf`);
     };
 
