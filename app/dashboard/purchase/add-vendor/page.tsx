@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FiUserPlus, FiMapPin, FiHome, FiPhone, FiSave, FiArrowLeft, FiCheckCircle } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
@@ -9,12 +9,27 @@ export default function AddVendorPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [vendors, setVendors] = useState([]);
   const [formData, setFormData] = useState({
     name: "",
     place: "",
     address: "",
     mobile: ""
   });
+
+  const fetchVendors = async () => {
+    try {
+      const res = await fetch("/api/vendors");
+      const data = await res.json();
+      if (res.ok) setVendors(data);
+    } catch (err) {
+      console.error("Failed to fetch vendors");
+    }
+  };
+
+  useEffect(() => {
+    fetchVendors();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,6 +160,50 @@ export default function AddVendorPage() {
               <FiSave size={18} /> {loading ? "Saving..." : "Save Vendor"}
             </button>
           </form>
+        </div>
+        <div className="space-y-4 mt-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Vendor List</h2>
+            <span className="bg-slate-200 text-slate-600 px-3 py-1 rounded-full text-xs font-black">{vendors.length}</span>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Name</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Place</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Address</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {vendors.map((vendor: any) => (
+                    <tr key={vendor._id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 font-bold text-slate-700">{vendor.name}</td>
+                      <td className="p-4 font-bold text-slate-600">{vendor.mobile || "N/A"}</td>
+                      <td className="p-4">
+                        <span className="bg-purple-50 text-purple-600 px-3 py-1 rounded-full text-xs font-black uppercase">
+                          {vendor.place}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs text-slate-500 font-medium max-w-[200px] truncate">
+                        {vendor.address || "No address"}
+                      </td>
+                    </tr>
+                  ))}
+                  {vendors.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="p-12 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">
+                        No vendors found in directory
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </BlockGuard>

@@ -15,43 +15,54 @@ export default function Header() {
   //   }
   // }, []);
   useEffect(() => {
+    // 1. Next.js Guard: Ensure window is available
+    if (typeof window === "undefined") return;
+
     const session = localStorage.getItem("oms_user");
     if (!session) {
       router.push("/login");
       return;
     }
-    setUser(JSON.parse(session));
+
+    try {
+      setUser(JSON.parse(session));
+    } catch (e) {
+      // Handles rare cases of corrupted local storage on mobile
+      router.push("/login");
+      return;
+    }
 
     let logoutTimer: NodeJS.Timeout;
 
     const resetTimer = () => {
       if (logoutTimer) clearTimeout(logoutTimer);
       
-      // 30 minutes = 30 * 60 * 1000 ms
+      // 30 Minutes
       logoutTimer = setTimeout(() => {
         handleLogout();
         alert("Session expired due to inactivity.");
       }, 30 * 60 * 1000); 
     };
 
-    // Events that count as "Activity"
-    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    // 2. Optimized Mobile Events
+    // Removed 'mousemove' (useless on touch) and 'keypress' (deprecated)
+    // Added 'touchstart' and 'click' for better mobile detection
+    const activityEvents = ['touchstart', 'mousedown', 'click', 'keydown', 'scroll'];
     
+    // 3. Add 'passive: true' for better mobile scrolling performance
     activityEvents.forEach(event => {
-      window.addEventListener(event, resetTimer);
+      window.addEventListener(event, resetTimer, { passive: true });
     });
 
-    // Start timer on mount
     resetTimer();
 
     return () => {
-      // Cleanup listeners and timer on unmount
       if (logoutTimer) clearTimeout(logoutTimer);
       activityEvents.forEach(event => {
         window.removeEventListener(event, resetTimer);
       });
     };
-  }, []);
+  }, [router]); // Added router dependency
 
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
