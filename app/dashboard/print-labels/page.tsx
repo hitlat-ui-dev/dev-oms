@@ -31,6 +31,7 @@ export default function PrintLabelsPage() {
             setVendors(vendorData);
         });
     }, []);
+//console.log(selectedTo);
 
     const handlePrint = () => {
         if (!selectedFrom || !selectedTo) {
@@ -60,7 +61,7 @@ export default function PrintLabelsPage() {
             doc.text("SHIP TO:", colToX, yStart, options);
 
             // --- START: ADD PLACE NAME BESIDE SHIP TO ---
-            const placeName = (selectedTo.city || "MEHSANA").toUpperCase();
+            const placeName = (selectedTo.place || "MEHSANA").toUpperCase();
             doc.setFontSize(16); // Big font for Place
             // Positioned beside "SHIP TO:" (higher Y in rotated view)
             const placeY = yStart + 0.8;
@@ -136,7 +137,7 @@ export default function PrintLabelsPage() {
             doc.text("SHIP TO:", 0.3, y);
 
             // Get Place and Add Underline
-            const placeName = (selectedTo.city || "MEHSANA").toUpperCase();
+            const placeName = (selectedTo.place || "MEHSANA").toUpperCase();
             doc.setFontSize(16);
             doc.text(placeName, 1.1, y + 0.02);
 
