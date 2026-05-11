@@ -127,7 +127,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       alert("Please enter a quantity more than 0");
       return; // STOP the function here
     }
-    
+
     try {
       // Decide if we are updating or creating
       const isEditing = !!initialData?._id;
@@ -161,123 +161,142 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   };
   return (
-    <BlockGuard 
-  permission="addOrder" 
-fallback={
-                <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
-                    <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
-                    <Link
-                        href="/dashboard"
-                        className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
-                    >
-                        Go to Dashboard
-                    </Link>
-                </div>
-            }
->
-    <div className={`${isModal ? "bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-5xl" : "space-y-8"}`}>
-
-      {/* Header logic: Back button for page, Close button for Modal */}
-      {!isModal && (
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 font-bold text-xs uppercase tracking-widest mb-4">
-          <FiArrowLeft /> Back
-        </button>
-      )}
-
-      <div className={`${!isModal ? "bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden" : ""}`}>
-        <div className="bg-[#1e293b] p-4 text-white flex justify-between items-center">
-          <h1 className="text-2xl font-black uppercase tracking-tight pl-5">Seller Order Entry</h1>
-          {isModal && (
-            <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
-              <FiX size={24} />
-            </button>
-          )}
+    <BlockGuard
+      permission="addOrder"
+      fallback={
+        <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50">
+          <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+          <Link
+            href="/dashboard"
+            className="text-sm bg-slate-900 text-white px-4 mt-4 py-2 rounded-lg hover:bg-slate-800 transition-all"
+          >
+            Go to Dashboard
+          </Link>
         </div>
+      }
+    >
+      <div className={`${isModal ? "bg-white rounded-xl shadow-2xl overflow-hidden w-full max-w-5xl" : "space-y-8"}`}>
 
-        <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
-            <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
-              <option value="">Select Firm</option>
-              {firms.map((f: any) => <option key={f._id} value={f.firmCode}>{f.firmCode} - {f.firmName}</option>)}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
-            <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.sellerId} onChange={(e) => {
-              const s: any = sellers.find((x: any) => x._id === e.target.value);
-              setFormData({ ...formData, sellerId: e.target.value, instituteName: s?.instituteName || "" });
-            }}>
-              <option value="">Select Institute</option>
-              {sellers.map((s: any) => <option key={s._id} value={s._id}>{s.instituteName}</option>)}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Name (Category | Unit) *</label>
-            <select required className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none" value={formData.itemId} onChange={(e) => {
-              const i: any = stocks.find((x: any) => x._id === e.target.value);
-              setFormData({ ...formData, itemId: e.target.value, itemName: i?.itemName || "", category: i?.category || "", unit: i?.unit || "", sku: i?.sku || "" });
-            }}>
-              <option value="">Select Item</option>
-              {stocks.map((i: any) => <option key={i._id} value={i._id}>{i.itemName} — {i.category} ({i.unit})</option>)}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
-            <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({ ...formData, contractDate: e.target.value })} />
-          </div>
-
-          <div className="md:col-span-2 space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here)</label>
-            <input type="text" className="w-full p-4 bg-slate-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Paste GEM Link..." value={formData.contractNo} onPaste={handleContractPaste} onChange={(e) => setFormData({ ...formData, contractNo: e.target.value })} />
-            {formData.contractUrl && <p className="text-[9px] text-blue-600 font-bold px-2 italic truncate">URL: {formData.contractUrl}</p>}
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
-            {/* <input type="number" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter quantity" value={formData.orderQty} onChange={(e) => setFormData({...formData, orderQty: Number(e.target.value)})} /> */}
-            <input
-              type="number"
-              required
-              className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
-              placeholder="Enter quantity"
-              value={formData.reQty ?? formData.orderQty ?? ""}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                setFormData({
-                  ...formData,
-                  reQty: val,   // Always update reQty so the UI stays in sync
-                  orderQty: val // Keep orderQty updated for new records
-                });
-              }}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
-            <input type="number" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
-          </div>
-
-          <div className="px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white">
-            <span className="font-black uppercase tracking-widest text-xs">Total</span>
-            <span className="text-2xl font-black">₹ {totalAmount.toLocaleString()}</span>
-          </div>
-
-          <div className="md:col-span-2 space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
-            <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
-          </div>
-
-          <button type="submit" disabled={loading} className=" bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest">
-            {loading ? "Saving..." : "Save Order"}
+        {/* Header logic: Back button for page, Close button for Modal */}
+        {!isModal && (
+          <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 font-bold text-xs uppercase tracking-widest mb-4">
+            <FiArrowLeft /> Back
           </button>
-        </form>
+        )}
+
+        <div className={`${!isModal ? "bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden" : ""}`}>
+          <div className="bg-[#1e293b] p-4 text-white flex justify-between items-center">
+            <h1 className="text-2xl font-black uppercase tracking-tight pl-5">Seller Order Entry</h1>
+            {isModal && (
+              <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+                <FiX size={24} />
+              </button>
+            )}
+          </div>
+
+          <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
+              <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
+                <option value="">Select Firm</option>
+                {firms.map((f: any) => <option key={f._id} value={f.firmCode}>{f.firmCode} - {f.firmName}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
+              <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.sellerId} onChange={(e) => {
+                const s: any = sellers.find((x: any) => x._id === e.target.value);
+                setFormData({ ...formData, sellerId: e.target.value, instituteName: s?.instituteName || "" });
+              }}>
+                <option value="">Select Institute</option>
+                {sellers.map((s: any) => <option key={s._id} value={s._id}>{s.instituteName}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Item Name *</label>
+              <input
+                list="stock-items"
+                required
+                placeholder="Type to search..."
+                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                onChange={(e) => {
+                  const selectedItem = stocks.find((x: any) => x.itemName === e.target.value);
+                  if (selectedItem) {
+                    setFormData({
+                      ...formData,
+                      itemId: selectedItem._id,
+                      itemName: selectedItem.itemName,
+                      category: selectedItem.category,
+                      unit: selectedItem.unit,
+                      sku: selectedItem.sku
+                    });
+                  }
+                }}
+              />
+              <datalist id="stock-items">
+                {stocks.map((i: any) => (
+                  <option key={i._id} value={i.itemName}>
+                    {i.sku} — {i.category} ({i.unit})
+                  </option>
+                ))}
+              </datalist>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
+              <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({ ...formData, contractDate: e.target.value })} />
+            </div>
+
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here)</label>
+              <input type="text" className="w-full p-4 bg-slate-50 border rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Paste GEM Link..." value={formData.contractNo} onPaste={handleContractPaste} onChange={(e) => setFormData({ ...formData, contractNo: e.target.value })} />
+              {formData.contractUrl && <p className="text-[9px] text-blue-600 font-bold px-2 italic truncate">URL: {formData.contractUrl}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
+              {/* <input type="number" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter quantity" value={formData.orderQty} onChange={(e) => setFormData({...formData, orderQty: Number(e.target.value)})} /> */}
+              <input
+                type="number"
+                required
+                className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
+                placeholder="Enter quantity"
+                value={formData.reQty ?? formData.orderQty ?? ""}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setFormData({
+                    ...formData,
+                    reQty: val,   // Always update reQty so the UI stays in sync
+                    orderQty: val // Keep orderQty updated for new records
+                  });
+                }}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
+              <input type="number" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
+            </div>
+
+            <div className="px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white">
+              <span className="font-black uppercase tracking-widest text-xs">Total</span>
+              <span className="text-2xl font-black">₹ {totalAmount.toLocaleString()}</span>
+            </div>
+
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
+              <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
+            </div>
+
+            <button type="submit" disabled={loading} className=" bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest">
+              {loading ? "Saving..." : "Save Order"}
+            </button>
+          </form>
+        </div>
       </div>
-      </div>
-      </BlockGuard>
+    </BlockGuard>
   );
 }
