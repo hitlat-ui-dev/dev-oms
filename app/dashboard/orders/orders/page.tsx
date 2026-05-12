@@ -677,6 +677,7 @@ export default function OrdersListPage() {
   };
 
 
+  
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
@@ -849,8 +850,8 @@ export default function OrdersListPage() {
                 <td className="px-3 py-2 max-w-28">
                   <div className="text-[9px] font-bold text-slate-800 uppercase truncate">{order.instituteName}</div>
                 </td>
-                <td className="px-3 py-2 font-black text-blue-800/60 uppercase">{order.category}</td>
-                <td className="px-3 py-2 max-w-44">
+                <td className="px-3 py-2 max-w-24 font-black text-blue-800/60 uppercase">{order.category}</td>
+                <td className="px-3 py-2 max-w-72">
                   <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
                   <div className="text-[9px] text-slate-800">SKU: {order.sku},
                     <b className="text-green-500">Stock: </b>

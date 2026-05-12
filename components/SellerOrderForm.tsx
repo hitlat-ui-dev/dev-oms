@@ -160,6 +160,21 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (initialData && sellers.length > 0 && stocks.length > 0) {
+      // If editing, ensure we have the readable names for the search inputs
+      const seller = sellers.find(s => s._id === initialData.sellerId);
+      const item = stocks.find(i => i._id === initialData.itemId);
+
+      setFormData({
+        ...initialData,
+        instituteName: seller?.instituteName || initialData.instituteName,
+        itemName: item?.itemName || initialData.itemName
+      });
+    }
+  }, [initialData, sellers, stocks]);
+
   return (
     <BlockGuard
       permission="addOrder"
@@ -196,15 +211,33 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
           <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
 
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
               <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
                 <option value="">Select Firm</option>
                 {firms.map((f: any) => <option key={f._id} value={f.firmCode}>{f.firmCode} - {f.firmName}</option>)}
               </select>
+            </div> */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
+              <input
+                list="firm-options"
+                required
+                placeholder="Search Firm..."
+                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                value={formData.firmCode}
+                onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}
+              />
+              <datalist id="firm-options">
+                {firms.map((f: any) => (
+                  <option key={f._id} value={f.firmCode}>
+                    {f.firmName}
+                  </option>
+                ))}
+              </datalist>
             </div>
 
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
               <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.sellerId} onChange={(e) => {
                 const s: any = sellers.find((x: any) => x._id === e.target.value);
@@ -213,6 +246,31 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 <option value="">Select Institute</option>
                 {sellers.map((s: any) => <option key={s._id} value={s._id}>{s.instituteName}</option>)}
               </select>
+            </div> */}
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
+              <input
+                list="institute-options"
+                required
+                placeholder="Search Institute..."
+                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                value={formData.instituteName} // Use the name for the display
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const s: any = sellers.find((x: any) => x.instituteName === val);
+                  setFormData({
+                    ...formData,
+                    instituteName: val,
+                    sellerId: s?._id || "" // Update the ID if a match is found
+                  });
+                }}
+              />
+              <datalist id="institute-options">
+                {sellers.map((s: any) => (
+                  <option key={s._id} value={s.instituteName} />
+                ))}
+              </datalist>
             </div>
 
             <div className="space-y-2">
@@ -222,17 +280,24 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 required
                 placeholder="Type to search..."
                 className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                // ADD THIS LINE:
+                value={formData.itemName}
                 onChange={(e) => {
-                  const selectedItem = stocks.find((x: any) => x.itemName === e.target.value);
+                  const val = e.target.value;
+                  // First, update the text so the user can actually type
+                  setFormData(prev => ({ ...prev, itemName: val }));
+
+                  // Second, check if the typed text matches an item in your list
+                  const selectedItem = stocks.find((x: any) => x.itemName === val);
                   if (selectedItem) {
-                    setFormData({
-                      ...formData,
+                    setFormData(prev => ({
+                      ...prev,
                       itemId: selectedItem._id,
                       itemName: selectedItem.itemName,
                       category: selectedItem.category,
                       unit: selectedItem.unit,
                       sku: selectedItem.sku
-                    });
+                    }));
                   }
                 }}
               />
