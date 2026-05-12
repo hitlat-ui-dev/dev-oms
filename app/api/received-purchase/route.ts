@@ -10,6 +10,7 @@ export async function POST(req: Request) {
 
     const {
       originalOrderId,
+      itemId,
       itemName,
       receivedQty,
       damageQty,
@@ -26,31 +27,34 @@ export async function POST(req: Request) {
 
     const remainingQty = Number(orderQty) - Number(receivedQty) - Number(damageQty);
 
+    const itemFilter = itemId ? { _id: new ObjectId(itemId) } : { sku: sku };
+
     // 1. SAVE TO STOCK (Only increment by received quantity)
     await db.collection("stock").updateOne(
-      { sku: sku },
+      { sku: sku }, 
       {
         $inc: { quantity: Number(receivedQty) },
         $set: { itemName, vendor, unit, rate, category, lastUpdated: new Date() }
       },
-      { upsert: true }
+      { upsert: false } // CHANGE: Set to false so it doesn't create a second item
     );
 
     // --- INSERT START: UPDATE LEDGER HISTORY ---
     await db.collection("items").updateOne(
-      { sku: sku },
+      itemFilter, 
       {
         $inc: { currentStock: Number(receivedQty) },
         $push: {
           history: {
-            type: `PURCHASE Received by ${userName || "Admin"}`, // Shows in your Modal UI
+            type: `PURCHASE Received by ${userName || "Admin"}`,
             qty: Number(receivedQty),
             date: new Date(),
             vendorName: vendor,
             orderNo: orderNumber
           }
         }
-      } as any
+      } as any,
+      { upsert: false } // CHANGE: Set to false to prevent duplicates here too
     );
 
     // // Log Damage as a Return in History
@@ -111,6 +115,7 @@ export async function POST(req: Request) {
 
       const remainingData: any = {
         itemName,
+        itemId,
         sku,
         category,
         prQty: remainingQty,

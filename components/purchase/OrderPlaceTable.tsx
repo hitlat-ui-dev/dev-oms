@@ -13,6 +13,7 @@ import {
 
 interface PurchaseOrder {
   _id: string;
+  itemId?: string;
   orderNumber?: string;
   itemName: string;
   sku?: string;
@@ -156,6 +157,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           originalOrderId: selectedRequest._id,
+          itemId: selectedRequest.itemId || null,
           orderNumber: selectedRequest.orderNumber,
           itemName: selectedRequest.itemName,
           sku: selectedRequest.sku,
