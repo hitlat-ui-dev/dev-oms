@@ -97,7 +97,7 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
       ? <FiChevronUp className="text-blue-600 ml-auto" />
       : <FiChevronDown className="text-blue-600 ml-auto" />;
   };
-
+//console.log("Table Render Data:", filteredAndSortedData);
   return (
     <>
       <div className="flex flex-wrap gap-3 p-4 bg-slate-50 mb-3 rounded-xl border border-slate-200">

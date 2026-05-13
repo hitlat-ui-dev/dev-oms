@@ -12,12 +12,24 @@ import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 
 // 1. Define the Interface to fix "red line" property errors
+// interface StockItem {
+//   _id: string;
+//   sku: string;
+//   itemName: string;
+//   lastUpdated?: string | Date;
+//   quantity: number;
+//   vendor?: string;
+//   category?: string;
+//   unit?: string;
+//   rate?: number;
+// }
 interface StockItem {
   _id: string;
+  itemId?: { $oid: string } | string; // Handle MongoDB object format
   sku: string;
   itemName: string;
   lastUpdated?: string | Date;
-  quantity: number;
+  totalQty: number; // Changed from quantity to totalQty
   vendor?: string;
   category?: string;
   unit?: string;
@@ -88,14 +100,18 @@ export default function PurchaseLogisticsPage() {
 
   // 4. Memoized Sorting for Stock (Fixes the red line error)
   const sortedStock = useMemo(() => {
-    if (!stock || !Array.isArray(stock)) return [];
-    return [...stock].sort((a, b) => {
-      // Use fallback date string for items missing the lastUpdated field
-      const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
-      const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
-      return dateB - dateA; // Descending order
-    });
-  }, [stock]);
+  if (!stock || !Array.isArray(stock)) return [];
+  
+  return stock.map(item => ({
+    ...item,
+    // Add a normalized name for internal matching
+    normalizedName: (item.itemName || "").replace(/\s+/g, ' ').trim().toUpperCase()
+  })).sort((a, b) => {
+    const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
+    const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
+    return dateB - dateA;
+  });
+}, [stock]);
 
   useEffect(() => {
     fetchVendors();
@@ -232,6 +248,7 @@ export default function PurchaseLogisticsPage() {
       <div className="pt-4 px-4 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
         <div className="flex flex-col lg:flex-row lg:justify-between mb-8 gap-4 items-start lg:items-center">
           {/* Tabs Section - Stacks on Mobile, Rows on Desktop */}
+          
           <div className="w-full lg:w-auto bg-white p-1.5 rounded-2xl border border-slate-200">
             <div className="grid grid-cols-2 md:grid-cols-4 lg:flex gap-1.5">
               {["Purchase Request", "Order Place", "Received Purchase", "Purchase Return"].map((t) => (
@@ -312,14 +329,22 @@ export default function PurchaseLogisticsPage() {
           {activeTab === "Purchase Return" && <PurchaseReturnPage />}
         </div>
 
-        <PurchaseRequestModal
+        {/* <PurchaseRequestModal
           isOpen={isRequestModalOpen}
           stockData={sortedStock} // <--- Add this
           onClose={() => {
             setIsRequestModalOpen(false);
             fetchTabData(); // or fetchRequests() depending on your function name
           }}
-        />
+        /> */}
+        <PurchaseRequestModal
+  isOpen={isRequestModalOpen}
+  stockData={sortedStock} 
+  onClose={() => {
+    setIsRequestModalOpen(false);
+    fetchTabData(); // Refresh both stock and requests
+  }}
+/>
 
         {selectedRequest && (
           <ReceivedQtyModal

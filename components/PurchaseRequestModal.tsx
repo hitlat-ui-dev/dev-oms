@@ -22,73 +22,141 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
   });
 
   // 1. Find the current item in the passed stockData for stock display
+  // const currentStockInfo = useMemo(() => {
+  //   if (!formData.itemName) return null;
+  //   return stockData.find(i =>
+  //     i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
+  //   );
+  // }, [formData.itemName, stockData]);
   const currentStockInfo = useMemo(() => {
     if (!formData.itemName) return null;
-    return stockData.find(i =>
-      i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
-    );
+
+    const searchStr = formData.itemName.toUpperCase().trim();
+
+    return stockData.find((i) => {
+      const dbName = (i.itemName || "").toUpperCase().trim();
+      const dbSku = (i.sku || "").toUpperCase().trim();
+
+      // Match if EITHER the name or the SKU matches what was typed/selected
+      return dbName === searchStr || dbSku === searchStr;
+    });
   }, [formData.itemName, stockData]);
 
   const handleTextChange = (value: string) => {
-    // Find item to auto-fill the unit (e.g., NOS or KG)
-    const selectedItem = stockData.find(i => i.itemName?.toLowerCase() === value.toLowerCase());
+    // 1. Try to find an exact match in your stockData
+    const selectedItem = stockData.find(
+      (i) => i.itemName?.toLowerCase().trim() === value.toLowerCase().trim()
+    );
 
     setFormData({
       ...formData,
       itemName: value,
-      unit: selectedItem?.unit || formData.unit || ""
+      // Auto-fill unit only if a match is found
+      unit: selectedItem?.unit || formData.unit || "",
     });
   };
 
-  const handleSave = async () => {
-    const isValidItem = stockData.some(
-      (i) => i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
-    );
+  // const handleSave = async () => {
+  //   const isValidItem = stockData.some(
+  //     (i) => i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
+  //   );
 
-    if (!isValidItem) {
-      alert("Please select a valid item from the list. You cannot create a request for a new item here.");
-      return;
+  //   if (!isValidItem) {
+  //     alert("Please select a valid item from the list. You cannot create a request for a new item here.");
+  //     return;
+  //   }
+
+  //   if (formData.qty <= 0) {
+  //     alert("Please enter a valid quantity.");
+  //     return;
+  //   }
+
+  //   setLoading(true);
+  //   if (!formData.itemName || formData.qty <= 0) {
+  //     alert("Please enter an item name and quantity.");
+  //     return;
+  //   }
+
+  //   setLoading(true);
+  //   try {
+  //     const res = await fetch("/api/purchase", {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({
+  //         itemName: formData.itemName.toUpperCase(),
+  //         unit: formData.unit,
+  //         prQty: formData.qty,
+  //         remark: formData.remark,
+  //         status: formData.status,
+  //         // Use currentStockInfo to fill missing details for the DB
+  //         sku: currentStockInfo?.sku || "N/A",
+  //         category: currentStockInfo?.category || "General"
+  //       }),
+  //     });
+
+  //     if (res.ok) {
+  //       onClose();
+  //       setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
+  //     }
+  //   } catch (error) {
+  //     console.error("Save failed:", error);
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
+ // Inside PurchaseRequestModal.tsx -> handleSave
+const handleSave = async () => {
+  // 1. Normalize the user input (removes double spaces, trims, and uppercase)
+  const cleanInput = formData.itemName.replace(/\s+/g, ' ').trim().toUpperCase();
+  
+  // 2. Find the item with a more aggressive match
+  const matchedItem = stockData.find((i) => {
+    const dbName = (i.itemName || "").replace(/\s+/g, ' ').trim().toUpperCase();
+    const dbSku = (i.sku || "").trim().toUpperCase();
+    
+    // Check if the input exactly matches Name OR SKU
+    return dbName === cleanInput || dbSku === cleanInput;
+  });
+
+  // LOGGING: This is the most important part to debug. 
+  // Open your browser console (F12) and see what this prints.
+  //console.log("Input:", cleanInput);
+  //console.log("Found Item:", matchedItem);
+
+  if (!matchedItem) {
+    //alert(`System cannot find "${formData.itemName}" in the stock database. Please select from the dropdown list.`);
+    return;
+  }
+
+  setLoading(true);
+  try {
+    const res = await fetch("/api/purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Extracting IDs carefully
+        itemId: matchedItem.itemId?.$oid || matchedItem._id?.$oid || matchedItem.itemId || matchedItem._id,
+        itemName: matchedItem.itemName, // Use the official name from DB
+        sku: matchedItem.sku || "N/A",
+        category: matchedItem.category || "GENERAL",
+        unit: matchedItem.unit || "NOS",
+        prQty: Number(formData.qty),
+        remark: formData.remark,
+        status: formData.status,
+      }),
+    });
+
+    if (res.ok) {
+      onClose();
+      setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
     }
-
-    if (formData.qty <= 0) {
-      alert("Please enter a valid quantity.");
-      return;
-    }
-
-    setLoading(true);
-    if (!formData.itemName || formData.qty <= 0) {
-      alert("Please enter an item name and quantity.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/purchase", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          itemName: formData.itemName.toUpperCase(),
-          unit: formData.unit,
-          prQty: formData.qty,
-          remark: formData.remark,
-          status: formData.status,
-          // Use currentStockInfo to fill missing details for the DB
-          sku: currentStockInfo?.sku || "N/A",
-          category: currentStockInfo?.category || "General"
-        }),
-      });
-
-      if (res.ok) {
-        onClose();
-        setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
-      }
-    } catch (error) {
-      console.error("Save failed:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  } catch (error) {
+    console.error("Save failed:", error);
+  } finally {
+    setLoading(false);
+  }
+};
   if (!isOpen) return null;
 
   return (
@@ -154,10 +222,10 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
                     onChange={(e) => handleTextChange(e.target.value)}
                   />
                   <datalist id="inventory-items">
-                    {/* Using stockData prop for the list */}
                     {stockData.map((item, idx) => (
                       <option key={idx} value={item.itemName}>
-                        {item.totalQty ?? item.quantity ?? 0} {item.unit || ""} in stock
+                        {/* This shows the SKU next to the name in the dropdown */}
+                        {item.sku} | {item.category} | {item.totalQty ?? item.quantity ?? 0} in stock
                       </option>
                     ))}
                   </datalist>
