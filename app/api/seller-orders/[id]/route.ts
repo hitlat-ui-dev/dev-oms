@@ -151,6 +151,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const itemName = originalOrder.itemName?.trim();
       if (itemName) {
         const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+        
         await db.collection("stock").updateOne(stockFilter, {
           $inc: { quantity: -shipQty, reQty: -shipQty }
         });

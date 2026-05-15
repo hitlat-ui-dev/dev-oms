@@ -510,6 +510,12 @@ export default function OrdersListPage() {
   }
 
   const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[]) => {
+    // --- CHANGE 1: Critical Null/Empty Check ---
+    if (!filteredOrders || filteredOrders.length === 0) {
+        alert("No orders selected to download.");
+        return;
+    }
+
     const doc = new jsPDF();
     const today = new Date();
     const dd = String(today.getDate()).padStart(2, '0');
@@ -519,121 +525,146 @@ export default function OrdersListPage() {
 
     // 1. Group by sellerId
     const groupedBySeller = filteredOrders.reduce((acc: any, order) => {
-      const key = order.sellerId || "unknown";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(order);
-      return acc;
+        // Ensure sellerId exists or fallback to a string to prevent crash
+        const key = order.sellerId || "unknown_seller";
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(order);
+        return acc;
     }, {});
 
-    // Variable to store the name for the final filename
-    let fileNameBase = "Challan";
+    let fileNameBase = "Delivery_Challan";
 
     Object.keys(groupedBySeller).forEach((sellerId, index) => {
-      if (index > 0) doc.addPage();
+        const items = groupedBySeller[sellerId];
+        
+        // Safety check: skip if for some reason this seller has no items
+        if (!items || items.length === 0) return;
 
-      const items = groupedBySeller[sellerId];
-      // Fix: Cast the found seller to the Seller interface to remove red lines
-      const sellerInfo = (sellers.find(s => s._id === sellerId) as Seller) || {};
+        if (index > 0) doc.addPage();
 
-      // Capture the name of the first seller for the filename
-      if (index === 0) {
-        fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || "Challan";
-      }
+        const sellerInfo = sellers.find(s => s._id === sellerId) || {};
 
-      // --- Header ---
-      doc.setFontSize(22);
-      doc.setFont("helvetica", "bold");
-      doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
-
-      // --- Buyer Details ---
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-      doc.text("To,", 14, 35);
-      doc.setFont("helvetica", "bold");
-      doc.text(`${sellerInfo.buyerName || items[0].buyerName || 'Valued Customer'}`, 14, 42);
-
-      doc.setFont("helvetica", "normal");
-      doc.text([
-        `Institute: ${sellerInfo.instituteName || items[0].instituteName || 'N/A'}`,
-        `Address: ${sellerInfo.address || '---'}`,
-        `Place: ${sellerInfo.place || '---'}`,
-        `Mobile: ${sellerInfo.mobile || '---'}`
-      ], 14, 48);
-
-      // --- Items Table ---
-      autoTable(doc, {
-        startY: 75,
-        head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
-        body: items.map((order: any, i: number) => {
-          const company = companies.find(c => c.firmCode === order.firmCode);
-
-          const orderDisplay = `${order.orderNo}\n${order.createdAt
-            ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
-            : "N/A"}`;
-
-          const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
-            ? `${order.contractNo}\n(${order.contractDate || ''})`
-            : '---';
-
-          const transportDetails = order.transportName
-            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark}`
-            : 'Direct Delivery';
-
-          return [
-            i + 1,
-            orderDisplay,
-            order.itemName,
-            company?.firmName || order.firm || 'N/A',
-            `${order.reQty} ${order.unit || ''}`,
-            contractDisplay,
-            transportDetails
-          ];
-        }),
-        theme: 'grid',
-        headStyles: { textColor: 20, fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
-        didDrawCell: (data) => {
-          if (data.section === 'body' && data.column.index === 5) {
-            const order = items[data.row.index];
-            if (order.contractUrl) {
-              doc.setTextColor(0, 0, 255);
-              doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
-            }
-          }
+        // Capture filename from first valid seller
+        if (index === 0) {
+            fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
         }
-      });
 
-      // --- Footer Section ---
-      const finalY = (doc as any).lastAutoTable.finalY + 15;
+        // --- Header ---
+        doc.setFontSize(22);
+        doc.setFont("helvetica", "bold");
+        doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
 
-      // Ensure footer doesn't get cut off; move to next page if too low
-      if (finalY > 230) doc.addPage();
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
 
-      doc.setFont("helvetica", "bold");
-      doc.line(140, finalY + 15, 190, finalY + 15);
-      doc.text("Sign for Receiver", 165, finalY + 20, { align: "center" });
+        // --- Buyer Details ---
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "normal");
+        doc.text("To,", 14, 35);
+        doc.setFont("helvetica", "bold");
+        
+        // --- CHANGE 2: Added Optional Chaining ---
+        const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
+        doc.text(`${displayName}`, 14, 42);
 
-      // Terms
-      doc.setFontSize(8);
-      doc.text("Terms & Conditions:", 14, finalY + 30);
       doc.setFont("helvetica", "normal");
-      const terms = [
-        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
-        "2. Damage or defects must be reported immediately.",
-        "3. Communication for replacement must be immediate.",
-        "4. Dispatch Dept Contact: +91 8200093336"
-      ];
-      doc.text(terms, 14, finalY + 35, { maxWidth: 180 });
+      doc.setFontSize(8);
+        doc.text([
+            `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
+            `Address: ${sellerInfo.address || '---'}`,
+            `Place: ${sellerInfo.place || '---'}`,
+            `Mobile: ${sellerInfo.mobile || '---'}`
+        ], 14, 48);
+
+        // --- Items Table ---
+        autoTable(doc, {
+            startY: 75,
+            head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
+            body: items.map((order: any, i: number) => {
+                const company = companies.find(c => c.firmCode === order.firmCode);
+
+                const orderDisplay = `${order.orderNo || 'N/A'}\n${order.createdAt
+                    ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
+                    : "N/A"}`;
+
+                const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
+                    ? `${order.contractNo}\n(${order.contractDate || ''})`
+                    : '---';
+
+                const transportDetails = order.transportName
+                    ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark || ''}`
+                    : 'Direct Delivery';
+
+                return [
+                    i + 1,
+                    orderDisplay,
+                    order.itemName || 'N/A',
+                    company?.firmName || order.firm || 'N/A',
+                    `${order.reQty || 0} ${order.unit || ''}`,
+                    contractDisplay,
+                    transportDetails
+                ];
+            }),
+            theme: 'grid',
+            headStyles: { textColor: 20, fontStyle: 'bold' },
+            styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+            didDrawCell: (data) => {
+                if (data.section === 'body' && data.column.index === 5) {
+                    const order = items[data.row.index];
+                    if (order?.contractUrl) {
+                        doc.setTextColor(0, 0, 255);
+                        doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
+                    }
+                }
+            }
+        });
+
+        // --- Footer Section ---
+        // --- Footer Section ---
+// Get the actual end position of the table
+const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
+
+// Function to check and add page if space is low
+const checkPageSpace = (currentY: number, requiredSpace: number) => {
+  if (currentY + requiredSpace > 270) {
+    doc.addPage();
+    return 20; // Reset Y to top of new page
+  }
+  return currentY;
+};
+
+// 1. Draw "Sign for Receiver"
+let footerY = checkPageSpace(tableBottomY + 10, 25);
+doc.setFont("helvetica", "bold");
+doc.setFontSize(10);
+doc.line(140, footerY + 15, 190, footerY + 15);
+doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" });
+
+// 2. Draw Terms & Conditions
+// Check space again because the sign took up room
+footerY = checkPageSpace(footerY + 30, 40);
+
+doc.setFontSize(8);
+doc.setFont("helvetica", "bold");
+doc.text("Terms & Conditions:", 14, footerY);
+
+doc.setFont("helvetica", "normal");
+const terms = [
+  "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
+  "2. Damage or defects must be reported immediately.",
+  "3. Communication for replacement must be immediate.",
+  "4. Dispatch Dept Contact: +91 8200093336"
+];
+
+// Draw the terms with maxWidth to ensure wrapping
+doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
     });
 
     // Final Save Logic
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
     doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
-  };
+};
 
   const handleExportSellingReport = () => {
     // We use filteredOrders because it already handles the "ALL" tab logic 
