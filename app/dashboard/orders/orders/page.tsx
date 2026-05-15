@@ -639,7 +639,7 @@ let footerY = checkPageSpace(tableBottomY + 10, 25);
 doc.setFont("helvetica", "bold");
 doc.setFontSize(10);
 doc.line(140, footerY + 15, 190, footerY + 15);
-doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" });
+doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" }); 
 
 // 2. Draw Terms & Conditions
 // Check space again because the sign took up room
