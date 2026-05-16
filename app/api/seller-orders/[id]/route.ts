@@ -19,7 +19,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-
     // ================================================================
     // LOGIC A: RETURN ORDER (WITH MOVE TO TO-CHECK FEATURE)
     // ================================================================
@@ -45,7 +44,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const returnOrderData = {
         ...returnOrderObj,
         reQty: returnQty,
-        totalAmount: returnQty * originalOrder.rate,
+        totalAmount: returnQty * (originalOrder.rate || 0),
         status: "RETURN ORDER",
         orderNo: returnOrderNo,
         isPaid: false
@@ -58,7 +57,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         const toCheckOrderData = {
           ...returnOrderObj,
           reQty: returnQty,
-          totalAmount: returnQty * originalOrder.rate,
+          totalAmount: returnQty * (originalOrder.rate || 0),
           status: "TO CHECK",
           orderNo: resubOrderNo,
           isPaid: false
@@ -79,7 +78,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           id,
           {
             reQty: remainingQty,
-            totalAmount: remainingQty * originalOrder.rate,
+            totalAmount: remainingQty * (originalOrder.rate || 0),
           },
           { new: true }
         );
@@ -87,12 +86,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         // If full return, delete or move original out of Delivery
         updatedOriginal = await SellerOrder.findByIdAndDelete(id);
       }
-
-      // 4. Update Main Stock (Add items back to physical quantity)
-
-      // if (stockFilter) {
-      //   await db.collection("stock").updateOne(stockFilter, { $inc: { quantity: returnQty } });
-      // }
 
       return NextResponse.json(updatedOriginal || { success: true }, { status: 200 });
     }
@@ -102,18 +95,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // ================================================================
     const shipQty = Number(updateData.shipQty);
 
-    // CHANGE: Only enter this block if shipQty is LESS than total order qty
+    // Only enter this block if shipQty is LESS than total order qty
     if (
       updateData.status === "READY TO SHIP" &&
       updateData.isPartialFulfillment &&
       shipQty < originalOrder.reQty
     ) {
-
       const remainingQty = originalOrder.reQty - shipQty;
 
       // 1. GENERATE SEQUENTIAL ORDER NUMBER (P1, P2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-P')[0];
-
       const partialCount = await SellerOrder.countDocuments({
         orderNo: { $regex: new RegExp(`^${baseOrderNo}-P`) }
       });
@@ -131,7 +122,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const shippedOrderData = {
         ...shippedOrderObj,
         reQty: shipQty,
-        totalAmount: shipQty * originalOrder.rate,
+        totalAmount: shipQty * (originalOrder.rate || 0),
         status: "READY TO SHIP",
         orderNo: newOrderNo,
       };
@@ -142,7 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         id,
         {
           reQty: remainingQty,
-          totalAmount: remainingQty * originalOrder.rate,
+          totalAmount: remainingQty * (originalOrder.rate || 0),
         },
         { new: true }
       );
@@ -156,14 +147,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           $inc: { quantity: -shipQty, reQty: -shipQty }
         });
 
-        // Inside Logic C of your PATCH route
         await db.collection("items").updateOne(
           { sku: originalOrder.sku },
           {
             $inc: { currentStock: -shipQty },
             $push: {
               history: {
-                // Updated type string below
                 type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
                 qty: -shipQty,
                 date: new Date(),
@@ -174,8 +163,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             } as any
           }
         );
-
-
       }
 
       return NextResponse.json(updatedOriginal, { status: 200 });
@@ -188,7 +175,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // 1. STOCK CHECK: Only for full transitions to Ready to Ship
     if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
       const itemName = originalOrder.itemName?.trim();
-
       const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
       if (itemName) {
@@ -196,11 +182,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         const stockItem = await db.collection("stock").findOne(stockFilter);
         const available = stockItem?.quantity || 0;
 
-        // If stock is insufficient, we only block if it's NOT a "Partial Fulfillment" 
-        // request that happens to be for the full amount.
         if (available < orderQty) {
-          // If you want to allow shipping even with 0 stock when using the modal:
-          // You can check if updateData.shipQty exists to bypass this block.
           if (!updateData.shipQty) {
             return NextResponse.json(
               { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` },
@@ -211,21 +193,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    // Inside your Logic B (Standard Updates)
     if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN ORDER") {
-
-      // 1. Clean the Item Name (Removes accidental spaces)
       const itemName = updateData.itemName?.trim();
-      const returnQty = Number(updateData.reQty);
+      const returnQty = Number(updateData.reQty || originalOrder.reQty || 0);
 
       if (itemName) {
-        // 2. Use Case-Insensitive Matching
-        const stockFilter = {
-          itemName: { $regex: new RegExp(`^${itemName}$`, "i") }
-        };
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
 
-        // 3. Update the Stock
-        const stockUpdate = await db.collection("stock").updateOne(stockFilter, {
+        await db.collection("stock").updateOne(stockFilter, {
           $inc: { quantity: returnQty }
         });
 
@@ -252,18 +227,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             } as any
           }
         );
-
-        console.log(`Stock restored and history saved for ${itemName}`);
-
-        // LOGGING: Check your terminal to see if it actually found the item
-        //console.log(`Stock update result for ${itemName}:`, stockUpdate.modifiedCount);
       }
     }
 
-    // 2. Perform standard update
+    // Perform the update once safely
     const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
 
-    const adjustQty = Number(updateData.reQty || updated.reQty || 0);
+    // Correctly reference original quantity configuration so full orders are calculated safely
+    const adjustQty = Number(originalOrder.reQty || updated.reQty || 0);
     const itemName = updated.itemName?.trim();
 
     if (itemName && adjustQty > 0) {
@@ -275,22 +246,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             $inc: { reQty: -adjustQty, quantity: -adjustQty }
           });
 
-          const updated = await SellerOrder.findByIdAndUpdate(
-            id,
-            { ...updateData }, // This will now include the correct sellerName
-            { new: true }
-          );
-          //  ADD TO HISTORY
           await db.collection("items").updateOne(
             { sku: updated.sku || originalOrder.sku },
             {
-              // Since it's being cancelled/moved to Hisab, we add the stock back to the total
               $inc: { currentStock: -adjustQty },
-
               $push: {
                 history: {
                   type: `${updateData.status} by ${updateData.userName || "Admin"}`,
-                  qty: -adjustQty, // Negative for DEBIT column
+                  qty: -adjustQty,
                   date: new Date(),
                   orderNo: updated.orderNo,
                   sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
@@ -299,8 +262,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
               } as any
             }
           );
-
-
         } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER" || updateData.status === "FULFILLED") {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty }
@@ -308,34 +269,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
       }
       else if (updateData.activeTab === "READY TO SHIP") {
-        // if (updateData.status === "FULFILLED") {
-        //   await db.collection("stock").updateOne(stockFilter, {
-        //     $inc: { quantity: adjustQty }
-        //   });
-        // }
-        // else 
         if (["HISAB", "CANCELL ORDER", "RETURN ORDER", "FULFILLED"].includes(updateData.status)) {
-
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { quantity: adjustQty }
           });
 
-          const updated = await SellerOrder.findByIdAndUpdate(
-            id,
-            { ...updateData }, // This will now include the correct sellerName
-            { new: true }
-          );
-          //  ADD TO HISTORY
           await db.collection("items").updateOne(
             { sku: updated.sku || originalOrder.sku },
             {
-              // Since it's being cancelled/moved to Hisab, we add the stock back to the total
               $inc: { currentStock: adjustQty },
-
               $push: {
                 history: {
                   type: `${updateData.status} by ${updateData.userName || "Admin"}`,
-                  qty: adjustQty, // Positive because it's coming back to available stock
+                  qty: adjustQty,
                   date: new Date(),
                   orderNo: updated.orderNo,
                   sellerName: updateData.sellerName || "N/A",
@@ -348,7 +294,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
       else if (updateData.activeTab === "CANCELL ORDER") {
         if (updateData.status === "TO CHECK") {
-          // Put the quantity back into the "Pending" (reQty) pool
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: adjustQty }
           });
@@ -356,7 +301,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
       else if (updateData.activeTab === "HISAB") {
         if (updateData.status === "TO CHECK") {
-          // Put the quantity back into the "Pending" (reQty) pool
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: adjustQty }
           });

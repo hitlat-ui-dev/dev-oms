@@ -298,35 +298,6 @@ export default function OrdersListPage() {
       fetchOrders();
     }
   };
-  // const submitPartialShipment = async () => {
-  //   const orderToUpdate = orders.find(o => o._id === selectedOrderId);
-  //   if (!orderToUpdate) return;
-
-  //   if (shipQty <= 0) return alert("Shipping quantity must be greater than 0");
-  //   if (shipQty >= orderToUpdate.reQty) return alert("For full quantity, use standard update");
-
-  //   try {
-  //     const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
-  //       method: "PATCH",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({
-  //         status: "READY TO SHIP",
-  //         isPartialFulfillment: true,
-  //         shipQty: shipQty,
-  //         itemName: orderToUpdate.itemName
-  //       }),
-  //     });
-
-  //     if (res.ok) {
-  //       setShowPartialShipModal(false);
-  //       setSelectedOrderId(null);
-  //       fetchOrders();
-  //       alert(`Split Successful: ${shipQty} moved to Ready to Ship. Remaining kept in To Check.`);
-  //     }
-  //   } catch (err) {
-  //     alert("Error processing partial shipment");
-  //   }
-  // };
 
   const submitPartialShipment = async () => {
     if (shipQty <= 0) {
@@ -336,8 +307,6 @@ export default function OrdersListPage() {
     setPartialError("");
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) return;
-
-
 
     const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
     const avStock = stockData?.totalQty ?? 0;
@@ -455,7 +424,6 @@ export default function OrdersListPage() {
         setSelectedOrderId(null);
         setMoveToCheck(false);
         fetchOrders();
-        //alert(isPartial ? `Split Successful: ${returnQty} returned, ${orderToUpdate.reQty - returnQty} remains delivered.` : "Order fully returned.");
 
         const statusMessage = isPartial
           ? `Split Successful: ${returnQty} returned.`
@@ -510,7 +478,6 @@ export default function OrdersListPage() {
   }
 
   const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[]) => {
-    // --- CHANGE 1: Critical Null/Empty Check ---
     if (!filteredOrders || filteredOrders.length === 0) {
         alert("No orders selected to download.");
         return;
@@ -523,9 +490,7 @@ export default function OrdersListPage() {
     const yy = String(today.getFullYear()).slice(-2);
     const formattedDate = `${dd}-${mm}-${yy}`;
 
-    // 1. Group by sellerId
     const groupedBySeller = filteredOrders.reduce((acc: any, order) => {
-        // Ensure sellerId exists or fallback to a string to prevent crash
         const key = order.sellerId || "unknown_seller";
         if (!acc[key]) acc[key] = [];
         acc[key].push(order);
@@ -537,19 +502,16 @@ export default function OrdersListPage() {
     Object.keys(groupedBySeller).forEach((sellerId, index) => {
         const items = groupedBySeller[sellerId];
         
-        // Safety check: skip if for some reason this seller has no items
         if (!items || items.length === 0) return;
 
         if (index > 0) doc.addPage();
 
         const sellerInfo = sellers.find(s => s._id === sellerId) || {};
 
-        // Capture filename from first valid seller
         if (index === 0) {
             fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
         }
 
-        // --- Header ---
         doc.setFontSize(22);
         doc.setFont("helvetica", "bold");
         doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
@@ -558,18 +520,16 @@ export default function OrdersListPage() {
         doc.setFont("helvetica", "normal");
         doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
 
-        // --- Buyer Details ---
         doc.setFontSize(11);
         doc.setFont("helvetica", "normal");
         doc.text("To,", 14, 35);
         doc.setFont("helvetica", "bold");
         
-        // --- CHANGE 2: Added Optional Chaining ---
         const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
         doc.text(`${displayName}`, 14, 42);
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
         doc.text([
             `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
             `Address: ${sellerInfo.address || '---'}`,
@@ -577,7 +537,6 @@ export default function OrdersListPage() {
             `Mobile: ${sellerInfo.mobile || '---'}`
         ], 14, 48);
 
-        // --- Items Table ---
         autoTable(doc, {
             startY: 75,
             head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
@@ -620,55 +579,44 @@ export default function OrdersListPage() {
             }
         });
 
-        // --- Footer Section ---
-        // --- Footer Section ---
-// Get the actual end position of the table
-const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
+        const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
 
-// Function to check and add page if space is low
-const checkPageSpace = (currentY: number, requiredSpace: number) => {
-  if (currentY + requiredSpace > 270) {
-    doc.addPage();
-    return 20; // Reset Y to top of new page
-  }
-  return currentY;
-};
+        const checkPageSpace = (currentY: number, requiredSpace: number) => {
+          if (currentY + requiredSpace > 270) {
+            doc.addPage();
+            return 20; 
+          }
+          return currentY;
+        };
 
-// 1. Draw "Sign for Receiver"
-let footerY = checkPageSpace(tableBottomY + 10, 25);
-doc.setFont("helvetica", "bold");
-doc.setFontSize(10);
-doc.line(140, footerY + 15, 190, footerY + 15);
-doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" }); 
+        let footerY = checkPageSpace(tableBottomY + 10, 25);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.line(140, footerY + 15, 190, footerY + 15);
+        doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" }); 
 
-// 2. Draw Terms & Conditions
-// Check space again because the sign took up room
-footerY = checkPageSpace(footerY + 30, 40);
+        footerY = checkPageSpace(footerY + 30, 40);
 
-doc.setFontSize(8);
-doc.setFont("helvetica", "bold");
-doc.text("Terms & Conditions:", 14, footerY);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text("Terms & Conditions:", 14, footerY);
 
-doc.setFont("helvetica", "normal");
-const terms = [
-  "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
-  "2. Damage or defects must be reported immediately.",
-  "3. Communication for replacement must be immediate.",
-  "4. Dispatch Dept Contact: +91 8200093336"
-];
+        doc.setFont("helvetica", "normal");
+        const terms = [
+          "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
+          "2. Damage or defects must be reported immediately.",
+          "3. Communication for replacement must be immediate.",
+          "4. Dispatch Dept Contact: +91 8200093336"
+        ];
 
-// Draw the terms with maxWidth to ensure wrapping
-doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
+        doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
     });
 
-    // Final Save Logic
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
     doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
-};
+  };
 
   const handleExportSellingReport = () => {
-    // We use filteredOrders because it already handles the "ALL" tab logic 
-    // and respects the search filters (itemName, firm, buyer, dates)
     const reportData = filteredOrders.map((order) => {
       return {
         "Order No": order.orderNo,
@@ -697,17 +645,13 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
       return;
     }
 
-    // Create Excel Workbook
     const ws = XLSX.utils.json_to_sheet(reportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Selling Report");
 
-    // Save the file
     const fileName = `Selling_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
-
-
   
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
@@ -897,7 +841,6 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                     {order.contractUrl && <a href={order.contractUrl} target="_blank" className="text-blue-500 inline-block ml-1"><FiExternalLink size={11} /></a>}
                   </div>
                   <div className="text-[9px] text-slate-800">
-                    {/* {order.contractDate || "N/A"} */}
                     {order.contractDate
                       ? new Date(order.contractDate).toLocaleDateString('en-GB', {
                         day: '2-digit',
@@ -920,19 +863,6 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                 <td className="px-3 py-2  text-[10px] text-gray-500 max-w-44">
                   {order.remark || "No Remark"}
                 </td>
-                {/* {activeTab === "DELIVERY" && (
-                  <td className="px-3 py-2 min-w-[180px]">
-                    <div className="flex flex-col gap-0.5">
-                      <div className="font-black text-slate-800 uppercase flex items-center gap-1.5">
-                        <FiTruck className="text-emerald-500" size={12} />
-                        {order.transportName || "No Transport"}
-                      </div>
-                      <div className="text-[10px] font-bold text-slate-400 italic truncate max-w-[200px]">
-                        {order.transportRemark ? `Note: ${order.transportRemark}` : "No remark"}
-                      </div>
-                    </div>
-                  </td>
-                )} */}
                 {activeTab === "DELIVERY" && (
                   <td className="px-3 py-2 min-w-[200px]">
                     <div className="flex items-center justify-between group">
@@ -941,7 +871,6 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                           <FiTruck className="text-emerald-500" size={12} />
                           {order.transportName || "No Transport"}
                         </div>
-                        {/* Added Delivery Date Display */}
                         <div className="text-[9px] font-black text-emerald-600">
                           {order.deliveryDate
                             ? new Date(order.deliveryDate).toLocaleDateString('en-GB', {
@@ -950,14 +879,12 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                               year: 'numeric'
                             }).replace(/\//g, '-')
                             : "N/A"}
-                          {/* {order.deliveryDate || "No Date"} */}
                         </div>
                         <div className="text-[9px] font-bold text-slate-400 truncate max-w-[150px]">
                           {order.transportRemark ? `${order.transportRemark}` : "No remark"}
                         </div>
                       </div>
 
-                      {/* Edit Button - Visible on Hover */}
                       <button
                         onClick={() => handleEditDelivery(order)}
                         className="p-2 bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-400 rounded-lg transition-all ml-2"
@@ -969,17 +896,6 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                   </td>
                 )}
 
-                {/* {activeTab === "CANCELL ORDER" && (
-                  <td className="px-3 py-2">
-                    <button
-                      onClick={() => handleRestoreOrder(order)}
-                      className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 text-amber-600 rounded-xl font-black text-[10px] uppercase hover:bg-amber-500 hover:text-white transition-all"
-                    >
-                      <FiRefreshCcw size={14} />
-                      Move to To Check
-                    </button>
-                  </td>
-                )} */}
                 <td className="px-3 py-2 text-center">
                   {["TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "HISAB"].includes(activeTab) ? (
                     <select
@@ -1039,11 +955,10 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                   {activeTab === "RETURN ORDER" && (
                     <button
                       onClick={() => handleMarkAsReceived(order)}
-                      // Check if status is already RECEIVED to disable the button
                       disabled={order.status === "RETURN RECEIVED"}
                       className={`flex items-center gap-2 p-2 rounded-xl transition-all font-black text-[10px] uppercase ${order.status === "RETURN RECEIVED"
-                        ? "bg-slate-100 text-slate-400 cursor-not-allowed" // Disabled Style
-                        : "bg-green-50 text-green-600 hover:bg-green-600 hover:text-white" // Active Style
+                        ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                        : "bg-green-50 text-green-600 hover:bg-green-600 hover:text-white"
                         }`}
                     >
                       {order.status === "RETURN RECEIVED" ? (
@@ -1093,12 +1008,11 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
             isModal={true}
             onClose={() => {
               setShowOrderModal(false);
-              setEditingOrder(null); // Clear data after closing
+              setEditingOrder(null);
               fetchOrders();
               fetchStocks();
             }}
-            //onSuccess={() => fetchOrders()}
-            initialData={editingOrder} // Pass the order to the form
+            initialData={editingOrder}
           />
         </div>
       )}
@@ -1181,7 +1095,6 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                 />
               </div>
 
-              {/* NEW: Move to To Check Checkbox */}
               <div
                 className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-all"
                 onClick={() => setMoveToCheck(!moveToCheck)}
@@ -1208,7 +1121,7 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
           </div>
         </div>
       )}
-      {/* --- PARTIAL SHIPMENT MODAL --- */}
+
       {showPartialShipModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100">
@@ -1229,14 +1142,10 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
                 <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
                 <p className="font-black text-blue-800 text-lg">
                   {(() => {
-                    // 1. Find the order object using the ID you stored when clicking "Ship"
                     const currentOrder = orders.find(o => o._id === selectedOrderId);
-
-                    // 2. Use the EXACT logic from your <td>
                     if (currentOrder) {
                       return stocks.find(s => s._id === currentOrder.itemId)?.totalQty ?? 0;
                     }
-
                     return 0;
                   })()}
                 </p>
@@ -1273,16 +1182,16 @@ doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
           </div>
         </div>
       )}
+
       <PurchaseRequestModal
         isOpen={isRequestModalOpen}
-        stockData={sortedStock} // <--- Add this
+        stockData={sortedStock}
         onClose={() => {
           setIsRequestModalOpen(false);
-          fetchTabData(); // or fetchRequests() depending on your function name
+          fetchTabData();
         }}
       />
     </div>
-
   );
 }
 
