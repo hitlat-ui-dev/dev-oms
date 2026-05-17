@@ -28,18 +28,27 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
   //     i.itemName?.toLowerCase().trim() === formData.itemName.toLowerCase().trim()
   //   );
   // }, [formData.itemName, stockData]);
+
+  // const currentStockInfo = useMemo(() => {
+  //   if (!formData.itemName) return null;
+
+  //   const searchStr = formData.itemName.toUpperCase().trim();
+
+  //   return stockData.find((i) => {
+  //     const dbName = (i.itemName || "").toUpperCase().trim();
+  //     const dbSku = (i.sku || "").toUpperCase().trim();
+
+  //     // Match if EITHER the name or the SKU matches what was typed/selected
+  //     return dbName === searchStr || dbSku === searchStr;
+  //   });
+  // }, [formData.itemName, stockData]);
+
   const currentStockInfo = useMemo(() => {
     if (!formData.itemName) return null;
+    const searchSku = formData.itemName.toUpperCase().trim();
 
-    const searchStr = formData.itemName.toUpperCase().trim();
-
-    return stockData.find((i) => {
-      const dbName = (i.itemName || "").toUpperCase().trim();
-      const dbSku = (i.sku || "").toUpperCase().trim();
-
-      // Match if EITHER the name or the SKU matches what was typed/selected
-      return dbName === searchStr || dbSku === searchStr;
-    });
+    // STRICT LOOKUP: Match array items directly by SKU string
+    return stockData.find((i) => (i.sku || "").toUpperCase().trim() === searchSku);
   }, [formData.itemName, stockData]);
 
   const handleTextChange = (value: string) => {
@@ -106,57 +115,88 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
   // };
 
  // Inside PurchaseRequestModal.tsx -> handleSave
-const handleSave = async () => {
-  // 1. Normalize the user input (removes double spaces, trims, and uppercase)
-  const cleanInput = formData.itemName.replace(/\s+/g, ' ').trim().toUpperCase();
-  
-  // 2. Find the item with a more aggressive match
-  const matchedItem = stockData.find((i) => {
-    const dbName = (i.itemName || "").replace(/\s+/g, ' ').trim().toUpperCase();
-    const dbSku = (i.sku || "").trim().toUpperCase();
-    
-    // Check if the input exactly matches Name OR SKU
-    return dbName === cleanInput || dbSku === cleanInput;
-  });
+// 2. Update handleSave to validate strictly by SKU first
+  const handleSave = async () => {
+    //console.log("=== DEBUG START ===");
+   // console.log("1. Raw typed input from user state:", formData.itemName);
 
-  // LOGGING: This is the most important part to debug. 
-  // Open your browser console (F12) and see what this prints.
-  //console.log("Input:", cleanInput);
-  //console.log("Found Item:", matchedItem);
+    // Baseline empty string protection
+    if (!formData.itemName || formData.itemName.trim() === "") {
+      alert("DEBUG ALERT: Blocked because input text is completely empty.");
+      //console.log("Result: Blocked at step 1 (Empty Input)");
+      return;
+    }
 
-  if (!matchedItem) {
-    //alert(`System cannot find "${formData.itemName}" in the stock database. Please select from the dropdown list.`);
-    return;
-  }
+    const cleanInput = formData.itemName.trim().toUpperCase();
+    //console.log("2. Normalized user input text (Cleaned & Uppercased):", cleanInput);
+    //console.log("3. Complete local stockData array available in component:", stockData);
 
-  setLoading(true);
-  try {
-    const res = await fetch("/api/purchase", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // Extracting IDs carefully
+    // Locating the item inside the stock database list strictly by Name match
+    const matchedItem = stockData.find((i) => {
+      const dbName = (i.itemName || "").trim().toUpperCase();
+      return dbName === cleanInput;
+    });
+
+    //console.log("4. Result of stockData.find():", matchedItem);
+
+    if (!matchedItem) {
+      alert(`DEBUG ALERT: System could not find ANY item in stockData matching name: "${cleanInput}"`);
+      //console.log("Result: Blocked at step 4 (No item match found)");
+      return;
+    }
+
+    // Extract the precise database string for the SKU
+    const dbSkuValue = (matchedItem.sku || "").trim().toUpperCase();
+    //console.log("5. Extracted database SKU value string found inside matched item:", `"${dbSkuValue}"`);
+
+    // CRITICAL CONDITION CHECK
+    if (dbSkuValue === "" || dbSkuValue === "N/A" || dbSkuValue.length < 2) {
+      alert(`DEBUG ALERT: Blocked! Item matched, but its SKU value inside MongoDB is invalid. Found SKU: "${dbSkuValue}"`);
+      //console.log("Result: Blocked at step 5 (SKU check failed validation)");
+      return;
+    }
+
+    //console.log("6. SUCCESS: Validation passed perfectly! Sending request to API...");
+    setLoading(true);
+
+    try {
+      const payload = {
         itemId: matchedItem.itemId?.$oid || matchedItem._id?.$oid || matchedItem.itemId || matchedItem._id,
-        itemName: matchedItem.itemName, // Use the official name from DB
-        sku: matchedItem.sku || "N/A",
+        itemName: matchedItem.itemName, 
+        sku: matchedItem.sku, 
         category: matchedItem.category || "GENERAL",
         unit: matchedItem.unit || "NOS",
         prQty: Number(formData.qty),
         remark: formData.remark,
         status: formData.status,
-      }),
-    });
+      };
+      
+     // console.log("7. Final outgoing JSON payload text body being sent to /api/purchase:", payload);
 
-    if (res.ok) {
-      onClose();
-      setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
+      const res = await fetch("/api/purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+     // console.log("8. Server API response status code received:", res.status);
+
+      if (res.ok) {
+       // console.log("9. Success status 200 returned from server route.");
+        onClose();
+        setFormData({ itemName: "", unit: "", qty: 0, remark: "", status: "Purchase Request" });
+      } else {
+        //console.error("9. Server accepted the call but returned a failure error status code.");
+      }
+    } catch (error) {
+      //console.error("CRITICAL EXCEPTION: Fetch network call failed completely:", error);
+    } finally {
+      setLoading(false);
+      ///console.log("=== DEBUG END ===");
     }
-  } catch (error) {
-    console.error("Save failed:", error);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
+
+
   if (!isOpen) return null;
 
   return (

@@ -192,7 +192,7 @@ export default function StockPage() {
 
                     <td className="py-4 px-6 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <FiTrendingUp size={12} className="text-emerald-500" />
+                        {/* <FiTrendingUp size={12} className="text-emerald-500" /> */}
                         <span className="text-xs font-black text-slate-600 italic">
                           {item.rateDisplay}
                         </span>

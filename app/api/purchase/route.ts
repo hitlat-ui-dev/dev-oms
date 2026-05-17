@@ -1,39 +1,78 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 
 async function fetchWithDetails(db: any, collectionName: string) {
-  const data = await db.collection(collectionName).aggregate([
+  return await db.collection(collectionName).aggregate([
     {
       $lookup: {
-        from: "items",
-        localField: "itemName",
-        foreignField: "itemName",
+        from: "stock", // Primary lookups directly from active stock collection
+        let: { searchId: "$itemId", searchName: "$itemName" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $or: [
+                  { $eq: ["$_id", { $toObjectId: "$$searchId" }] },
+                  { $eq: ["$_id", "$$searchId"] },
+                  { $eq: ["$itemId", "$$searchId"] },
+                  { $eq: ["$itemName", "$$searchName"] }
+                ]
+              }
+            }
+          }
+        ],
         as: "masterDetails"
       }
     },
     {
-      $addFields: {
-        category: { $arrayElemAt: ["$masterDetails.category", 0] },
-        location: { $arrayElemAt: ["$masterDetails.location", 0] },
-        sku: { $arrayElemAt: ["$masterDetails.sku", 0] },
-        // DEBUG FIELD: Let us see if masterDetails actually found something
-        hasMasterMatch: { $gt: [{ $size: "$masterDetails" }, 0] }
+      // Fallback lookup against legacy items collection if stock lookup yields no match
+      $lookup: {
+        from: "items",
+        let: { searchId: "$itemId", searchName: "$itemName" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $or: [
+                  { $eq: ["$_id", { $toObjectId: "$$searchId" }] },
+                  { $eq: ["$_id", "$$searchId"] },
+                  { $eq: ["$itemId", "$$searchId"] },
+                  { $eq: ["$itemName", "$$searchName"] }
+                ]
+              }
+            }
+          }
+        ],
+        as: "fallbackDetails"
       }
     },
-    { $project: { masterDetails: 0 } }
+    {
+      $addFields: {
+        masterRecord: {
+          $cond: {
+            if: { $gt: [{ $size: "$masterDetails" }, 0] },
+            then: { $arrayElemAt: ["$masterDetails", 0] },
+            else: { $arrayElemAt: ["$fallbackDetails", 0] }
+          }
+        }
+      }
+    },
+    {
+      $addFields: {
+        category: { $ifNull: ["$masterRecord.category", "$category", "GENERAL"] },
+        location: { $ifNull: ["$masterRecord.location", "$location", "N/A"] },
+        sku: { $ifNull: ["$masterRecord.sku", "$sku", "N/A"] }
+      }
+    },
+    { 
+      $project: { 
+        masterDetails: 0, 
+        fallbackDetails: 0, 
+        masterRecord: 0 
+      } 
+    }
   ]).toArray();
-
-  // --- CONSOLE LOG FOR GET ---
-  console.log(`--- DEBUG GET: ${collectionName} ---`);
-  if (data.length > 0) {
-    console.log("First Item Example:", {
-      name: data[0].itemName,
-      sku: data[0].sku,
-      category: data[0].category,
-      matchFound: data[0].hasMasterMatch
-    });
-  }
-  return data;
 }
 
 // --- GET: Fetch all Purchase Records ---
@@ -48,10 +87,8 @@ export async function GET() {
       fetchWithDetails(db, "Received purchase"),
     ]);
 
-    const allRequests = [...prData, ...orderData, ...receivedData];
-    return NextResponse.json(allRequests);
+    return NextResponse.json([...prData, ...orderData, ...receivedData]);
   } catch (error: any) {
-    console.error("GET API CRASHED:", error);
     return NextResponse.json([]);
   }
 }
@@ -60,29 +97,58 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    // Use itemId instead of name for the primary search
     const { itemId, itemName, prQty, unit, remark } = body;
 
     const client = await clientPromise;
     const db = client.db();
 
-    // 1. Find the master item by its unique ID
-    // We check both _id and itemId fields to be safe
-    const masterItem = await db.collection("items").findOne({
+    let queryId: any = itemId;
+    try {
+      if (itemId && typeof itemId === "string" && itemId.length === 24) {
+        queryId = new ObjectId(itemId);
+      }
+    } catch (e) {
+      // Safe fallback if parsing non-standard structures
+    }
+
+    // Step 1: Check primary active data collection (stock)
+    let masterItem = await db.collection("stock").findOne({
       $or: [
-        { _id: itemId }, 
-        { itemId: itemId }
+        { _id: queryId },
+        { _id: String(itemId || "") },
+        { itemId: String(itemId || "") },
+        { itemName: String(itemName || "") }
       ]
     });
 
+    // Step 2: Fallback query checking legacy catalog collection (items)
+    if (!masterItem) {
+      masterItem = await db.collection("items").findOne({
+        $or: [
+          { _id: queryId },
+          { _id: String(itemId || "") },
+          { itemId: String(itemId || "") },
+          { itemName: String(itemName || "") }
+        ]
+      });
+    }
+
+    // Airtight validation guard statement
+    const finalSku = masterItem?.sku || "N/A";
+    if (!masterItem || finalSku === "N/A" || finalSku.trim() === "") {
+      return NextResponse.json(
+        { error: "Item lookup validation failed. Missing valid SKU code." },
+        { status: 400 }
+      );
+    }
+
     const newRequest = {
-      // Save the specific ID so the GET join is perfect
-      itemId: itemId, 
-      itemName: masterItem ? masterItem.itemName : itemName,
-      sku: masterItem ? masterItem.sku : "N/A",
-      category: masterItem ? masterItem.category : "GENERAL",
+      itemId: itemId,
+      itemName: masterItem.itemName || itemName,
+      sku: masterItem.sku,
+      category: masterItem.category || "GENERAL",
       prQty: Number(prQty),
-      unit: unit || masterItem?.unit || "NOS",
+      unit: unit || masterItem.unit || "NOS",
       remark: remark || "",
       status: "Purchase Request",
       createdAt: new Date(),

@@ -182,8 +182,9 @@ export async function PATCH(req: NextRequest) {
     await db.collection("stock").updateOne(
       { sku: existingRecord.sku },
       {
+        
         $inc: { quantity: qtyDifference },
-        $set: { lastUpdated: new Date() }
+        $set: { rate: Number(rate), lastUpdated: new Date() }
       }
     );
     // --- CHANGE: ITEM LEDGER UPDATE ---
