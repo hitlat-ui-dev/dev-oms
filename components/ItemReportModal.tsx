@@ -13,6 +13,7 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
         setLoading(false);
       });
   }, [sku]);
+console.log(data);
 
   if (loading) return null;
 
@@ -28,6 +29,9 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
               <p className="text-slate-500 text-xs font-bold bg-white px-2 py-1 rounded border">SKU: {data?.sku}</p>
               <p className="text-blue-600 text-xs font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100">
                 CURRENT STOCK: <span className="text-red-600">{data.currentStock || "No Stock"}</span>
+              </p>
+              <p className="text-blue-600 text-xs font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                Re Qty: <span className="text-red-600">{data.reQty || "No Re. Qty"}</span>
               </p>
             </div>
           </div>

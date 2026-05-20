@@ -19,20 +19,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-    // Safely extract the structural keys straight from the MongoDB source
-    const itemSku = originalOrder.sku?.trim();
-    if (!itemSku) {
-      return NextResponse.json({ error: "Order record is missing a SKU code." }, { status: 400 });
-    }
-
-    // Define bulletproof stock query filter using the item SKU code
-    const stockFilter = { sku: itemSku };
-
     // ================================================================
     // LOGIC A: RETURN ORDER (WITH MOVE TO TO-CHECK FEATURE)
     // ================================================================
     if (updateData.status === "RETURN ORDER") {
       const returnQty = Number(updateData.reQty);
+      const itemName = originalOrder.itemName?.trim();
+      const stockFilter = itemName ? { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } } : null;
 
       // Get the base order number (removes any existing -1, -2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-')[0];
@@ -71,9 +64,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         };
         await SellerOrder.create(toCheckOrderData);
 
-        // Increase reQty (Pending Stock) for the new TO CHECK order using SKU
-        await db.collection("stock").updateOne(stockFilter, { $inc: { reQty: returnQty } });
-        await db.collection("items").updateOne({ sku: itemSku }, { $inc: { reQty: returnQty } });
+        // Increase reQty (Pending Stock) for the new TO CHECK order
+        if (stockFilter) {
+          await db.collection("stock").updateOne(stockFilter, { $inc: { reQty: returnQty } });
+        }
       }
 
       // 3. Update or Delete the Original Order
@@ -144,27 +138,32 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         { new: true }
       );
 
-      // 3. Deduct ONLY the shipped amount from stock collections via SKU
-      await db.collection("stock").updateOne(stockFilter, {
-        $inc: { quantity: -shipQty, reQty: -shipQty }
-      });
+      // 3. Deduct ONLY the shipped amount from stock
+      const itemName = originalOrder.itemName?.trim();
+      if (itemName) {
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+        
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: -shipQty, reQty: -shipQty }
+        });
 
-      await db.collection("items").updateOne(
-        { sku: itemSku },
-        {
-          $inc: { currentStock: -shipQty, reQty: -shipQty },
-          $push: {
-            history: {
-              type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
-              qty: -shipQty,
-              date: new Date(),
-              orderNo: newOrderNo,
-              sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
-              otherDetails: `Split Order from To check to Ready to Ship. Order No: ${newOrderNo}`
-            }
-          } as any
-        }
-      );
+        await db.collection("items").updateOne(
+          { sku: originalOrder.sku },
+          {
+            $inc: { currentStock: -shipQty },
+            $push: {
+              history: {
+                type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
+                qty: -shipQty,
+                date: new Date(),
+                orderNo: newOrderNo,
+                sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
+                otherDetails: `Split Order from To check to Ready to Ship. Order No: ${newOrderNo}`
+              }
+            } as any
+          }
+        );
+      }
 
       return NextResponse.json(updatedOriginal, { status: 200 });
     }
@@ -175,44 +174,60 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // 1. STOCK CHECK: Only for full transitions to Ready to Ship
     if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
+      const itemName = originalOrder.itemName?.trim();
       const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
-      const stockItem = await db.collection("stock").findOne(stockFilter);
-      const available = stockItem?.quantity || 0;
+      if (itemName) {
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+        const stockItem = await db.collection("stock").findOne(stockFilter);
+        const available = stockItem?.quantity || 0;
 
-      if (available < orderQty) {
-        if (!updateData.shipQty) {
-          return NextResponse.json(
-            { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` },
-            { status: 400 }
-          );
+        if (available < orderQty) {
+          if (!updateData.shipQty) {
+            return NextResponse.json(
+              { error: `Insufficient Stock! Available: ${available}, Required: ${orderQty}.` },
+              { status: 400 }
+            );
+          }
         }
       }
     }
 
     if (updateData.status === "RETURN RECEIVED" && updateData.activeTab === "RETURN ORDER") {
+      const itemName = updateData.itemName?.trim();
       const returnQty = Number(updateData.reQty || originalOrder.reQty || 0);
 
-      await db.collection("stock").updateOne(stockFilter, {
-        $inc: { quantity: returnQty }
-      });
+      if (itemName) {
+        const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
 
-      await db.collection("items").updateOne(
-        { sku: itemSku },
-        {
-          $inc: { currentStock: returnQty },
-          $push: {
-            history: {
-              type: `RETURN RECEIVED by ${updateData.userName || "Admin"}`,
-              qty: returnQty,
-              date: new Date(),
-              orderNo: originalOrder.orderNo,
-              sellerName: updateData.sellerName || originalOrder.instituteName || "N/A",
-              otherDetails: `Item returned from ${originalOrder.orderNo}. Stock restored.`
-            }
-          } as any
-        }
-      );
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: returnQty }
+        });
+
+        const historyFilter = {
+          $or: [
+            { sku: originalOrder.sku },
+            { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } }
+          ]
+        };
+
+        await db.collection("items").updateOne(
+          historyFilter,
+          {
+            $inc: { currentStock: returnQty },
+            $push: {
+              history: {
+                type: `RETURN RECEIVED by ${updateData.userName || "Admin"}`,
+                qty: returnQty,
+                date: new Date(),
+                orderNo: originalOrder.orderNo,
+                sellerName: updateData.sellerName || originalOrder.instituteName || "N/A",
+                otherDetails: `Item returned from ${originalOrder.orderNo}. Stock restored.`
+              }
+            } as any
+          }
+        );
+      }
     }
 
     // Perform the update once safely
@@ -220,8 +235,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // Correctly reference original quantity configuration so full orders are calculated safely
     const adjustQty = Number(originalOrder.reQty || updated.reQty || 0);
+    const itemName = updated.itemName?.trim();
 
-    if (adjustQty > 0) {
+    if (itemName && adjustQty > 0) {
+      const stockFilter = { itemName: { $regex: new RegExp(`^${itemName}$`, "i") } };
+
       if (updateData.activeTab === "TO CHECK") {
         if (updateData.status === "READY TO SHIP") {
           await db.collection("stock").updateOne(stockFilter, {
@@ -229,9 +247,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           });
 
           await db.collection("items").updateOne(
-            { sku: itemSku },
+            { sku: updated.sku || originalOrder.sku },
             {
-              $inc: { currentStock: -adjustQty, reQty: -shipQty },
+              $inc: { currentStock: -adjustQty },
               $push: {
                 history: {
                   type: `${updateData.status} by ${updateData.userName || "Admin"}`,
@@ -248,10 +266,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty }
           });
-          await db.collection("items").updateOne(
-            { sku: itemSku },
-            { $inc: { reQty: -adjustQty } }
-          );
         }
       }
       else if (updateData.activeTab === "READY TO SHIP") {
@@ -261,7 +275,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           });
 
           await db.collection("items").updateOne(
-            { sku: itemSku },
+            { sku: updated.sku || originalOrder.sku },
             {
               $inc: { currentStock: adjustQty },
               $push: {
@@ -283,10 +297,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: adjustQty }
           });
-          await db.collection("items").updateOne(
-            { sku: itemSku },
-            { $inc: { reQty: adjustQty } }
-          );
         }
       }
       else if (updateData.activeTab === "HISAB") {
@@ -294,10 +304,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: adjustQty }
           });
-          await db.collection("items").updateOne(
-            { sku: itemSku },
-            { $inc: { reQty: adjustQty } }
-          );
         }
       }
     }

@@ -37,7 +37,6 @@ export async function POST(req: Request) {
 
     const orderQty = Number(data.orderQty || 0);
     const totalAmount = orderQty * Number(data.rate || 0);
-    const itemSku = data.sku?.trim();
 
     // --- 3. CREATE ORDER ---
     const newOrder = await SellerOrder.create({
@@ -45,33 +44,35 @@ export async function POST(req: Request) {
       orderNo: newOrderNo,
       reQty: orderQty,
       totalAmount,
-      sku: itemSku || "",
+      sku: data.sku || "",
       status: data.status || "TO CHECK",
     });
 
-    // --- 4. UPDATE STOCK & ITEMS DB (The Synced SKU Fix) ---
-    if (itemSku && orderQty > 0) {
-      const skuFilter = { sku: itemSku };
+    // --- 4. UPDATE STOCK DB (The Bulletproof Fix) ---
+    // We create a flexible query to find the stock item
+    let stockQuery: any = null;
 
-      // 1. Update reQty in stock collection
-      const stockResult = await db.collection("stock").updateOne(
-        skuFilter,
-        { $inc: { reQty: orderQty } },
-        { upsert: false }
-      );
+    if (data.itemId) {
+      // Try finding by ID (Handles both string and ObjectId formats)
+      stockQuery = {
+        $or: [
+          { _id: data.itemId },
+          { _id: new mongoose.Types.ObjectId(data.itemId) }
+        ]
+      };
+    } else if (data.itemName) {
+      // Fallback to exact name match
+      stockQuery = { itemName: data.itemName.trim() };
+    }
 
-      // 2. 🟢 SYNCED: Update reQty in items collection simultaneously
-      const itemsResult = await db.collection("items").updateOne(
-        skuFilter,
+    if (stockQuery) {
+      const result = await db.collection("stock").updateOne(
+        stockQuery,
         { $inc: { reQty: orderQty } },
-        { upsert: false }
+        { upsert: false } // Change to false to prevent creating "empty" items if match fails
       );
       
-      console.log(
-        `[NEW ORDER STOCK SYNC] SKU: ${itemSku} | Stock Updated: ${stockResult.matchedCount > 0} | Items Updated: ${itemsResult.matchedCount > 0}`
-      );
-    } else {
-      console.log("[NEW ORDER STOCK SYNC] Skipped: Missing SKU or orderQty is 0");
+      console.log("Stock Sync Result:", result.matchedCount > 0 ? "SUCCESS" : "ITEM NOT FOUND");
     }
 
     return NextResponse.json(newOrder, { status: 201 });
@@ -91,6 +92,7 @@ export async function GET() {
     const orders = await SellerOrder.find({}).sort({ createdAt: -1 }).lean();
 
     // 2. Aggregate PR Quantities from 'purchase_requests'
+    // Field name in your DB: "prQty"
     const prTotals = await db.collection("purchase_requests").aggregate([
       {
         $group: {
@@ -101,6 +103,7 @@ export async function GET() {
     ]).toArray();
 
     // 3. Aggregate OP Quantities from 'Order place Purchase'
+    // Collection name: "Order place Purchase" | Field name: "orderQty"
     const opTotals = await db.collection("Order place Purchase").aggregate([
       {
         $group: {

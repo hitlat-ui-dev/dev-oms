@@ -24,6 +24,7 @@ export async function GET(req: Request) {
       itemName: item.itemName,
       sku: item.sku,
       currentStock: item.currentStock,
+      reQty: item.reQty,
       // We send the history reversed so the newest transaction is at the top
       history: item.history ? item.history.reverse() : []
     });
