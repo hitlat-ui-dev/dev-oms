@@ -97,7 +97,7 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
       ? <FiChevronUp className="text-blue-600 ml-auto" />
       : <FiChevronDown className="text-blue-600 ml-auto" />;
   };
-//console.log("Table Render Data:", filteredAndSortedData);
+  //console.log("Table Render Data:", filteredAndSortedData);
   return (
     <>
       <div className="flex flex-wrap gap-3 p-4 bg-slate-50 mb-3 rounded-xl border border-slate-200">
@@ -225,7 +225,7 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
                   </td>
 
                   <td className="py-2 px-2 border-r border-slate-100">
-                    <select
+                    {/* <select
                       onChange={(e) => onInputChange(req._id, "vendor", e.target.value)}
                       className="w-full p-1 bg-slate-50 border border-slate-200 rounded font-bold text-[9px] uppercase outline-none focus:border-blue-500"
                     >
@@ -233,7 +233,47 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
                       {vendors.map((v) => (
                         <option key={v._id} value={v.name}>{v.name}</option>
                       ))}
-                    </select>
+                    </select> */}
+                    <div className="w-full">
+                      <input
+                        list={`vendor-options-${req._id}`}
+                        placeholder="SEARCH VENDOR..."
+                        className="w-full p-1 bg-slate-50 border border-slate-200 rounded font-bold text-[9px] uppercase outline-none focus:border-blue-500 transition-all"
+
+                        // 🟢 FIXED: Using defaultValue instead of value unlocks the keyboard so you can type!
+                        defaultValue={req.vendor || ""}
+
+                        onChange={(e) => {
+                          const textVal = e.target.value;
+
+                          // Look up if what they typed matches an actual vendor name in your array
+                          const matchedVendor = vendors.find(
+                            (v: any) => v?.name?.toString().trim().toUpperCase() === textVal.trim().toUpperCase()
+                          ) as any;
+
+                          if (matchedVendor) {
+                            // 🟢 Pass the verified vendor name back to your row handler function when matched
+                            onInputChange(req._id, "vendor", matchedVendor.name);
+                          } else if (textVal === "") {
+                            // Clear it if they empty out the box completely
+                            onInputChange(req._id, "vendor", "");
+                          } else {
+                            // 🟢 Pass the typing text to the parent state so it updates live as you type
+                            onInputChange(req._id, "vendor", textVal);
+                          }
+                        }}
+                      />
+
+                      {/* Unique datalist per row */}
+                      <datalist id={`vendor-options-${req._id}`}>
+                        {vendors.map((v: any) => (
+                          <option key={v._id} value={v.name}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+
                   </td>
 
                   <td className="py-2 px-2 text-[10px] text-slate-500 border-r border-slate-100 ">

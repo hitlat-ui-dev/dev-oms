@@ -1,15 +1,18 @@
 "use client";
 import { useState, useEffect } from "react";
-import { FiRotateCcw, FiPackage, FiTruck, FiAlertCircle } from "react-icons/fi";
+import { FiRotateCcw } from "react-icons/fi";
 
 export default function PurchaseReturnPage() {
   const [stockList, setStockList] = useState([]);
   const [returnHistory, setReturnHistory] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [inputValue, setInputValue] = useState("");
 
   // Form State
   const [formData, setFormData] = useState({
     itemId: "",
+    sku: "",
+    itemName: "",
     returnQty: 0,
     reason: ""
   });
@@ -25,21 +28,36 @@ export default function PurchaseReturnPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    fetchData(); 
+  }, []);
+
+  // 🟢 CASE FIX 1: Keep the text input perfectly synced with form selection mutations
+  useEffect(() => {
+    if (formData.itemId && stockList.length > 0) {
+      const matchedItem = stockList.find((s: any) => s._id === formData.itemId) as any;
+      if (matchedItem && inputValue !== matchedItem.itemName) {
+        setInputValue(matchedItem.itemName);
+      }
+    } else if (!formData.itemId) {
+      setInputValue("");
+    }
+  }, [formData.itemId, stockList]);
 
   const handleSaveReturn = async () => {
-    const selectedItem: any = stockList.find((s: any) => s._id === formData.itemId);
+    // 🟢 CASE FIX 2: Defensive type-casting to safely read records without runtime crashes
+    const selectedItem = stockList.find((s: any) => s._id === formData.itemId) as any;
 
     const session = localStorage.getItem("oms_user");
     const userData = session ? JSON.parse(session) : null;
     const Login_user = userData?.username || "Unknown User";
 
     if (!selectedItem || formData.returnQty <= 0) {
-      return alert("Please select an item and enter a valid quantity.");
+      return alert("Please select a valid item from the search results and enter a quantity.");
     }
 
-    if (formData.returnQty > selectedItem.quantity) {
-      return alert(`Error: You only have ${selectedItem.quantity} in stock.`);
+    if (formData.returnQty > (selectedItem.quantity || 0)) {
+      return alert(`Error: You only have ${selectedItem.quantity || 0} in stock.`);
     }
 
     setIsSaving(true);
@@ -61,7 +79,8 @@ export default function PurchaseReturnPage() {
 
       if (res.ok) {
         alert("✅ Return processed and stock updated.");
-        setFormData({ itemId: "", returnQty: 0, reason: "" });
+        setFormData({ itemId: "", sku: "", itemName: "", returnQty: 0, reason: "" });
+        setInputValue("");
         fetchData();
       }
     } catch (err) {
@@ -72,7 +91,7 @@ export default function PurchaseReturnPage() {
   };
 
   return (
-    <div className="p-0  bg-slate-50 min-h-screen">
+    <div className="p-0 bg-slate-50 min-h-screen">
       {/* 1. Header & Form Section */}
       <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
         <div className="flex items-center gap-3 mb-6">
@@ -87,20 +106,49 @@ export default function PurchaseReturnPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="md:col-span-1">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block ml-1">Select Stock Item</label>
-            <select
+            <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block ml-1">Select Item</label>
+            <input
+              list="item-options"
+              required
+              placeholder="Search Item or SKU..."
               className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all"
-              value={formData.itemId}
-              onChange={(e) => setFormData({ ...formData, itemId: e.target.value })}
-            >
-              <option value="">-- Select Item --</option>
+              value={inputValue}
+              onChange={(e) => {
+                const textVal = e.target.value;
+                setInputValue(textVal);
+
+                const selectedItem = stockList.find(
+                  (s: any) => s?.itemName?.toString().trim() === textVal.trim()
+                ) as any;
+
+                if (selectedItem) {
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    itemId: selectedItem._id?.toString() || "",
+                    sku: selectedItem.sku?.toString() || "",
+                    itemName: selectedItem.itemName?.toString() || ""
+                  }));
+                } else {
+                  // 🟢 CASE FIX 3: Fully clear ID parameters if the input changes or doesn't match an exact item
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    itemId: "",
+                    sku: "",
+                    itemName: ""
+                  }));
+                }
+              }}
+            />
+
+            <datalist id="item-options">
               {stockList.map((s: any) => (
-                <option key={s._id} value={s._id}>
-                  {s.itemName} ({s.sku}) — Available: {s.quantity}
+                <option key={s._id} value={s.itemName}>
+                  SKU: {s.sku} — Available: {s.quantity}
                 </option>
               ))}
-            </select>
+            </datalist>
           </div>
+
           <div>
             <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block ml-1">Return Qty</label>
             <input
@@ -111,6 +159,7 @@ export default function PurchaseReturnPage() {
               onChange={(e) => setFormData({ ...formData, returnQty: Number(e.target.value) })}
             />
           </div>
+
           <div>
             <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block ml-1">Reason for Return</label>
             <input
@@ -121,6 +170,7 @@ export default function PurchaseReturnPage() {
               onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
             />
           </div>
+
           <button
             onClick={handleSaveReturn}
             disabled={isSaving}
