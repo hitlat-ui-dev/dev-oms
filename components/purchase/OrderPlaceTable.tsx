@@ -259,6 +259,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Order Qty</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Rate</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Vendor</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Remarks</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
               </tr>
             </thead>
@@ -288,6 +289,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                   <td className="py-3 px-4 text-center font-black text-slate-800 text-xs">{req.orderQty}</td>
                   <td className="py-3 px-4 font-bold text-blue-600 text-xs">₹{req.rate}</td>
                   <td className="py-3 px-4 text-[10px] font-black text-slate-600 uppercase">{req.vendor}</td>
+                  <td className="py-3 px-4 text-[10px] text-slate-600">{req.remark}</td>
                   <td className="py-3 px-4">
                     <div className="flex justify-end gap-2">
                       <button

@@ -13,7 +13,7 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
         setLoading(false);
       });
   }, [sku]);
-console.log(data);
+  console.log(data);
 
   if (loading) return null;
 
@@ -54,7 +54,16 @@ console.log(data);
             <tbody className="divide-y divide-slate-100">
               {data?.history.map((row: any, i: number) => {
                 // Logic to decide if qty goes to Debit or Credit
-                const isDebit = row.qty < 0;
+                //const isDebit = row.qty < 0;
+
+                const logTypeLower = row.type ? String(row.type).toLowerCase() : "";
+
+                // Explicit condition matching for Debit actions
+                const isDebit = row.qty < 0 ||
+                  logTypeLower.includes("remove") ||
+                  logTypeLower.includes("damage") ||
+                  logTypeLower.includes("scrap") ||
+                  logTypeLower.includes("sell");
                 return (
                   <tr key={i} className="text-sm hover:bg-slate-50 transition-colors">
                     <td className="py-4 text-slate-500">{new Date(row.date).toLocaleDateString()}</td>
@@ -85,7 +94,7 @@ console.log(data);
                           <p className="text-[10px] text-gray-400">{row.otherDetails || 'N/A'}</p>
                         </>
                       )}
-                      {(row.type.includes('PARTIAL ') || row.type.includes('READY TO SHIP') ) && (
+                      {(row.type.includes('PARTIAL ') || row.type.includes('READY TO SHIP')) && (
                         <>
                           <p><b>Seller:</b> {row.sellerName || 'N/A'} | <b> Inv:</b> {row.orderNo || 'N/A'}</p>
                           <p className="text-[10px] text-gray-400">{row.otherDetails || 'N/A'}</p>

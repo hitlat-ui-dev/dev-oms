@@ -53,6 +53,7 @@ export default function OrdersListPage() {
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
 
   interface StockItem {
     _id: string;
@@ -434,7 +435,7 @@ export default function OrdersListPage() {
       alert("Error processing return");
     }
     finally {
-      setIsSubmitting(false); 
+      setIsSubmitting(false);
     }
   };
 
@@ -477,10 +478,19 @@ export default function OrdersListPage() {
     place?: string;
   }
 
-  const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[]) => {
-    if (!filteredOrders || filteredOrders.length === 0) {
-        alert("No orders selected to download.");
-        return;
+  const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[], selectedOrderIds: string[] = []) => {
+    // if (!filteredOrders || filteredOrders.length === 0) {
+    //   alert("No orders selected to download.");
+    //   return;
+    // }
+
+    const activeOrders = selectedOrderIds.length > 0
+      ? filteredOrders.filter(order => selectedOrderIds.includes(order._id))
+      : filteredOrders;
+
+    if (!activeOrders || activeOrders.length === 0) {
+      alert("No orders selected to download.");
+      return;
     }
 
     const doc = new jsPDF();
@@ -490,126 +500,126 @@ export default function OrdersListPage() {
     const yy = String(today.getFullYear()).slice(-2);
     const formattedDate = `${dd}-${mm}-${yy}`;
 
-    const groupedBySeller = filteredOrders.reduce((acc: any, order) => {
-        const key = order.sellerId || "unknown_seller";
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(order);
-        return acc;
+    const groupedBySeller = activeOrders.reduce((acc: any, order) => {
+      const key = order.sellerId || "unknown_seller";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(order);
+      return acc;
     }, {});
 
     let fileNameBase = "Delivery_Challan";
 
     Object.keys(groupedBySeller).forEach((sellerId, index) => {
-        const items = groupedBySeller[sellerId];
-        
-        if (!items || items.length === 0) return;
+      const items = groupedBySeller[sellerId];
 
-        if (index > 0) doc.addPage();
+      if (!items || items.length === 0) return;
 
-        const sellerInfo = sellers.find(s => s._id === sellerId) || {};
+      if (index > 0) doc.addPage();
 
-        if (index === 0) {
-            fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
-        }
+      const sellerInfo = sellers.find(s => s._id === sellerId) || {};
 
-        doc.setFontSize(22);
-        doc.setFont("helvetica", "bold");
-        doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
+      if (index === 0) {
+        fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
+      }
 
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
+      doc.setFontSize(22);
+      doc.setFont("helvetica", "bold");
+      doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
 
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "normal");
-        doc.text("To,", 14, 35);
-        doc.setFont("helvetica", "bold");
-        
-        const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
-        doc.text(`${displayName}`, 14, 42);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
 
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
-        doc.text([
-            `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
-            `Address: ${sellerInfo.address || '---'}`,
-            `Place: ${sellerInfo.place || '---'}`,
-            `Mobile: ${sellerInfo.mobile || '---'}`
-        ], 14, 48);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.text("To,", 14, 35);
+      doc.setFont("helvetica", "bold");
 
-        autoTable(doc, {
-            startY: 75,
-            head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
-            body: items.map((order: any, i: number) => {
-                const company = companies.find(c => c.firmCode === order.firmCode);
+      const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
+      doc.text(`${displayName}`, 14, 42);
 
-                const orderDisplay = `${order.orderNo || 'N/A'}\n${order.createdAt
-                    ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
-                    : "N/A"}`;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text([
+        `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
+        `Address: ${sellerInfo.address || '---'}`,
+        `Place: ${sellerInfo.place || '---'}`,
+        `Mobile: ${sellerInfo.mobile || '---'}`
+      ], 14, 48);
 
-                const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
-                    ? `${order.contractNo}\n(${order.contractDate || ''})`
-                    : '---';
+      autoTable(doc, {
+        startY: 75,
+        head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
+        body: items.map((order: any, i: number) => {
+          const company = companies.find(c => c.firmCode === order.firmCode);
 
-                const transportDetails = order.transportName
-                    ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark || ''}`
-                    : 'Direct Delivery';
+          const orderDisplay = `${order.orderNo || 'N/A'}\n${order.createdAt
+            ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
+            : "N/A"}`;
 
-                return [
-                    i + 1,
-                    orderDisplay,
-                    order.itemName || 'N/A',
-                    company?.firmName || order.firm || 'N/A',
-                    `${order.reQty || 0} ${order.unit || ''}`,
-                    contractDisplay,
-                    transportDetails
-                ];
-            }),
-            theme: 'grid',
-            headStyles: { textColor: 20, fontStyle: 'bold' },
-            styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
-            didDrawCell: (data) => {
-                if (data.section === 'body' && data.column.index === 5) {
-                    const order = items[data.row.index];
-                    if (order?.contractUrl) {
-                        doc.setTextColor(0, 0, 255);
-                        doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
-                    }
-                }
+          const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
+            ? `${order.contractNo}\n(${order.contractDate || ''})`
+            : '---';
+
+          const transportDetails = order.transportName
+            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark || ''}`
+            : 'Direct Delivery';
+
+          return [
+            i + 1,
+            orderDisplay,
+            order.itemName || 'N/A',
+            company?.firmName || order.firm || 'N/A',
+            `${order.reQty || 0} ${order.unit || ''}`,
+            contractDisplay,
+            transportDetails
+          ];
+        }),
+        theme: 'grid',
+        headStyles: { textColor: 20, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+        didDrawCell: (data) => {
+          if (data.section === 'body' && data.column.index === 5) {
+            const order = items[data.row.index];
+            if (order?.contractUrl) {
+              doc.setTextColor(0, 0, 255);
+              doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
             }
-        });
-
-        const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
-
-        const checkPageSpace = (currentY: number, requiredSpace: number) => {
-          if (currentY + requiredSpace > 270) {
-            doc.addPage();
-            return 20; 
           }
-          return currentY;
-        };
+        }
+      });
 
-        let footerY = checkPageSpace(tableBottomY + 10, 25);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.line(140, footerY + 15, 190, footerY + 15);
-        doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" }); 
+      const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
 
-        footerY = checkPageSpace(footerY + 30, 40);
+      const checkPageSpace = (currentY: number, requiredSpace: number) => {
+        if (currentY + requiredSpace > 270) {
+          doc.addPage();
+          return 20;
+        }
+        return currentY;
+      };
 
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.text("Terms & Conditions:", 14, footerY);
+      let footerY = checkPageSpace(tableBottomY + 10, 25);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.line(140, footerY + 15, 190, footerY + 15);
+      doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" });
 
-        doc.setFont("helvetica", "normal");
-        const terms = [
-          "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
-          "2. Damage or defects must be reported immediately.",
-          "3. Communication for replacement must be immediate.",
-          "4. Dispatch Dept Contact: +91 8200093336"
-        ];
+      footerY = checkPageSpace(footerY + 30, 40);
 
-        doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("Terms & Conditions:", 14, footerY);
+
+      doc.setFont("helvetica", "normal");
+      const terms = [
+        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
+        "2. Damage or defects must be reported immediately.",
+        "3. Communication for replacement must be immediate.",
+        "4. Dispatch Dept Contact: +91 8200093336"
+      ];
+
+      doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
     });
 
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
@@ -652,7 +662,7 @@ export default function OrdersListPage() {
     const fileName = `Selling_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
-  
+
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
@@ -768,11 +778,21 @@ export default function OrdersListPage() {
           </button>
         )}
         {activeTab === "DELIVERY" && (
+          // <button
+          //   onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[])}
+          //   className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
+          // >
+          //   <FiDownload className="text-xl" /> Download Challan
+          // </button>
           <button
-            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[])}
+            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[], selectedOrderIds)}
             className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
           >
-            <FiDownload className="text-xl" /> Download Challan
+            <FiDownload className="text-xl mr-1" />
+            {selectedOrderIds.length > 0
+              ? `Download Checked (${selectedOrderIds.length}) Items`
+              : `Download All (${filteredOrders.length}) Items`
+            }
           </button>
         )}
       </div>
@@ -783,6 +803,7 @@ export default function OrdersListPage() {
           <thead className="bg-slate-100 border-b border-slate-200">
             <tr className="divide-x divide-slate-200">
               {activeTab === "ALL" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">Paid</th>}
+              {activeTab === "DELIVERY" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center"> </th>}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Order No</th>
               {/* <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Date</th> */}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Firm</th>
@@ -807,6 +828,23 @@ export default function OrdersListPage() {
                     <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer" checked={order.isPaid || false} onChange={() => handlePaymentToggle(order._id, order.isPaid)} />
                   </td>
                 )}
+                {activeTab === "DELIVERY" && (
+                  <td className="px-2 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                      checked={selectedOrderIds.includes(order._id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedOrderIds([...selectedOrderIds, order._id]);
+                        } else {
+                          setSelectedOrderIds(selectedOrderIds.filter(id => id !== order._id));
+                        }
+                      }}
+                    />
+                  </td>
+                )}
+
                 <td className="px-3 py-2 font-black text-blue-600 max-w-20">{order.orderNo}
                   <span className="text-[9px] font-bold text-slate-800 block">
                     {order.createdAt

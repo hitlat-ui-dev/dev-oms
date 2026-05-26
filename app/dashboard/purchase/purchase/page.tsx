@@ -245,7 +245,7 @@ export default function PurchaseLogisticsPage() {
         </div>
       }
     >
-      <div className="pt-4 px-4 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
+      <div className="p-4 max-w-full mx-auto min-h-screen">
         <div className="flex flex-col lg:flex-row lg:justify-between mb-8 gap-4 items-start lg:items-center">
           {/* Tabs Section - Stacks on Mobile, Rows on Desktop */}
           
