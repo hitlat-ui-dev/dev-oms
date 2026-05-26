@@ -152,7 +152,15 @@ export default function OrdersListPage() {
     }
 
     return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
+  })
+  .sort((a, b) => {
+    // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
+    const numA = parseInt(a.orderNumber || a.orderNo || 0, 10) || 0;
+    const numB = parseInt(b.orderNumber || b.orderNo || 0, 10) || 0;
+
+    return numB - numA; // High numbers first (e.g. 098, 097...)
   });
+  
   const clearFilters = () => {
     setFilters({
       itemName: "",

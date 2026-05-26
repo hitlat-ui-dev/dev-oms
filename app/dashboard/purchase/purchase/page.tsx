@@ -100,18 +100,18 @@ export default function PurchaseLogisticsPage() {
 
   // 4. Memoized Sorting for Stock (Fixes the red line error)
   const sortedStock = useMemo(() => {
-  if (!stock || !Array.isArray(stock)) return [];
-  
-  return stock.map(item => ({
-    ...item,
-    // Add a normalized name for internal matching
-    normalizedName: (item.itemName || "").replace(/\s+/g, ' ').trim().toUpperCase()
-  })).sort((a, b) => {
-    const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
-    const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
-    return dateB - dateA;
-  });
-}, [stock]);
+    if (!stock || !Array.isArray(stock)) return [];
+
+    return stock.map(item => ({
+      ...item,
+      // Add a normalized name for internal matching
+      normalizedName: (item.itemName || "").replace(/\s+/g, ' ').trim().toUpperCase()
+    })).sort((a, b) => {
+      const dateA = new Date(a.lastUpdated || '1970-01-01').getTime();
+      const dateB = new Date(b.lastUpdated || '1970-01-01').getTime();
+      return dateB - dateA;
+    });
+  }, [stock]);
 
   useEffect(() => {
     fetchVendors();
@@ -124,6 +124,23 @@ export default function PurchaseLogisticsPage() {
 
   const handleSaveOrder = async (req: any) => {
     const updates = editData[req._id] || {};
+
+    const currentVendor = (updates.vendor || req.vendor || "").toString().trim();
+
+    if (!currentVendor) {
+      alert("⚠️ Please select a vendor before saving.");
+      return;
+    }
+
+    const isValidVendor = vendors.some(
+      (v: any) => v?.name?.toString().trim().toUpperCase() === currentVendor.toUpperCase()
+    );
+
+    if (!isValidVendor) {
+      alert(`❌ Error: "${currentVendor}" is not a valid Vendor Name. Please select a valid option from the dropdown suggestion list.`);
+      return; // Block database submit pipeline completely
+    }
+
     const selectedVendor = updates.vendor || "";
     if (!selectedVendor) {
       alert("⚠️ Please select a vendor before saving.");
@@ -248,7 +265,7 @@ export default function PurchaseLogisticsPage() {
       <div className="p-4 max-w-full mx-auto min-h-screen">
         <div className="flex flex-col lg:flex-row lg:justify-between mb-8 gap-4 items-start lg:items-center">
           {/* Tabs Section - Stacks on Mobile, Rows on Desktop */}
-          
+
           <div className="w-full lg:w-auto bg-white p-1.5 rounded-2xl border border-slate-200">
             <div className="grid grid-cols-2 md:grid-cols-4 lg:flex gap-1.5">
               {["Purchase Request", "Order Place", "Received Purchase", "Purchase Return"].map((t) => (
@@ -338,13 +355,13 @@ export default function PurchaseLogisticsPage() {
           }}
         /> */}
         <PurchaseRequestModal
-  isOpen={isRequestModalOpen}
-  stockData={sortedStock} 
-  onClose={() => {
-    setIsRequestModalOpen(false);
-    fetchTabData(); // Refresh both stock and requests
-  }}
-/>
+          isOpen={isRequestModalOpen}
+          stockData={sortedStock}
+          onClose={() => {
+            setIsRequestModalOpen(false);
+            fetchTabData(); // Refresh both stock and requests
+          }}
+        />
 
         {selectedRequest && (
           <ReceivedQtyModal

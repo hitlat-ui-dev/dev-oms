@@ -305,9 +305,11 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                       </button>
                       <button
                         onClick={() => handleCancelClick(req)}
+                        disabled={isSaving}
                         className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all"
                       >
-                        <FiXCircle size={14} />
+                        {isSaving ? "..." : <FiXCircle size={14} />}
+                        
                       </button>
                     </div>
                   </td>

@@ -121,6 +121,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     //console.log("Data being sent to DB:", formData);
+    const isValidFirm = firms.some((f: any) => f.firmCode === formData.firmCode);
+    if (!isValidFirm) {
+    alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
+    return; // Block database submit action pipeline completely
+  }
     setLoading(true);
 
     if (!formData.reQty || formData.reQty <= 0) {
@@ -227,6 +232,18 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
                 value={formData.firmCode}
                 onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}
+                onBlur={(e) => {
+                  const typedVal = e.target.value.trim();
+                  if (!typedVal) return; // Allow them to leave it blank if they want to fill it later
+
+                  // Check if the typed word matches an actual code from the firms database
+                  const matchFound = firms.some((f: any) => f.firmCode === typedVal);
+
+                  if (!matchFound) {
+                    alert(`❌ "${typedVal}" is not a valid firm code! Please pick an option from the list.`);
+                    setFormData({ ...formData, firmCode: "" }); // Erase the invalid words completely
+                  }
+                }}
               />
               <datalist id="firm-options">
                 {firms.map((f: any) => (

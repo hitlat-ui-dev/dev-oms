@@ -240,7 +240,6 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
                         placeholder="SEARCH VENDOR..."
                         className="w-full p-1 bg-slate-50 border border-slate-200 rounded font-bold text-[9px] uppercase outline-none focus:border-blue-500 transition-all"
 
-                        // 🟢 FIXED: Using defaultValue instead of value unlocks the keyboard so you can type!
                         defaultValue={req.vendor || ""}
 
                         onChange={(e) => {
