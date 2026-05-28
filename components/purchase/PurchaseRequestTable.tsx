@@ -12,6 +12,7 @@ interface Props {
 }
 
 export default function PurchaseRequestTable({ data, vendors, stockData, onInputChange, onSave, onDelete }: Props) {
+  const [isSaving, setIsSaving] = useState(false);
   //console.log("Current Stock List:", stockData);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({
     key: 'createdAt',
@@ -281,7 +282,23 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
 
                   <td className="py-2 px-2 text-right">
                     <div className="flex justify-end gap-1">
-                      <button onClick={() => onSave(req)} className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors">
+                      <button disabled={isSaving}
+                        //onClick={() => onSave(req)} className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors"
+                        onClick={async () => {
+                          if (isSaving) return; // Guard protection
+                          setIsSaving(true);    // Instantly lock button
+
+                          try {
+                            await onSave(req);  // Execute the parent save handler
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setIsSaving(false); // Unlock only if it fails (if it succeeds, row disappears)
+                          }
+                        }}
+                        className={`p-1.5 rounded transition-colors ${isSaving ? "text-gray-400 bg-gray-100 cursor-not-allowed" : "text-green-600 hover:bg-green-50"
+                          }`}
+                      >
                         <FiSave size={14} />
                       </button>
                       <button onClick={() => onDelete(req._id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors">
