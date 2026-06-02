@@ -156,6 +156,7 @@ export default function ReceivedPurchaseTable({
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Vendor</th>
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rec. Qty</th>
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rate</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Total</th>
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-right">Action</th>
               </tr>
             </thead>
@@ -195,7 +196,19 @@ export default function ReceivedPurchaseTable({
                       />
                     </div>
                   </td>
+                  <td className="py-4 px-6 text-xs font-black text-slate-700">
+                    {(() => {
+                      const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
+                      const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
+                      const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
+                      const totalAmount = currentQty * currentRate;
 
+                      return `₹${totalAmount.toLocaleString('en-IN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}`;
+                    })()}
+                  </td>
                   <td className="py-4 px-6 text-right">
                     {editState[item._id] && (
                       <button
@@ -209,6 +222,46 @@ export default function ReceivedPurchaseTable({
                   </td>
                 </tr>
               ))}
+              {filteredData.length > 0 && (
+                <tr className="bg-slate-100/80 font-black text-slate-800 border-t-2 border-slate-300 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]">
+                  {/* Span across first 5 columns to line up with the Total section */}
+                  <td colSpan={5} className="py-4 px-6 text-xs font-black uppercase text-slate-500 tracking-wider text-left">
+                    Grand Total
+                  </td>
+
+                  {/* Sum of all Quantities */}
+                  <td className="py-4 px-6 text-center text-xs text-blue-700">
+                    {filteredData.reduce((sum, item) => {
+                      const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
+                      const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
+                      return sum + currentQty;
+                    }, 0)}
+                  </td>
+
+                  {/* Leave rate column empty */}
+                  <td className="py-4 px-6"></td>
+
+                  {/* Sum of all calculated item totals */}
+                  <td className="py-4 px-6 text-xs text-green-700 font-black">
+                    {(() => {
+                      const grandTotalAmount = filteredData.reduce((sum, item) => {
+                        const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
+                        const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
+                        const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
+                        return sum + (currentQty * currentRate);
+                      }, 0);
+
+                      return `₹${grandTotalAmount.toLocaleString('en-IN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}`;
+                    })()}
+                  </td>
+
+                  {/* Leave action column empty */}
+                  <td className="py-4 px-6"></td>
+                </tr>
+              )}
             </tbody>
           </table>
           {filteredData.length === 0 && (

@@ -55,6 +55,8 @@ export default function OrdersListPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
 
+  const [isShipping, setIsShipping] = useState(false);
+
   interface StockItem {
     _id: string;
     sku: string;
@@ -153,14 +155,14 @@ export default function OrdersListPage() {
 
     return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
   })
-  .sort((a, b) => {
-    // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
-    const numA = parseInt(a.orderNumber || a.orderNo || 0, 10) || 0;
-    const numB = parseInt(b.orderNumber || b.orderNo || 0, 10) || 0;
+    .sort((a, b) => {
+      // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
+      const numA = parseInt(a.orderNumber || a.orderNo || 0, 10) || 0;
+      const numB = parseInt(b.orderNumber || b.orderNo || 0, 10) || 0;
 
-    return numB - numA; // High numbers first (e.g. 098, 097...)
-  });
-  
+      return numB - numA; // High numbers first (e.g. 098, 097...)
+    });
+
   const clearFilters = () => {
     setFilters({
       itemName: "",
@@ -309,6 +311,9 @@ export default function OrdersListPage() {
   };
 
   const submitPartialShipment = async () => {
+    if (isShipping) return;
+    setIsShipping(true);
+
     if (shipQty <= 0) {
       setPartialError("Please add quantity to ship!");
       return;
@@ -360,6 +365,7 @@ export default function OrdersListPage() {
       }
     } catch (err) {
       alert("Error processing shipment");
+      setIsShipping(false);
     }
   };
 
@@ -1222,7 +1228,15 @@ export default function OrdersListPage() {
 
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setShowPartialShipModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
-                <button onClick={submitPartialShipment} className="flex-1 p-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Ship Partial</button>
+                <button
+                  disabled={isShipping}
+                  onClick={submitPartialShipment}
+                  className={`flex-1 p-4 rounded-2xl font-black uppercase text-[10px] transition-all ${isShipping
+                      ? "bg-slate-300 text-slate-500 cursor-not-allowed animate-pulse"
+                      : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
+                    }`}>
+                  {isShipping ? "Shipping..." : "Ship Partial"}
+                </button>
               </div>
             </div>
           </div>
