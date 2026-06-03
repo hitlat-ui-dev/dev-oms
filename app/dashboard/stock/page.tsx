@@ -15,9 +15,11 @@ export default function StockPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
 
   const fetchStock = async () => {
     try {
+      setReloading(true);
       const res = await fetch("/api/stock");
       const data = await res.json();
       setStock(Array.isArray(data) ? data : []);
@@ -25,6 +27,7 @@ export default function StockPage() {
       console.error("Failed to load stock");
     } finally {
       setLoading(false);
+      setReloading(false);
     }
   };
 
@@ -39,14 +42,20 @@ export default function StockPage() {
     setEditingItem(null);
     setIsModalOpen(true);
   };
+
+  const [nameSearch, setNameSearch] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
+  const [skuSearch, setSkuSearch] = useState("");
+
   // Filter logic for search
   const filteredStock = useMemo(() => {
-    return stock.filter(item =>
-      item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [stock, searchQuery]);
+    return stock.filter(item => {
+      const matchesName = (item.itemName || "").toLowerCase().includes(nameSearch.toLowerCase());
+      const matchesCategory = (item.category || "").toLowerCase().includes(categorySearch.toLowerCase());
+      const matchesSku = (item.sku || "").toLowerCase().includes(skuSearch.toLowerCase());
+      return matchesName && matchesCategory && matchesSku;
+    });
+  }, [stock, nameSearch, categorySearch, skuSearch]);
 
   const downloadExcel = () => {
     // Prepare the data for Excel
@@ -108,27 +117,75 @@ export default function StockPage() {
             >Add New Item</button>
           </div>
 
+        </div>
+        <div className="mb-6 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full flex-1">
 
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            {/* Search Bar */}
-            <div className="relative flex-1 md:w-64">
-              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            {/* SKU Input Search */}
+            <div className="relative">
               <input
                 type="text"
-                placeholder="Search SKU or Item..."
-                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:border-blue-500 transition-all"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="TYPE SKU..."
+                value={skuSearch}
+                onChange={(e) => setSkuSearch(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-wider outline-none focus:bg-white focus:border-blue-500 transition-all placeholder:text-slate-400"
               />
             </div>
 
-            <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[100px]">
-              <span className="text-[10px] font-black text-slate-400 uppercase block">Total SKUs</span>
-              <span className="text-xl font-black text-blue-600 leading-none">{filteredStock.length}</span>
+            {/* Item Name Input Search */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="TYPE ITEM NAME..."
+                value={nameSearch}
+                onChange={(e) => setNameSearch(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-wider outline-none focus:bg-white focus:border-blue-500 transition-all placeholder:text-slate-400"
+              />
             </div>
+
+            {/* Category Input Search */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="TYPE CATEGORY..."
+                value={categorySearch}
+                onChange={(e) => setCategorySearch(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-wider outline-none focus:bg-white focus:border-blue-500 transition-all placeholder:text-slate-400"
+              />
+            </div>
+
+          </div>
+
+          {/* Right Status Block & Live Reload Button */}
+          <div className="flex items-center gap-3 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
+
+            {/* Live Count Badge */}
+            <div className="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200 flex flex-col items-center min-w-[90px]">
+              <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block">MATCHED</span>
+              <span className="text-sm font-black text-blue-600 leading-none mt-0.5">{filteredStock.length}</span>
+            </div>
+
+            {/* 🔄 Dynamic Reload Button (Wired up to fetchStock without reloading page) */}
+            <button
+              onClick={fetchStock}
+              disabled={reloading}
+              type="button"
+              title="Refresh Live Stock Data"
+              className="bg-slate-900 p-3 rounded-xl text-white hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center shadow-md shadow-slate-200"
+            >
+              <svg
+                className={`w-4 h-4 ${reloading ? 'animate-spin text-blue-400' : 'text-white'}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            </button>
+
           </div>
         </div>
-
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">

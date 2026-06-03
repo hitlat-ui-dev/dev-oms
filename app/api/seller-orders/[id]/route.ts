@@ -217,6 +217,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // Perform the update once safely
     const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
+    const oldQty = Number(originalOrder.reQty || 0);
+    const newQty = Number(updateData.reQty || 0);
+    const qtyDifference = newQty - oldQty;
+
+    if (qtyDifference !== 0) {
+      await db.collection("stock").updateOne(stockFilter, {
+        $inc: { reQty: qtyDifference }
+      });
+    }
 
     // Correctly reference original quantity configuration so full orders are calculated safely
     const adjustQty = Number(originalOrder.reQty || updated.reQty || 0);

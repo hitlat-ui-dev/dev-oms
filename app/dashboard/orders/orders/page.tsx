@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { LuRotateCcw } from "react-icons/lu";
+import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 import * as XLSX from 'xlsx';
 
 const TABS = [
@@ -56,6 +56,7 @@ export default function OrdersListPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
 
   const [isShipping, setIsShipping] = useState(false);
+  const [reloading, setReloading] = useState(false);
 
   interface StockItem {
     _id: string;
@@ -178,6 +179,7 @@ export default function OrdersListPage() {
   // 1. Move fetchOrders outside of useEffect so other functions can call it
   const fetchOrders = useCallback(async () => {
     try {
+      setReloading(true);
       const res = await fetch("/api/seller-orders");
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
@@ -185,6 +187,7 @@ export default function OrdersListPage() {
       console.error("Fetch error", err);
     } finally {
       setLoading(false);
+      setReloading(false);
     }
   }, []);
 
@@ -311,26 +314,35 @@ export default function OrdersListPage() {
   };
 
   const submitPartialShipment = async () => {
-    if (isShipping) return;
+    if (!selectedOrderId || isShipping) return;
     setIsShipping(true);
 
     if (shipQty <= 0) {
       setPartialError("Please add quantity to ship!");
+      setIsShipping(false);
       return;
     }
     setPartialError("");
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
-    if (!orderToUpdate) return;
+    if (!orderToUpdate) {
+      setIsShipping(false);
+      return;
+    }
 
     const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
     const avStock = stockData?.totalQty ?? 0;
 
-    if (shipQty > orderToUpdate.reQty) return alert("Quantity exceeds order limit");
+    if (shipQty > orderToUpdate.reQty) {
+      alert("Quantity exceeds order limit");
+      setIsShipping(false);
+      return;
+    }
 
     const shipQtyNum = Number(shipQty);
 
     if (shipQtyNum > avStock) {
       alert(`Available quantity is low! You only have ${avStock} in stock.`);
+      setIsShipping(false);
       return; // Stop the execution here
     }
     const isFullQty = shipQtyNum === orderToUpdate.reQty;
@@ -362,9 +374,13 @@ export default function OrdersListPage() {
       else {
         const errorData = await res.json();
         alert(errorData.error || "Stock Check Failed"); // This will tell you EXACTLY why it's 400
+        setIsShipping(false);
       }
     } catch (err) {
       alert("Error processing shipment");
+      setIsShipping(false);
+    }
+    finally {
       setIsShipping(false);
     }
   };
@@ -761,13 +777,34 @@ export default function OrdersListPage() {
             </div>
 
           </div>
-          <button
-            onClick={clearFilters}
-            className="ml-auto flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-95"
-          >
-            <LuRotateCcw />
-            <span className="text-[10px] font-black uppercase">Reset</span>
-          </button>
+          {/* Secured horizontal row container without forcing structural off-screen floating */}
+          {/* This wrapper ensures the buttons stay grouped together and aligns them to the far right */}
+          <div className="w-full flex flex-row items-center justify-end gap-2 mt-2 md:mt-0">
+            
+            <div className="flex flex-row items-center gap-2 border border-slate-100 bg-slate-50/50 p-1 rounded-xl">
+              {/* Reset Filter Button */}
+              <button
+                onClick={clearFilters}
+                type="button"
+                className="flex items-center justify-center px-4 py-2 text-xs font-black uppercase tracking-wider text-red-600 bg-white hover:bg-red-50 border border-red-100 rounded-lg transition-all active:scale-95 cursor-pointer shadow-sm"
+              >
+                Reset
+              </button>
+
+              {/* Live Data Reload Button */}
+              <button
+                type="button"
+                disabled={reloading}
+                onClick={fetchOrders}
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider text-blue-600 bg-white hover:bg-blue-50 border border-blue-100 disabled:opacity-40 rounded-lg transition-all active:scale-95 cursor-pointer shadow-sm"
+                title="Refresh Live Orders"
+              >
+                <LuRefreshCw className={`w-3.5 h-3.5 ${reloading ? "animate-spin text-blue-500" : "text-blue-600"}`} />
+                
+              </button>
+            </div>
+
+          </div>
         </div>
       </div>
 
@@ -1232,8 +1269,8 @@ export default function OrdersListPage() {
                   disabled={isShipping}
                   onClick={submitPartialShipment}
                   className={`flex-1 p-4 rounded-2xl font-black uppercase text-[10px] transition-all ${isShipping
-                      ? "bg-slate-300 text-slate-500 cursor-not-allowed animate-pulse"
-                      : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
+                    ? "bg-slate-300 text-slate-500 cursor-not-allowed animate-pulse"
+                    : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
                     }`}>
                   {isShipping ? "Shipping..." : "Ship Partial"}
                 </button>
