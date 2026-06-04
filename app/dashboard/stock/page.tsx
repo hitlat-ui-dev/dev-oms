@@ -16,6 +16,13 @@ export default function StockPage() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
+  const [loginUser, setLoginUser] = useState<string>("");
+
+  useEffect(() => {
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    setLoginUser(userData?.username || "Unknown User");
+  }, []);
 
   const fetchStock = async () => {
     try {
@@ -197,76 +204,120 @@ export default function StockPage() {
                   <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Location</th>
                   <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Required Qty</th>
                   <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Available Qty</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right">Last Rate</th>
+                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Last Rate</th>
+                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right">Total</th>
                   {/* <th></th> */}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={6} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
-                ) : filteredStock.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
-                    <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
+                ) : filteredStock.map((item, idx) => {
+                  const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+                  const rowTotalValue = (item.totalQty || 0) * rateNumber;
+                  return (
+                    <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
+                      <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
 
-                    <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
-                      <span className="font-black text-slate-800 text-sm uppercase flex items-center gap-2">
-                        <FiPackage className="text-slate-400 group-hover:text-blue-500 transition-colors" />
-                        {item.itemName}
-                      </span>
-                    </td>
-
-                    <td className="py-4 px-6 border-r border-slate-50">
-                      <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-500 font-black text-[9px] uppercase">
-                        {item.category}
-                      </span>
-                    </td>
-
-                    <td className="py-4 px-6 border-r border-slate-50">
-                      <span className="flex items-center gap-1.5 text-slate-500 font-bold text-xs uppercase">
-                        <FiMapPin size={12} className={item.location !== "---" ? "text-red-400" : "text-slate-300"} />
-                        {item.location}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
-                      <div className="flex flex-col items-center">
-                        <span className="text-sm font-black text-blue-800">
-                          {item.reQty?.toLocaleString() || 0}
+                      <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
+                        <span className="font-black text-slate-800 text-sm uppercase flex items-center gap-2">
+                          <FiPackage className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                          {item.itemName}
                         </span>
-                        <span className="text-[8px] font-black text-slate-400 uppercase">Total Req Qty</span>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="py-4 px-6 text-center border-r border-slate-50">
-                      <div className="flex flex-col items-center">
-                        <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
-                          {item.totalQty.toLocaleString()}
+                      <td className="py-4 px-6 border-r border-slate-50">
+                        <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-500 font-black text-[9px] uppercase">
+                          {item.category}
                         </span>
-                        <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
-                          {item.unit}
-                        </span>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="py-4 px-6 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* <FiTrendingUp size={12} className="text-emerald-500" /> */}
-                        <span className="text-xs font-black text-slate-600 italic">
-                          {item.rateDisplay}
+                      <td className="py-4 px-6 border-r border-slate-50">
+                        <span className="flex items-center gap-1.5 text-slate-500 font-bold text-xs uppercase">
+                          <FiMapPin size={12} className={item.location !== "---" ? "text-red-400" : "text-slate-300"} />
+                          {item.location}
                         </span>
-                      </div>
+                      </td>
+                      <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
+                        <div className="flex flex-col items-center">
+                          <span className="text-sm font-black text-blue-800">
+                            {item.reQty?.toLocaleString() || 0}
+                          </span>
+                          <span className="text-[8px] font-black text-slate-400 uppercase">Total Req Qty</span>
+                        </div>
+                      </td>
+
+                      <td className="py-4 px-6 text-center border-r border-slate-50">
+                        <div className="flex flex-col items-center">
+                          <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
+                            {item.totalQty.toLocaleString()}
+                          </span>
+                          <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
+                            {item.unit}
+                          </span>
+                        </div>
+                      </td>
+
+                      {loginUser === "Chintan" ? (
+                        <>
+                          {/* Show rate to Chintan */}
+                          <td className="py-4 px-6 text-right border-r border-slate-50">
+                            <span className="text-xs font-black text-slate-600 italic">
+                              {item.rateDisplay || item.rate || 0}
+                            </span>
+                          </td>
+                          {/* Show row total to Chintan */}
+                          <td className="py-4 px-6 text-right bg-blue-50/10">
+                            <span className="text-xs font-black text-slate-900">
+                              ₹{rowTotalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          {/* Show NA to other users */}
+                          <td className="py-4 px-6 text-right border-r border-slate-50 text-slate-400 font-bold text-xs select-none">
+                            NA
+                          </td>
+                          <td className="py-4 px-6 text-right bg-slate-50/30 text-slate-400 font-bold text-xs select-none">
+                            NA
+                          </td>
+                        </>
+                      )}
+
+                    </tr>
+                  );
+                })}
+                {filteredStock.length > 0 && (
+                  <tr className="bg-slate-900 text-white font-black border-t-2 border-slate-700">
+                    <td colSpan={4} className="py-5 px-6 text-xs uppercase tracking-wider text-left">
+                      Grand Total Live Summary
                     </td>
-                    {/* <td className="py-4 px-4 uppercase font-bold text-xs text-red-600">
-                    <BlockGuard permission="editStock">
-                    <button
-                      onClick={() => handleEdit(item)}
-                      className="hover:underline hover:text-blue-800 transition-all cursor-pointer"
-                    >
-                      <FiEdit />
-                      </button>
-                      </BlockGuard>
-                  </td> */}
+                    <td className="py-5 px-6 text-center text-blue-300 text-sm">
+                      {filteredStock.reduce((sum, item) => sum + (item.reQty || 0), 0).toLocaleString()}
+                    </td>
+                    <td className="py-5 px-6 text-center text-emerald-400 text-sm">
+                      {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
+                    </td>
+                    <td className="border-r border-slate-800"></td> {/* Empty padding column for Rate headers */}
+                    {loginUser === "Chintan" ? (
+                      <>
+                        <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
+                          ₹{filteredStock.reduce((sum, item) => {
+                            const cleanRate = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+                            return sum + ((item.totalQty || 0) * cleanRate);
+                          }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
+                          NA
+                        </td>
+                      </>
+                    )}
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>

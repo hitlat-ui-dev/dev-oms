@@ -123,16 +123,20 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     //console.log("Data being sent to DB:", formData);
     const isValidFirm = firms.some((f: any) => f.firmCode === formData.firmCode);
     if (!isValidFirm) {
-    alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
-    return; // Block database submit action pipeline completely
-  }
-    setLoading(true);
+      alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
+      return; // Block database submit action pipeline completely
+    }
+    const isValidItem = stocks.some((x: any) => x.itemName === formData.itemName);
+    if (!isValidItem) {
+      alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
+      return;
+    }
 
     if (!formData.reQty || formData.reQty <= 0) {
       alert("Please enter a quantity more than 0");
       return; // STOP the function here
     }
-
+    setLoading(true);
     try {
       // Decide if we are updating or creating
       const isEditing = !!initialData?._id;
