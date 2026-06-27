@@ -299,7 +299,7 @@ export default function StockPage() {
                     <td className="py-5 px-6 text-center text-emerald-400 text-sm">
                       {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
                     </td>
-                    <td className="border-r border-slate-800"></td> {/* Empty padding column for Rate headers */}
+                    <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
                     {loginUser === "Chintan" ? (
                       <>
                         <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
