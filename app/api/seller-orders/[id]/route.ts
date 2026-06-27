@@ -19,6 +19,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
+    // 🛑 1. BACKEND DOUBLE-CLICK GUARD CLAUSE:
+    if (updateData.activeTab === "TO CHECK" && originalOrder.status === "READY TO SHIP") {
+      console.warn(`🛑 Double-click blocked in backend for order: ${originalOrder.orderNo}`);
+      return NextResponse.json(
+        { error: "This order has already been processed as Ready to Ship!" },
+        { status: 400 }
+      );
+    }
+
     // Safely extract the structural keys straight from the MongoDB source
     const itemSku = originalOrder.sku?.trim();
     if (!itemSku) {
@@ -80,17 +89,33 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       let updatedOriginal = null;
       if (updateData.isPartial) {
         const remainingQty = originalOrder.reQty - returnQty;
-        updatedOriginal = await SellerOrder.findByIdAndUpdate(
-          id,
+        updatedOriginal = await SellerOrder.findOneAndUpdate(
+          { _id: id, reQty: originalOrder.reQty, status: originalOrder.status },
           {
             reQty: remainingQty,
             totalAmount: remainingQty * (originalOrder.rate || 0),
           },
           { new: true }
         );
+        if (!updatedOriginal) {
+          return NextResponse.json(
+            { error: "This order has already been updated or processed by another action." },
+            { status: 409 }
+          );
+        }
       } else {
         // If full return, delete or move original out of Delivery
-        updatedOriginal = await SellerOrder.findByIdAndDelete(id);
+        updatedOriginal = await SellerOrder.findOneAndDelete({
+          _id: id,
+          reQty: originalOrder.reQty,
+          status: originalOrder.status
+        });
+        if (!updatedOriginal) {
+          return NextResponse.json(
+            { error: "This order has already been updated or processed by another action." },
+            { status: 409 }
+          );
+        }
       }
 
       return NextResponse.json(updatedOriginal || { success: true }, { status: 200 });
@@ -135,14 +160,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       await SellerOrder.create(shippedOrderData);
 
       // 2. Update Original Order (Keep in TO CHECK with leftover qty)
-      const updatedOriginal = await SellerOrder.findByIdAndUpdate(
-        id,
+      const updatedOriginal = await SellerOrder.findOneAndUpdate(
+        { _id: id, reQty: originalOrder.reQty, status: "TO CHECK" },
         {
           reQty: remainingQty,
           totalAmount: remainingQty * (originalOrder.rate || 0),
         },
         { new: true }
       );
+      if (!updatedOriginal) {
+        return NextResponse.json(
+          { error: "This order has already been updated or processed by another action." },
+          { status: 409 }
+        );
+      }
 
       // 3. Deduct ONLY the shipped amount from stock collections via SKU
       await db.collection("stock").updateOne(stockFilter, {
@@ -215,20 +246,45 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Perform the update once safely
-    const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
+    // Perform the update once safely, guarding against concurrent double-clicks by matching the expected previous status
+    const query: any = { _id: id };
+    if (updateData.activeTab && updateData.activeTab !== "ALL") {
+      query.status = updateData.activeTab;
+    }
+    const updated = await SellerOrder.findOneAndUpdate(query, { ...updateData }, { new: true });
+    if (!updated) {
+      console.warn(`🛑 Concurrent update blocked for order: ${originalOrder.orderNo}`);
+      return NextResponse.json(
+        { error: "This order has already been updated or processed by another action." },
+        { status: 409 }
+      );
+    }
     const oldQty = Number(originalOrder.reQty || 0);
-    const newQty = Number(updateData.reQty || 0);
+    const newQty = updateData.reQty !== undefined ? Number(updateData.reQty || 0) : oldQty;
     const qtyDifference = newQty - oldQty;
 
     if (qtyDifference !== 0) {
-      await db.collection("stock").updateOne(stockFilter, {
-        $inc: { reQty: qtyDifference }
-      });
+      if (originalOrder.status === "TO CHECK") {
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { reQty: qtyDifference }
+        });
+        await db.collection("items").updateOne(
+          { sku: itemSku },
+          { $inc: { reQty: qtyDifference } }
+        );
+      } else if (originalOrder.status === "READY TO SHIP") {
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: -qtyDifference }
+        });
+        await db.collection("items").updateOne(
+          { sku: itemSku },
+          { $inc: { currentStock: -qtyDifference } }
+        );
+      }
     }
 
     // Correctly reference original quantity configuration so full orders are calculated safely
-    const adjustQty = Number(originalOrder.reQty || updated.reQty || 0);
+    const adjustQty = Number(updated.reQty || originalOrder.reQty || 0);
 
     if (adjustQty > 0) {
       if (updateData.activeTab === "TO CHECK") {
@@ -240,7 +296,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           await db.collection("items").updateOne(
             { sku: itemSku },
             {
-              $inc: { currentStock: -adjustQty, reQty: -shipQty },
+              $inc: { currentStock: -adjustQty, reQty: -adjustQty },
               $push: {
                 history: {
                   type: `${updateData.status} by ${updateData.userName || "Admin"}`,

@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { FiPlusCircle,  FiUserPlus, FiShoppingCart, FiRotateCcw, FiBox, FiFileText, FiSend } from "react-icons/fi";
+import { FiPlusCircle,  FiUserPlus, FiShoppingCart, FiRotateCcw, FiBox, FiFileText, FiSend, FiArrowLeft } from "react-icons/fi";
 
 export default function PurchasePage() {
   const router = useRouter();
@@ -20,6 +20,14 @@ export default function PurchasePage() {
   return (
     <div className="p-4 md:p-12">
       <div className="max-w-7xl mx-auto">
+        {/* Navigation Header */}
+        <button 
+          onClick={() => router.push("/dashboard")} 
+          className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors mb-8 font-bold text-xs uppercase tracking-[0.2em]"
+        >
+          <FiArrowLeft /> Back to Dashboard
+        </button>
+
         {/* Section Header */}
         <div className="mb-8 ml-2">
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Purchase</h1>

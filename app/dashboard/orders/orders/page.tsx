@@ -1,7 +1,7 @@
 "use client";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -312,20 +312,23 @@ export default function OrdersListPage() {
       fetchOrders();
     }
   };
-
+const shippingLock = useRef(false);
   const submitPartialShipment = async () => {
-    if (!selectedOrderId || isShipping) return;
+    if (!selectedOrderId || isShipping || shippingLock.current) return;
+    shippingLock.current = true;
     setIsShipping(true);
 
     if (shipQty <= 0) {
       setPartialError("Please add quantity to ship!");
       setIsShipping(false);
+      shippingLock.current = false;
       return;
     }
     setPartialError("");
     const orderToUpdate = orders.find(o => o._id === selectedOrderId);
     if (!orderToUpdate) {
       setIsShipping(false);
+      shippingLock.current = false;
       return;
     }
 
@@ -335,6 +338,7 @@ export default function OrdersListPage() {
     if (shipQty > orderToUpdate.reQty) {
       alert("Quantity exceeds order limit");
       setIsShipping(false);
+      shippingLock.current = false;
       return;
     }
 
@@ -343,6 +347,7 @@ export default function OrdersListPage() {
     if (shipQtyNum > avStock) {
       alert(`Available quantity is low! You only have ${avStock} in stock.`);
       setIsShipping(false);
+      shippingLock.current = false;
       return; // Stop the execution here
     }
     const isFullQty = shipQtyNum === orderToUpdate.reQty;
@@ -375,13 +380,18 @@ export default function OrdersListPage() {
         const errorData = await res.json();
         alert(errorData.error || "Stock Check Failed"); // This will tell you EXACTLY why it's 400
         setIsShipping(false);
+        shippingLock.current = false;
       }
     } catch (err) {
       alert("Error processing shipment");
       setIsShipping(false);
+      shippingLock.current = false;
     }
     finally {
       setIsShipping(false);
+      if (selectedOrderId) {
+        shippingLock.current = false;
+      }
     }
   };
 
