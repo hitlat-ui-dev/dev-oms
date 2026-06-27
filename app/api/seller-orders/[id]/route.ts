@@ -3,6 +3,11 @@ import clientPromise from "@/lib/mongodb";
 import SellerOrder from "@/models/SellerOrder";
 import mongoose from "mongoose";
 
+/** Escapes special regex characters in user-controlled strings to prevent RegEx injection */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -46,7 +51,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // Get the base order number (removes any existing -1, -2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-')[0];
       const returnRecordCount = await SellerOrder.countDocuments({
-        orderNo: { $regex: new RegExp(`^${baseOrderNo}-Re`) }
+        orderNo: { $regex: new RegExp(`^${escapeRegex(baseOrderNo)}-Re`) }
       });
       const nextReNumber = returnRecordCount + 1;
       const returnOrderNo = `${baseOrderNo}-Re${nextReNumber}`;
@@ -137,7 +142,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // 1. GENERATE SEQUENTIAL ORDER NUMBER (P1, P2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-P')[0];
       const partialCount = await SellerOrder.countDocuments({
-        orderNo: { $regex: new RegExp(`^${baseOrderNo}-P`) }
+        orderNo: { $regex: new RegExp(`^${escapeRegex(baseOrderNo)}-P`) }
       });
 
       const nextPNumber = partialCount + 1;
@@ -372,5 +377,86 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch (error: any) {
     console.error("PATCH Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// ================================================================
+// DELETE: Remove a "TO CHECK" order and recalculate stock reQty
+// ================================================================
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const client = await clientPromise;
+    const db = client.db("dev_oms_db");
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(process.env.MONGODB_URI as string);
+    }
+
+    // 1. Find the order first
+    const order = await SellerOrder.findById(id);
+    if (!order) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+
+    // 2. Only allow deletion of TO CHECK orders
+    if (order.status !== "TO CHECK") {
+      return NextResponse.json(
+        { error: "Only orders in 'TO CHECK' status can be deleted." },
+        { status: 400 }
+      );
+    }
+
+    const itemSku = order.sku?.trim();
+    const orderQty = Number(order.reQty || 0);
+
+    // 3. Delete the order FIRST
+    await SellerOrder.findByIdAndDelete(id);
+
+    // 4. Recalculate reQty from ALL remaining TO CHECK orders for this SKU
+    //    This prevents double-subtraction issues and guarantees accurate reQty
+    if (itemSku) {
+      const remainingOrders = await SellerOrder.aggregate([
+        { $match: { sku: itemSku, status: "TO CHECK" } },
+        { $group: { _id: null, totalReQty: { $sum: "$reQty" } } }
+      ]);
+      const correctReQty = remainingOrders[0]?.totalReQty || 0;
+
+      // Set reQty to the exact correct value (not $inc)
+      await db.collection("stock").updateOne(
+        { sku: itemSku },
+        { $set: { reQty: correctReQty } }
+      );
+
+      // Parse userName from query string (passed by frontend)
+      const url = new URL(req.url);
+      const userName = url.searchParams.get("userName") || "Admin";
+
+      await db.collection("items").updateOne(
+        { sku: itemSku },
+        {
+          $set: { reQty: correctReQty },
+          $push: {
+            history: {
+              type: `ORDER DELETED by ${userName}`,
+              qty: -orderQty,
+              date: new Date(),
+              orderNo: order.orderNo,
+              sellerName: order.instituteName || "N/A",
+              otherDetails: `TO CHECK order ${order.orderNo} removed. reQty recalculated to ${correctReQty}.`
+            }
+          } as any
+        }
+      );
+    }
+
+    return NextResponse.json(
+      { success: true, message: `Order ${order.orderNo} deleted and stock updated.` },
+      { status: 200 }
+    );
+
+  } catch (error: any) {
+    console.error("DELETE Error:", error);
+    return NextResponse.json({ error: "Failed to delete order." }, { status: 500 });
   }
 }

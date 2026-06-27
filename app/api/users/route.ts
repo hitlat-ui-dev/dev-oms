@@ -9,7 +9,7 @@ export async function GET() {
     
     const users = await db.collection("users")
       .find({})
-      //.project({ password: 0 }) // Security: Don't send passwords to the list
+      .project({ password: 0 }) // Security: Don't send passwords to the client
       .toArray();
 
     return NextResponse.json(users);

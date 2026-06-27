@@ -2,7 +2,7 @@
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload } from "react-icons/fi";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2 } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
@@ -392,6 +392,31 @@ const shippingLock = useRef(false);
       if (selectedOrderId) {
         shippingLock.current = false;
       }
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string, orderNo: string) => {
+    if (!window.confirm(`Are you sure you want to DELETE order ${orderNo}?\nThis will remove the order and restore the stock reQty.`)) return;
+
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const userName = userData?.username || "Unknown User";
+
+    try {
+      const res = await fetch(`/api/seller-orders/${orderId}?userName=${encodeURIComponent(userName)}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        alert(result.message || "Order deleted successfully.");
+        fetchOrders();
+      } else {
+        const errorData = await res.json();
+        alert(errorData.error || "Failed to delete order.");
+      }
+    } catch (err) {
+      alert("Error deleting order.");
     }
   };
 
@@ -1047,9 +1072,22 @@ const shippingLock = useRef(false);
                     )
                   )}
                   {activeTab === "TO CHECK" && (
-                    <button onClick={() => { setEditingOrder(order); setShowOrderModal(true); }} className="hover:underline hover:text-blue-800 float-right text-xs transition-all text-red-600">
-                      <FiEdit />
-                    </button>
+                    <div className="inline-flex items-center gap-1 float-right">
+                      <button
+                        onClick={() => handleDeleteOrder(order._id, order.orderNo)}
+                        title="Delete this order"
+                        className="p-1.5 rounded-lg text-red-400 hover:text-white hover:bg-red-500 transition-all"
+                      >
+                        <FiTrash2 size={14} />
+                      </button>
+                      <button
+                        onClick={() => { setEditingOrder(order); setShowOrderModal(true); }}
+                        title="Edit this order"
+                        className="p-1.5 rounded-lg text-blue-500 hover:text-white hover:bg-blue-500 transition-all"
+                      >
+                        <FiEdit size={14} />
+                      </button>
+                    </div>
                   )}
                   {activeTab === "RETURN ORDER" && (
                     <button

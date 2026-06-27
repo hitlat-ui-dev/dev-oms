@@ -5,7 +5,7 @@ import BlockGuard from "@/components/BlockGuard";
 import ItemReportModal from "@/components/ItemReportModal";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
-import { FiMapPin, FiPackage, FiTrendingUp, FiSearch, FiEdit, FiDownload } from "react-icons/fi";
+import { FiMapPin, FiPackage, FiTrendingUp, FiSearch, FiEdit, FiDownload, FiArrowUp, FiArrowDown } from "react-icons/fi";
 
 
 export default function StockPage() {
@@ -17,6 +17,7 @@ export default function StockPage() {
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [loginUser, setLoginUser] = useState<string>("");
+  const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
 
   useEffect(() => {
     const session = localStorage.getItem("oms_user");
@@ -50,6 +51,21 @@ export default function StockPage() {
     setIsModalOpen(true);
   };
 
+  const handleSort = (key: string) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const getSortIcon = (col: string) => {
+    if (sortConfig.key !== col)
+      return <FiArrowDown size={9} className="inline ml-1 opacity-25 group-hover:opacity-60 transition-opacity" />;
+    return sortConfig.direction === "asc"
+      ? <FiArrowUp size={9} className="inline ml-1 text-blue-400" />
+      : <FiArrowDown size={9} className="inline ml-1 text-blue-400" />;
+  };
+
   const [nameSearch, setNameSearch] = useState("");
   const [categorySearch, setCategorySearch] = useState("");
   const [skuSearch, setSkuSearch] = useState("");
@@ -63,6 +79,38 @@ export default function StockPage() {
       return matchesName && matchesCategory && matchesSku;
     });
   }, [stock, nameSearch, categorySearch, skuSearch]);
+
+  // Sort logic — applied on top of filtered results
+  const sortedStock = useMemo(() => {
+    if (!sortConfig.key) return filteredStock;
+    return [...filteredStock].sort((a, b) => {
+      const key = sortConfig.key!;
+      let aVal: any;
+      let bVal: any;
+
+      if (key === "rate") {
+        aVal = parseFloat(String(a.rateDisplay || a.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+        bVal = parseFloat(String(b.rateDisplay || b.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+      } else if (key === "total") {
+        const aRate = parseFloat(String(a.rateDisplay || a.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+        const bRate = parseFloat(String(b.rateDisplay || b.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+        aVal = (a.totalQty || 0) * aRate;
+        bVal = (b.totalQty || 0) * bRate;
+      } else {
+        aVal = a[key];
+        bVal = b[key];
+      }
+
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        return sortConfig.direction === "asc" ? aVal - bVal : bVal - aVal;
+      }
+      const aStr = String(aVal ?? "").toLowerCase();
+      const bStr = String(bVal ?? "").toLowerCase();
+      if (aStr < bStr) return sortConfig.direction === "asc" ? -1 : 1;
+      if (aStr > bStr) return sortConfig.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [filteredStock, sortConfig]);
 
   const downloadExcel = () => {
     // Prepare the data for Excel
@@ -198,21 +246,36 @@ export default function StockPage() {
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-900 text-white">
                 <tr>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">SKU</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Item Name</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Category</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800">Location</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Required Qty</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Available Qty</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800">Last Rate</th>
-                  <th className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right">Total</th>
-                  {/* <th></th> */}
+                  <th onClick={() => handleSort("sku")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">SKU{getSortIcon("sku")}</span>
+                  </th>
+                  <th onClick={() => handleSort("itemName")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Item Name{getSortIcon("itemName")}</span>
+                  </th>
+                  <th onClick={() => handleSort("category")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Category{getSortIcon("category")}</span>
+                  </th>
+                  <th onClick={() => handleSort("location")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Location{getSortIcon("location")}</span>
+                  </th>
+                  <th onClick={() => handleSort("reQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Required Qty{getSortIcon("reQty")}</span>
+                  </th>
+                  <th onClick={() => handleSort("totalQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Available Qty{getSortIcon("totalQty")}</span>
+                  </th>
+                  <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Last Rate{getSortIcon("rate")}</span>
+                  </th>
+                  <th onClick={() => handleSort("total")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">Total{getSortIcon("total")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={6} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
-                ) : filteredStock.map((item, idx) => {
+                ) : sortedStock.map((item, idx) => {
                   const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
                   return (
@@ -258,7 +321,7 @@ export default function StockPage() {
                         </div>
                       </td>
 
-                      {loginUser === "Chintan" ? (
+                      {["chintan", "hitesh"].includes(loginUser?.toLowerCase()) ? (
                         <>
                           {/* Show rate to Chintan */}
                           <td className="py-4 px-6 text-right border-r border-slate-50">
@@ -300,7 +363,7 @@ export default function StockPage() {
                       {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
                     </td>
                     <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
-                    {loginUser === "Chintan" ? (
+                    {["chintan", "hitesh"].includes(loginUser?.toLowerCase()) ? (
                       <>
                         <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
                           ₹{filteredStock.reduce((sum, item) => {
