@@ -3,6 +3,11 @@ import clientPromise from "@/lib/mongodb";
 import SellerOrder from "@/models/SellerOrder";
 import mongoose from "mongoose";
 
+/** Escapes special regex characters in user-controlled strings to prevent RegEx injection */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -18,6 +23,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // 1. Find Original Order
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+
+    // 🛑 1. BACKEND DOUBLE-CLICK GUARD CLAUSE:
+    if (updateData.activeTab === "TO CHECK" && originalOrder.status === "READY TO SHIP") {
+      console.warn(`🛑 Double-click blocked in backend for order: ${originalOrder.orderNo}`);
+      return NextResponse.json(
+        { error: "This order has already been processed as Ready to Ship!" },
+        { status: 400 }
+      );
+    }
 
     // Safely extract the structural keys straight from the MongoDB source
     const itemSku = originalOrder.sku?.trim();
@@ -37,7 +51,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // Get the base order number (removes any existing -1, -2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-')[0];
       const returnRecordCount = await SellerOrder.countDocuments({
-        orderNo: { $regex: new RegExp(`^${baseOrderNo}-Re`) }
+        orderNo: { $regex: new RegExp(`^${escapeRegex(baseOrderNo)}-Re`) }
       });
       const nextReNumber = returnRecordCount + 1;
       const returnOrderNo = `${baseOrderNo}-Re${nextReNumber}`;
@@ -80,17 +94,33 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       let updatedOriginal = null;
       if (updateData.isPartial) {
         const remainingQty = originalOrder.reQty - returnQty;
-        updatedOriginal = await SellerOrder.findByIdAndUpdate(
-          id,
+        updatedOriginal = await SellerOrder.findOneAndUpdate(
+          { _id: id, reQty: originalOrder.reQty, status: originalOrder.status },
           {
             reQty: remainingQty,
             totalAmount: remainingQty * (originalOrder.rate || 0),
           },
           { new: true }
         );
+        if (!updatedOriginal) {
+          return NextResponse.json(
+            { error: "This order has already been updated or processed by another action." },
+            { status: 409 }
+          );
+        }
       } else {
         // If full return, delete or move original out of Delivery
-        updatedOriginal = await SellerOrder.findByIdAndDelete(id);
+        updatedOriginal = await SellerOrder.findOneAndDelete({
+          _id: id,
+          reQty: originalOrder.reQty,
+          status: originalOrder.status
+        });
+        if (!updatedOriginal) {
+          return NextResponse.json(
+            { error: "This order has already been updated or processed by another action." },
+            { status: 409 }
+          );
+        }
       }
 
       return NextResponse.json(updatedOriginal || { success: true }, { status: 200 });
@@ -112,7 +142,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // 1. GENERATE SEQUENTIAL ORDER NUMBER (P1, P2, etc.)
       const baseOrderNo = originalOrder.orderNo.split('-P')[0];
       const partialCount = await SellerOrder.countDocuments({
-        orderNo: { $regex: new RegExp(`^${baseOrderNo}-P`) }
+        orderNo: { $regex: new RegExp(`^${escapeRegex(baseOrderNo)}-P`) }
       });
 
       const nextPNumber = partialCount + 1;
@@ -135,14 +165,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       await SellerOrder.create(shippedOrderData);
 
       // 2. Update Original Order (Keep in TO CHECK with leftover qty)
-      const updatedOriginal = await SellerOrder.findByIdAndUpdate(
-        id,
+      const updatedOriginal = await SellerOrder.findOneAndUpdate(
+        { _id: id, reQty: originalOrder.reQty, status: "TO CHECK" },
         {
           reQty: remainingQty,
           totalAmount: remainingQty * (originalOrder.rate || 0),
         },
         { new: true }
       );
+      if (!updatedOriginal) {
+        return NextResponse.json(
+          { error: "This order has already been updated or processed by another action." },
+          { status: 409 }
+        );
+      }
 
       // 3. Deduct ONLY the shipped amount from stock collections via SKU
       await db.collection("stock").updateOne(stockFilter, {
@@ -215,20 +251,45 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Perform the update once safely
-    const updated = await SellerOrder.findByIdAndUpdate(id, { ...updateData }, { new: true });
+    // Perform the update once safely, guarding against concurrent double-clicks by matching the expected previous status
+    const query: any = { _id: id };
+    if (updateData.activeTab && updateData.activeTab !== "ALL") {
+      query.status = updateData.activeTab;
+    }
+    const updated = await SellerOrder.findOneAndUpdate(query, { ...updateData }, { new: true });
+    if (!updated) {
+      console.warn(`🛑 Concurrent update blocked for order: ${originalOrder.orderNo}`);
+      return NextResponse.json(
+        { error: "This order has already been updated or processed by another action." },
+        { status: 409 }
+      );
+    }
     const oldQty = Number(originalOrder.reQty || 0);
-    const newQty = Number(updateData.reQty || 0);
+    const newQty = updateData.reQty !== undefined ? Number(updateData.reQty || 0) : oldQty;
     const qtyDifference = newQty - oldQty;
 
     if (qtyDifference !== 0) {
-      await db.collection("stock").updateOne(stockFilter, {
-        $inc: { reQty: qtyDifference }
-      });
+      if (originalOrder.status === "TO CHECK") {
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { reQty: qtyDifference }
+        });
+        await db.collection("items").updateOne(
+          { sku: itemSku },
+          { $inc: { reQty: qtyDifference } }
+        );
+      } else if (originalOrder.status === "READY TO SHIP") {
+        await db.collection("stock").updateOne(stockFilter, {
+          $inc: { quantity: -qtyDifference }
+        });
+        await db.collection("items").updateOne(
+          { sku: itemSku },
+          { $inc: { currentStock: -qtyDifference } }
+        );
+      }
     }
 
     // Correctly reference original quantity configuration so full orders are calculated safely
-    const adjustQty = Number(originalOrder.reQty || updated.reQty || 0);
+    const adjustQty = Number(updated.reQty || originalOrder.reQty || 0);
 
     if (adjustQty > 0) {
       if (updateData.activeTab === "TO CHECK") {
@@ -240,7 +301,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           await db.collection("items").updateOne(
             { sku: itemSku },
             {
-              $inc: { currentStock: -adjustQty, reQty: -shipQty },
+              $inc: { currentStock: -adjustQty, reQty: -adjustQty },
               $push: {
                 history: {
                   type: `${updateData.status} by ${updateData.userName || "Admin"}`,
@@ -316,5 +377,86 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch (error: any) {
     console.error("PATCH Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// ================================================================
+// DELETE: Remove a "TO CHECK" order and recalculate stock reQty
+// ================================================================
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const client = await clientPromise;
+    const db = client.db("dev_oms_db");
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(process.env.MONGODB_URI as string);
+    }
+
+    // 1. Find the order first
+    const order = await SellerOrder.findById(id);
+    if (!order) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+
+    // 2. Only allow deletion of TO CHECK orders
+    if (order.status !== "TO CHECK") {
+      return NextResponse.json(
+        { error: "Only orders in 'TO CHECK' status can be deleted." },
+        { status: 400 }
+      );
+    }
+
+    const itemSku = order.sku?.trim();
+    const orderQty = Number(order.reQty || 0);
+
+    // 3. Delete the order FIRST
+    await SellerOrder.findByIdAndDelete(id);
+
+    // 4. Recalculate reQty from ALL remaining TO CHECK orders for this SKU
+    //    This prevents double-subtraction issues and guarantees accurate reQty
+    if (itemSku) {
+      const remainingOrders = await SellerOrder.aggregate([
+        { $match: { sku: itemSku, status: "TO CHECK" } },
+        { $group: { _id: null, totalReQty: { $sum: "$reQty" } } }
+      ]);
+      const correctReQty = remainingOrders[0]?.totalReQty || 0;
+
+      // Set reQty to the exact correct value (not $inc)
+      await db.collection("stock").updateOne(
+        { sku: itemSku },
+        { $set: { reQty: correctReQty } }
+      );
+
+      // Parse userName from query string (passed by frontend)
+      const url = new URL(req.url);
+      const userName = url.searchParams.get("userName") || "Admin";
+
+      await db.collection("items").updateOne(
+        { sku: itemSku },
+        {
+          $set: { reQty: correctReQty },
+          $push: {
+            history: {
+              type: `ORDER DELETED by ${userName}`,
+              qty: -orderQty,
+              date: new Date(),
+              orderNo: order.orderNo,
+              sellerName: order.instituteName || "N/A",
+              otherDetails: `TO CHECK order ${order.orderNo} removed. reQty recalculated to ${correctReQty}.`
+            }
+          } as any
+        }
+      );
+    }
+
+    return NextResponse.json(
+      { success: true, message: `Order ${order.orderNo} deleted and stock updated.` },
+      { status: 200 }
+    );
+
+  } catch (error: any) {
+    console.error("DELETE Error:", error);
+    return NextResponse.json({ error: "Failed to delete order." }, { status: 500 });
   }
 }
