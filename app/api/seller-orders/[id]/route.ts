@@ -133,7 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // Only enter this block if shipQty is LESS than total order qty
     if (
-      updateData.status === "READY TO SHIP" &&
+      (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY") &&
       updateData.isPartialFulfillment &&
       shipQty < originalOrder.reQty
     ) {
@@ -159,8 +159,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...shippedOrderObj,
         reQty: shipQty,
         totalAmount: shipQty * (originalOrder.rate || 0),
-        status: "READY TO SHIP",
+        status: updateData.status,
         orderNo: newOrderNo,
+        ...(updateData.status === "DELIVERY" && {
+          transportName: updateData.transportName || "",
+          transportRemark: updateData.transportRemark || "",
+          deliveryDate: updateData.deliveryDate || new Date().toISOString().split('T')[0]
+        })
       };
       await SellerOrder.create(shippedOrderData);
 
