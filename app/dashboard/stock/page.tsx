@@ -19,7 +19,19 @@ export default function StockPage() {
   const [loginUser, setLoginUser] = useState<string>("");
   const [userPermissions, setUserPermissions] = useState<any>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
-  const [displayLimit, setDisplayLimit] = useState(100);
+  const [displayLimit, setDisplayLimit] = useState(50);
+  const [visibleColumns, setVisibleColumns] = useState({
+    hide: true,
+    sku: true,
+    itemName: true,
+    category: true,
+    location: true,
+    latestRate: true,
+    reQty: true,
+    totalQty: true,
+    lastRate: true,
+    total: true,
+  });
 
   useEffect(() => {
     const session = localStorage.getItem("oms_user");
@@ -117,7 +129,7 @@ export default function StockPage() {
 
   // Reset display limit when search queries change
   useEffect(() => {
-    setDisplayLimit(100);
+    setDisplayLimit(50);
   }, [nameSearch, categorySearch, skuSearch]);
 
   const visibleStock = useMemo(() => {
@@ -149,6 +161,32 @@ export default function StockPage() {
   const isSuperAdmin = ["chintan", "hitesh"].includes(loginUser?.toLowerCase()) || userPermissions?.boss === true;
   const showRate = isSuperAdmin || userPermissions?.stockLastRate !== true;
   const showAddNewItem = isSuperAdmin || userPermissions?.addNewItem === true;
+
+  const activeColumnsCount = useMemo(() => {
+    let count = 0;
+    if (visibleColumns.hide) count++;
+    if (visibleColumns.sku) count++;
+    if (visibleColumns.itemName) count++;
+    if (visibleColumns.category) count++;
+    if (visibleColumns.location) count++;
+    if (visibleColumns.latestRate) count++;
+    if (visibleColumns.reQty) count++;
+    if (visibleColumns.totalQty) count++;
+    if (showRate && visibleColumns.lastRate) count++;
+    if (showRate && visibleColumns.total) count++;
+    return count;
+  }, [visibleColumns, showRate]);
+
+  const leftSummaryColspan = useMemo(() => {
+    let count = 0;
+    if (visibleColumns.hide) count++;
+    if (visibleColumns.sku) count++;
+    if (visibleColumns.itemName) count++;
+    if (visibleColumns.category) count++;
+    if (visibleColumns.location) count++;
+    if (visibleColumns.latestRate) count++;
+    return count;
+  }, [visibleColumns]);
 
   return (
     <BlockGuard
@@ -238,6 +276,22 @@ export default function StockPage() {
               <span className="text-sm font-black text-blue-600 leading-none mt-0.5">{filteredStock.length}</span>
             </div>
 
+            {/* Reset Filters button */}
+            {(skuSearch || nameSearch || categorySearch) && (
+              <button
+                onClick={() => {
+                  setSkuSearch("");
+                  setNameSearch("");
+                  setCategorySearch("");
+                }}
+                type="button"
+                title="Reset Filters"
+                className="bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] uppercase tracking-wider px-4 py-3.5 rounded-xl transition-all active:scale-95 shadow-md shadow-rose-100 flex items-center justify-center whitespace-nowrap"
+              >
+                Reset Filters
+              </button>
+            )}
+
             {/* 🔄 Dynamic Reload Button (Wired up to fetchStock without reloading page) */}
             <button
               onClick={fetchStock}
@@ -259,134 +313,303 @@ export default function StockPage() {
 
           </div>
         </div>
+
+        {/* Dynamic Column Toggles Checkboxes row */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-wrap gap-x-6 gap-y-3 items-center justify-start text-[10px] font-black uppercase text-slate-500 tracking-wider">
+          <span className="text-slate-400 font-black">Toggle Columns:</span>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.hide}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, hide: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Hide Button
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.sku}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, sku: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            SKU
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.itemName}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, itemName: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Item Name
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.category}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, category: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Category
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.location}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, location: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Location
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.latestRate}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, latestRate: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Latest Rate
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.reQty}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, reQty: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Required Qty
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={visibleColumns.totalQty}
+              onChange={(e) => setVisibleColumns({ ...visibleColumns, totalQty: e.target.checked })}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+            />
+            Available Qty
+          </label>
+          {showRate && (
+            <>
+              <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleColumns.lastRate}
+                  onChange={(e) => setVisibleColumns({ ...visibleColumns, lastRate: e.target.checked })}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+                />
+                Last Rate
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleColumns.total}
+                  onChange={(e) => setVisibleColumns({ ...visibleColumns, total: e.target.checked })}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+                />
+                Total
+              </label>
+            </>
+          )}
+        </div>
+
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-900 text-white">
                 <tr>
-                  <th className="py-5 px-4 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 text-center select-none whitespace-nowrap">
-                    Hide
-                  </th>
-                  <th onClick={() => handleSort("sku")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">SKU{getSortIcon("sku")}</span>
-                  </th>
-                  <th onClick={() => handleSort("itemName")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Item Name{getSortIcon("itemName")}</span>
-                  </th>
-                  <th onClick={() => handleSort("category")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Category{getSortIcon("category")}</span>
-                  </th>
-                  <th onClick={() => handleSort("location")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Location{getSortIcon("location")}</span>
-                  </th>
-                  <th onClick={() => handleSort("reQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Required Qty{getSortIcon("reQty")}</span>
-                  </th>
-                  <th onClick={() => handleSort("totalQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Available Qty{getSortIcon("totalQty")}</span>
-                  </th>
+                  {visibleColumns.hide && (
+                    <th className="py-5 px-4 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 text-center select-none whitespace-nowrap">
+                      Hide
+                    </th>
+                  )}
+                  {visibleColumns.sku && (
+                    <th onClick={() => handleSort("sku")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">SKU{getSortIcon("sku")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.itemName && (
+                    <th onClick={() => handleSort("itemName")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">Item Name{getSortIcon("itemName")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.category && (
+                    <th onClick={() => handleSort("category")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">Category{getSortIcon("category")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.location && (
+                    <th onClick={() => handleSort("location")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">Location{getSortIcon("location")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.latestRate && (
+                    <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1 font-black">Latest Rate{getSortIcon("rate")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.reQty && (
+                    <th onClick={() => handleSort("reQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">Required Qty{getSortIcon("reQty")}</span>
+                    </th>
+                  )}
+                  {visibleColumns.totalQty && (
+                    <th onClick={() => handleSort("totalQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">Available Qty{getSortIcon("totalQty")}</span>
+                    </th>
+                  )}
                   {showRate && (
                     <>
-                      <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1">Last Rate{getSortIcon("rate")}</span>
-                      </th>
-                      <th onClick={() => handleSort("total")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1">Total{getSortIcon("total")}</span>
-                      </th>
+                      {visibleColumns.lastRate && (
+                        <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">Last Rate{getSortIcon("rate")}</span>
+                        </th>
+                      )}
+                      {visibleColumns.total && (
+                        <th onClick={() => handleSort("total")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">Total{getSortIcon("total")}</span>
+                        </th>
+                      )}
                     </>
                   )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={showRate ? 9 : 7} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
+                  <tr><td colSpan={activeColumnsCount} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
                 ) : visibleStock.map((item, idx) => {
                   const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
                   return (
                     <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
-                      <td className="py-4 px-4 text-center border-r border-slate-50">
-                        <button
-                          onClick={async () => {
-                            try {
-                              const newHiddenVal = !item.hidden;
-                              const res = await fetch(`/api/items/${item._id}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ hidden: newHiddenVal })
-                              });
-                              if (res.ok) {
-                                fetchStock();
+                      {visibleColumns.hide && (
+                        <td className="py-4 px-4 text-center border-r border-slate-50">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const newHiddenVal = !item.hidden;
+                                const res = await fetch(`/api/items/${item._id}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ hidden: newHiddenVal })
+                                });
+                                if (res.ok) {
+                                  fetchStock();
+                                }
+                              } catch (e) {
+                                console.error(e);
                               }
-                            } catch (e) {
-                              console.error(e);
-                            }
-                          }}
-                          className={`p-1.5 rounded-lg border transition-all ${
-                            item.hidden
-                              ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
-                              : "bg-green-50 text-green-600 border-green-200 hover:bg-green-100"
-                          }`}
-                          title={item.hidden ? "Click to Show Item" : "Click to Hide Item"}
-                        >
-                          {item.hidden ? <FiEyeOff size={14} /> : <FiEye size={14} />}
-                        </button>
-                      </td>
-                      <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
+                            }}
+                            className={`p-1.5 rounded-lg border transition-all ${
+                              item.hidden
+                                ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                                : "bg-green-50 text-green-600 border-green-200 hover:bg-green-100"
+                            }`}
+                            title={item.hidden ? "Click to Show Item" : "Click to Hide Item"}
+                          >
+                            {item.hidden ? <FiEyeOff size={14} /> : <FiEye size={14} />}
+                          </button>
+                        </td>
+                      )}
+                      {visibleColumns.sku && (
+                        <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
+                      )}
 
-                      <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
-                        <span className="font-black text-slate-800 text-sm uppercase flex items-center gap-2">
-                          <FiPackage className="text-slate-400 group-hover:text-blue-500 transition-colors" />
-                          {item.itemName}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-6 border-r border-slate-50">
-                        <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-500 font-black text-[9px] uppercase">
-                          {item.category}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-6 border-r border-slate-50">
-                        <span className="flex items-center gap-1.5 text-slate-500 font-bold text-xs uppercase">
-                          <FiMapPin size={12} className={item.location !== "---" ? "text-red-400" : "text-slate-300"} />
-                          {item.location}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
-                        <div className="flex flex-col items-center">
-                          <span className="text-sm font-black text-blue-800">
-                            {item.reQty?.toLocaleString() || 0}
+                      {visibleColumns.itemName && (
+                        <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
+                          <span className="font-black text-slate-800 text-sm uppercase flex items-center gap-2">
+                            <FiPackage className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                            {item.itemName}
                           </span>
-                          <span className="text-[8px] font-black text-slate-400 uppercase">Total Req Qty</span>
-                        </div>
-                      </td>
+                        </td>
+                      )}
 
-                      <td className="py-4 px-6 text-center border-r border-slate-50">
-                        <div className="flex flex-col items-center">
-                          <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
-                            {item.totalQty.toLocaleString()}
+                      {visibleColumns.category && (
+                        <td className="py-4 px-6 border-r border-slate-50">
+                          <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-500 font-black text-[9px] uppercase">
+                            {item.category}
                           </span>
-                          <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
-                            {item.unit}
+                        </td>
+                      )}
+
+                      {visibleColumns.location && (
+                        <td className="py-4 px-6 border-r border-slate-50">
+                          <span className="flex items-center gap-1.5 text-slate-500 font-bold text-xs uppercase">
+                            <FiMapPin size={12} className={item.location !== "---" ? "text-red-400" : "text-slate-300"} />
+                            {item.location}
                           </span>
-                        </div>
-                      </td>
+                        </td>
+                      )}
+                      
+                      {visibleColumns.latestRate && (
+                        <td className="py-4 px-6 border-r border-slate-50 w-28">
+                          <input
+                            type="number"
+                            step="0.01"
+                            defaultValue={item.rate}
+                            onBlur={async (e) => {
+                              const newRate = e.target.value === "" ? "" : parseFloat(e.target.value);
+                              if (newRate !== item.rate) {
+                                try {
+                                  await fetch(`/api/items/${item._id}`, {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ rate: newRate })
+                                  });
+                                  // Quietly update locally
+                                  item.rate = newRate;
+                                  item.rateDisplay = newRate !== "" ? `₹${newRate}` : "N/A";
+                                } catch (err) {
+                                  console.error(err);
+                                }
+                              }
+                            }}
+                            className="w-full text-center py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black outline-none focus:border-blue-500 focus:bg-white"
+                            placeholder="Rate"
+                          />
+                        </td>
+                      )}
+
+                      {visibleColumns.reQty && (
+                        <td className="py-4 px-6 text-center border-r border-slate-50 bg-slate-50/50">
+                          <div className="flex flex-col items-center">
+                            <span className="text-sm font-black text-blue-800">
+                              {item.reQty?.toLocaleString() || 0}
+                            </span>
+                            <span className="text-[8px] font-black text-slate-400 uppercase">Total Req Qty</span>
+                          </div>
+                        </td>
+                      )}
+
+                      {visibleColumns.totalQty && (
+                        <td className="py-4 px-6 text-center border-r border-slate-50">
+                          <div className="flex flex-col items-center">
+                            <span className={`text-sm font-black leading-none ${item.totalQty < 10 ? 'text-red-600' : 'text-slate-900'}`}>
+                              {item.totalQty.toLocaleString()}
+                            </span>
+                            <span className="text-[9px] font-black text-blue-500 uppercase mt-1">
+                              {item.unit}
+                            </span>
+                          </div>
+                        </td>
+                      )}
 
                       {showRate && (
                         <>
-                          {/* Show rate to Chintan */}
-                          <td className="py-4 px-6 text-right border-r border-slate-50">
-                            <span className="text-xs font-black text-slate-600 italic">
-                              {item.rateDisplay || item.rate || 0}
-                            </span>
-                          </td>
-                          {/* Show row total to Chintan */}
-                          <td className="py-4 px-6 text-right bg-blue-50/10">
-                            <span className="text-xs font-black text-slate-900">
-                              ₹{rowTotalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          </td>
+                          {visibleColumns.lastRate && (
+                            <td className="py-4 px-6 text-right border-r border-slate-50">
+                              <span className="text-xs font-black text-slate-600 italic">
+                                {item.rateDisplay || item.rate || 0}
+                              </span>
+                            </td>
+                          )}
+                          {visibleColumns.total && (
+                            <td className="py-4 px-6 text-right bg-blue-50/10">
+                              <span className="text-xs font-black text-slate-900">
+                                ₹{rowTotalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </td>
+                          )}
                         </>
                       )}
 
@@ -395,24 +618,34 @@ export default function StockPage() {
                 })}
                 {filteredStock.length > 0 && (
                   <tr className="bg-slate-900 text-white font-black border-t-2 border-slate-700">
-                    <td colSpan={5} className="py-5 px-6 text-xs uppercase tracking-wider text-left">
-                      Grand Total Live Summary
-                    </td>
-                    <td className="py-5 px-6 text-center text-blue-300 text-sm">
-                      {filteredStock.reduce((sum, item) => sum + (item.reQty || 0), 0).toLocaleString()}
-                    </td>
-                    <td className="py-5 px-6 text-center text-emerald-400 text-sm">
-                      {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
-                    </td>
+                    {leftSummaryColspan > 0 && (
+                      <td colSpan={leftSummaryColspan} className="py-5 px-6 text-xs uppercase tracking-wider text-left">
+                        Grand Total Live Summary
+                      </td>
+                    )}
+                    {visibleColumns.reQty && (
+                      <td className="py-5 px-6 text-center text-blue-300 text-sm">
+                        {filteredStock.reduce((sum, item) => sum + (item.reQty || 0), 0).toLocaleString()}
+                      </td>
+                    )}
+                    {visibleColumns.totalQty && (
+                      <td className="py-5 px-6 text-center text-emerald-400 text-sm">
+                        {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
+                      </td>
+                    )}
                     {showRate && (
                       <>
-                        <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
-                        <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
-                          ₹{filteredStock.reduce((sum, item) => {
-                            const cleanRate = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
-                            return sum + ((item.totalQty || 0) * cleanRate);
-                          }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
+                        {visibleColumns.lastRate && (
+                          <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
+                        )}
+                        {visibleColumns.total && (
+                          <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
+                            ₹{filteredStock.reduce((sum, item) => {
+                              const cleanRate = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
+                              return sum + ((item.totalQty || 0) * cleanRate);
+                            }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        )}
                       </>
                     )}
                   </tr>
@@ -425,7 +658,7 @@ export default function StockPage() {
             <div className="flex justify-center p-6 bg-slate-50 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setDisplayLimit((prev) => prev + 100)}
+                onClick={() => setDisplayLimit((prev) => prev + 50)}
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95"
               >
                 Load More Items ({sortedStock.length - displayLimit} Remaining)

@@ -5,6 +5,7 @@ import { FiSave, FiSearch, FiCalendar, FiUser, FiTag, FiDownload } from "react-i
 interface ReceivedPurchaseTableProps {
   data: any[];
   onRefresh: () => void;
+  loading?: boolean;
   // Add these value props:
   filterDate: string;
   filterItem: string;
@@ -20,6 +21,7 @@ interface ReceivedPurchaseTableProps {
 export default function ReceivedPurchaseTable({
   data,
   onRefresh,
+  loading,
   filterDate,      // Add this
   filterItem,      // Add this
   filterVendor,    // Add this
@@ -32,6 +34,11 @@ export default function ReceivedPurchaseTable({
   const [editState, setEditState] = useState<Record<string, any>>({});
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [hasRatePermission, setHasRatePermission] = useState<boolean>(false);
+  const [displayLimit, setDisplayLimit] = useState(50);
+
+  useEffect(() => {
+    setDisplayLimit(50);
+  }, [filterDate, filterItem, filterVendor, filterCategory]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -70,6 +77,10 @@ export default function ReceivedPurchaseTable({
       return new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
     });
   }, [data, filterDate, filterItem, filterVendor, filterCategory]);
+
+  const visibleData = useMemo(() => {
+    return filteredData.slice(0, displayLimit);
+  }, [filteredData, displayLimit]);
 
   const handleLocalChange = (id: string, field: string, value: any) => {
     setEditState(prev => ({
@@ -174,7 +185,13 @@ export default function ReceivedPurchaseTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredData.map((item) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="py-20 text-center font-bold text-slate-400 animate-pulse uppercase tracking-widest text-xs">
+                    Loading Received Purchase Data...
+                  </td>
+                </tr>
+              ) : visibleData.map((item) => (
                 <tr key={item._id} className="hover:bg-slate-50 transition-colors">
                   <td className="py-4 px-6 font-black text-blue-600 text-xs">{item.orderNumber || "---"}</td>
                   <td className="py-4 px-6 text-[11px] font-bold text-slate-500">
@@ -243,7 +260,7 @@ export default function ReceivedPurchaseTable({
                   </td>
                 </tr>
               ))}
-              {filteredData.length > 0 && (
+              {filteredData.length > 0 && !loading && (
                 <tr className="bg-slate-100/80 font-black text-slate-800 border-t-2 border-slate-300 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]">
                   {/* Span across first 5 columns to line up with the Total section */}
                   <td colSpan={5} className="py-4 px-6 text-xs font-black uppercase text-slate-500 tracking-wider text-left">
@@ -289,7 +306,19 @@ export default function ReceivedPurchaseTable({
               )}
             </tbody>
           </table>
-          {filteredData.length === 0 && (
+
+          {filteredData.length > displayLimit && (
+            <div className="flex justify-center p-6 bg-slate-50 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDisplayLimit((prev) => prev + 50)}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95"
+              >
+                Load More Items ({filteredData.length - displayLimit} Remaining)
+              </button>
+            </div>
+          )}
+          {filteredData.length === 0 && !loading && (
             <div className="p-10 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest">
               No matching records found
             </div>

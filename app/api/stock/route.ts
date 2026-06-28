@@ -24,7 +24,8 @@ export async function GET() {
         totalQty: item.quantity || 0, // Matching your 'quantity' field in DB
         unit: item.unit || "pcs",
         rateDisplay: rateDisplay,
-        hidden: item.hidden || false
+        hidden: item.hidden || false,
+        rate: item.rate ?? ""
       };
     });
 
