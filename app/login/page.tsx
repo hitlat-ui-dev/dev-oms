@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -8,6 +9,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // If already logged in, send them to dashboard immediately
   useEffect(() => {
@@ -80,13 +82,22 @@ export default function LoginPage() {
 
             <div className="group">
               <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">Password</label>
-              <input 
-                type="password" 
-                placeholder="••••••••" 
-                required
-                className="w-full p-4 bg-white/5 text-white rounded-2xl border border-white/10 outline-none transition-all focus:border-blue-500 focus:bg-white/10 placeholder:text-slate-600"
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <div className="relative">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  placeholder="••••••••" 
+                  required
+                  className="w-full p-4 pr-12 bg-white/5 text-white rounded-2xl border border-white/10 outline-none transition-all focus:border-blue-500 focus:bg-white/10 placeholder:text-slate-600"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                >
+                  {showPassword ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -98,7 +109,7 @@ export default function LoginPage() {
           </button>
 
           <p className="mt-8 text-center text-slate-500 text-[9px] font-black uppercase tracking-widest">
-            © 2026 Dev OMS Architecture
+            © {new Date().getFullYear()} Dev OMS Architecture
           </p>
         </form>
       </div>

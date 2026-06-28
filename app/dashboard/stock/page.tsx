@@ -17,12 +17,14 @@ export default function StockPage() {
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [loginUser, setLoginUser] = useState<string>("");
+  const [userPermissions, setUserPermissions] = useState<any>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
 
   useEffect(() => {
     const session = localStorage.getItem("oms_user");
     const userData = session ? JSON.parse(session) : null;
     setLoginUser(userData?.username || "Unknown User");
+    setUserPermissions(userData?.permissions || {});
   }, []);
 
   const fetchStock = async () => {
@@ -134,6 +136,10 @@ export default function StockPage() {
     XLSX.writeFile(workbook, `Stock_Report_${new Date().toLocaleDateString()}.xlsx`);
   };
 
+  const isSuperAdmin = ["chintan", "hitesh"].includes(loginUser?.toLowerCase()) || userPermissions?.boss === true;
+  const showRate = isSuperAdmin || userPermissions?.stockLastRate !== true;
+  const showAddNewItem = isSuperAdmin || userPermissions?.addNewItem === true;
+
   return (
     <BlockGuard
       permission="stock"
@@ -166,10 +172,12 @@ export default function StockPage() {
               Export Excel
             </button>
 
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
-            >Add New Item</button>
+            {showAddNewItem && (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
+              >Add New Item</button>
+            )}
           </div>
 
         </div>
@@ -264,17 +272,21 @@ export default function StockPage() {
                   <th onClick={() => handleSort("totalQty")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">Available Qty{getSortIcon("totalQty")}</span>
                   </th>
-                  <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Last Rate{getSortIcon("rate")}</span>
-                  </th>
-                  <th onClick={() => handleSort("total")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">Total{getSortIcon("total")}</span>
-                  </th>
+                  {showRate && (
+                    <>
+                      <th onClick={() => handleSort("rate")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-center border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">Last Rate{getSortIcon("rate")}</span>
+                      </th>
+                      <th onClick={() => handleSort("total")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest text-right cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">Total{getSortIcon("total")}</span>
+                      </th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={6} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
+                  <tr><td colSpan={showRate ? 8 : 6} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
                 ) : sortedStock.map((item, idx) => {
                   const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
@@ -321,7 +333,7 @@ export default function StockPage() {
                         </div>
                       </td>
 
-                      {["chintan", "hitesh"].includes(loginUser?.toLowerCase()) ? (
+                      {showRate && (
                         <>
                           {/* Show rate to Chintan */}
                           <td className="py-4 px-6 text-right border-r border-slate-50">
@@ -334,16 +346,6 @@ export default function StockPage() {
                             <span className="text-xs font-black text-slate-900">
                               ₹{rowTotalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          {/* Show NA to other users */}
-                          <td className="py-4 px-6 text-right border-r border-slate-50 text-slate-400 font-bold text-xs select-none">
-                            NA
-                          </td>
-                          <td className="py-4 px-6 text-right bg-slate-50/30 text-slate-400 font-bold text-xs select-none">
-                            NA
                           </td>
                         </>
                       )}
@@ -362,20 +364,14 @@ export default function StockPage() {
                     <td className="py-5 px-6 text-center text-emerald-400 text-sm">
                       {filteredStock.reduce((sum, item) => sum + (item.totalQty || 0), 0).toLocaleString()}
                     </td>
-                    <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
-                    {["chintan", "hitesh"].includes(loginUser?.toLowerCase()) ? (
+                    {showRate && (
                       <>
+                        <td className="border-r border-slate-800">{/* Empty padding column for Rate headers */}</td>
                         <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
                           ₹{filteredStock.reduce((sum, item) => {
                             const cleanRate = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                             return sum + ((item.totalQty || 0) * cleanRate);
                           }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="py-5 px-6 text-right text-yellow-400 text-sm tracking-wide">
-                          NA
                         </td>
                       </>
                     )}

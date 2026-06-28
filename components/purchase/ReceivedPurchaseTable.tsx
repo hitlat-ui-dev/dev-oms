@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { FiSave, FiSearch, FiCalendar, FiUser, FiTag, FiDownload } from "react-icons/fi";
 
 interface ReceivedPurchaseTableProps {
@@ -31,6 +31,19 @@ export default function ReceivedPurchaseTable({
 }: ReceivedPurchaseTableProps) {
   const [editState, setEditState] = useState<Record<string, any>>({});
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
+  const [hasRatePermission, setHasRatePermission] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const usernameLower = userData?.username?.trim().toLowerCase();
+    const isSuperAdmin = ["chintan", "hitesh"].includes(usernameLower) || userData?.permissions?.boss === true;
+    
+    // Inverted logic: show rate if user is a super admin OR does NOT have receivePurchaseRate checked
+    const hasPerm = isSuperAdmin || userData?.permissions?.receivePurchaseRate !== true;
+    setHasRatePermission(hasPerm);
+  }, []);
 
   // Filter States
 
@@ -186,28 +199,36 @@ export default function ReceivedPurchaseTable({
                   </td>
 
                   <td className="py-4 px-6 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <span className="text-xs font-bold text-slate-400">₹</span>
-                      <input
-                        type="number"
-                        className="w-20 bg-green-50 border border-green-100 rounded-lg px-2 py-1.5 text-xs font-black text-green-700 text-center outline-none focus:ring-2 focus:ring-green-500"
-                        value={editState[item._id]?.rate ?? item.rate}
-                        onChange={(e) => handleLocalChange(item._id, 'rate', e.target.value)}
-                      />
-                    </div>
+                    {hasRatePermission ? (
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-xs font-bold text-slate-400">₹</span>
+                        <input
+                          type="number"
+                          className="w-20 bg-green-50 border border-green-100 rounded-lg px-2 py-1.5 text-xs font-black text-green-700 text-center outline-none focus:ring-2 focus:ring-green-500"
+                          value={editState[item._id]?.rate ?? item.rate}
+                          onChange={(e) => handleLocalChange(item._id, 'rate', e.target.value)}
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-slate-400 font-bold text-xs select-none">NA</span>
+                    )}
                   </td>
                   <td className="py-4 px-6 text-xs font-black text-slate-700">
-                    {(() => {
-                      const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
-                      const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
-                      const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
-                      const totalAmount = currentQty * currentRate;
+                    {hasRatePermission ? (
+                      (() => {
+                        const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
+                        const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
+                        const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
+                        const totalAmount = currentQty * currentRate;
 
-                      return `₹${totalAmount.toLocaleString('en-IN', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      })}`;
-                    })()}
+                        return `₹${totalAmount.toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        })}`;
+                      })()
+                    ) : (
+                      <span className="text-slate-400 font-bold text-xs select-none">NA</span>
+                    )}
                   </td>
                   <td className="py-4 px-6 text-right">
                     {editState[item._id] && (
@@ -243,19 +264,23 @@ export default function ReceivedPurchaseTable({
 
                   {/* Sum of all calculated item totals */}
                   <td className="py-4 px-6 text-xs text-green-700 font-black">
-                    {(() => {
-                      const grandTotalAmount = filteredData.reduce((sum, item) => {
-                        const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
-                        const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
-                        const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
-                        return sum + (currentQty * currentRate);
-                      }, 0);
+                    {hasRatePermission ? (
+                      (() => {
+                        const grandTotalAmount = filteredData.reduce((sum, item) => {
+                          const stateRow = editState ? (editState as Record<string, any>)[item._id] : null;
+                          const currentQty = Number(stateRow?.receivedQty ?? item.receivedQty ?? 0);
+                          const currentRate = Number(stateRow?.rate ?? item.rate ?? 0);
+                          return sum + (currentQty * currentRate);
+                        }, 0);
 
-                      return `₹${grandTotalAmount.toLocaleString('en-IN', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      })}`;
-                    })()}
+                        return `₹${grandTotalAmount.toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        })}`;
+                      })()
+                    ) : (
+                      <span className="text-slate-400 font-bold text-xs select-none">NA</span>
+                    )}
                   </td>
 
                   {/* Leave action column empty */}

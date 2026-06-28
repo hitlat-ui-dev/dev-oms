@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import { FiPrinter } from "react-icons/fi";
 import jsPDF from 'jspdf';
+import BlockGuard from "@/components/BlockGuard";
+import Link from "next/link";
 
 // These details remain fixed based on the firmCode
 const FIXED_CONTACTS: Record<string, { address: string; mobile: string }> = {
@@ -211,7 +213,21 @@ export default function PrintLabelsPage() {
     };
 
     return (
-        <div className="p-10 max-w-3xl mx-auto bg-gray-50 min-h-screen">
+        <BlockGuard
+            permission="printLabels"
+            fallback={
+                <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50 text-center">
+                    <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+                    <Link
+                        href="/dashboard"
+                        className="text-sm bg-slate-900 text-white px-4 py-2 mt-4 rounded-lg hover:bg-slate-800 transition-all"
+                    >
+                        Go to Dashboard
+                    </Link>
+                </div>
+            }
+        >
+            <div className="p-10 max-w-3xl mx-auto bg-gray-50 min-h-screen">
             <div className="bg-white p-8 rounded-xl shadow-md border border-gray-200">
                 <h1 className="text-2xl font-bold mb-8 flex items-center gap-2 text-gray-800">
                     <FiPrinter className="text-blue-600" /> Dispatch Label Generator
@@ -276,6 +292,7 @@ export default function PrintLabelsPage() {
                     <FiPrinter /> DOWNLOAD SHIPPING LABEL
                 </button>
             </div>
-        </div>
+            </div>
+        </BlockGuard>
     );
 }

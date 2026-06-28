@@ -1,15 +1,25 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
-// GET: Fetch all users
-export async function GET() {
+// GET: Fetch all users or specific user by username query param
+export async function GET(req: NextRequest) {
   try {
+    const { searchParams } = new URL(req.url);
+    const username = searchParams.get("username");
+
     const client = await clientPromise;
     const db = client.db();
     
+    if (username) {
+      const user = await db.collection("users").findOne({ username });
+      if (!user) {
+        return NextResponse.json({ error: "User not found" }, { status: 404 });
+      }
+      return NextResponse.json(user);
+    }
+
     const users = await db.collection("users")
       .find({})
-      .project({ password: 0 }) // Security: Don't send passwords to the client
       .toArray();
 
     return NextResponse.json(users);

@@ -20,22 +20,23 @@ export default function ManageStockPage() {
     try {
       const omsUserData = localStorage.getItem("oms_user"); 
       
-      if (omsUserData) {
-        // Parse the JSON string stored in localStorage
-        const parsedData = JSON.parse(omsUserData);
-        const loggedInUser = parsedData?.username;
+        if (omsUserData) {
+          // Parse the JSON string stored in localStorage
+          const parsedData = JSON.parse(omsUserData);
+          const loggedInUser = parsedData?.username;
+          const permissions = parsedData?.permissions || {};
 
-        if (loggedInUser) {
-          const lowerUser = loggedInUser.trim().toLowerCase();
-          
-          // Only allow 'chintan' or 'hitesh'
-          if (lowerUser === "chintan" || lowerUser === "hitesh") {
-            setIsAuthorized(true);
-            setUsername(loggedInUser); // Keeps the original case casing (e.g., "Hitesh")
-            return; // Exit successfully
+          if (loggedInUser) {
+            const lowerUser = loggedInUser.trim().toLowerCase();
+            
+            // Allow if has manageStock permission OR falls back to 'chintan' or 'hitesh'
+            if (permissions.manageStock === true || lowerUser === "chintan" || lowerUser === "hitesh") {
+              setIsAuthorized(true);
+              setUsername(loggedInUser); // Keeps the original case casing (e.g., "Hitesh")
+              return; // Exit successfully
+            }
           }
         }
-      }
       
       // If no valid user or doesn't match names, restrict access
       setIsAuthorized(false);

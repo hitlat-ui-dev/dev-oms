@@ -43,6 +43,83 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const stockFilter = { sku: itemSku };
 
     // ================================================================
+    // LOGIC ITEM_CHANGE: PRODUCT NAME / SKU CHANGED DURING EDIT
+    // When editing an order and switching to a different product,
+    // we must remove the old item's reQty and add to the new item.
+    // ================================================================
+    const newSku = updateData.sku?.trim();
+    const isItemChanged = newSku && itemSku && newSku !== itemSku;
+
+    if (isItemChanged) {
+      // Only allow product changes on TO CHECK orders
+      if (originalOrder.status !== "TO CHECK") {
+        return NextResponse.json(
+          { error: "Product can only be changed on TO CHECK orders." },
+          { status: 400 }
+        );
+      }
+
+      const oldReQty = Number(originalOrder.reQty || 0);
+      const newReQty = Number(updateData.reQty ?? updateData.orderQty ?? oldReQty);
+      const newStockFilter = { sku: newSku };
+
+      // 1. REMOVE old item's reQty contribution (decrement from old SKU)
+      await db.collection("stock").updateOne(stockFilter, {
+        $inc: { reQty: -oldReQty }
+      });
+      await db.collection("items").updateOne(
+        { sku: itemSku },
+        { $inc: { reQty: -oldReQty } }
+      );
+
+      console.log(
+        `[ITEM CHANGE] Old SKU: ${itemSku} | Removed reQty: ${oldReQty}`
+      );
+
+      // 2. ADD new item's reQty contribution (increment on new SKU)
+      await db.collection("stock").updateOne(newStockFilter, {
+        $inc: { reQty: newReQty }
+      });
+      await db.collection("items").updateOne(
+        { sku: newSku },
+        { $inc: { reQty: newReQty } }
+      );
+
+      console.log(
+        `[ITEM CHANGE] New SKU: ${newSku} | Added reQty: ${newReQty}`
+      );
+
+      // 3. Update the order document with all new item fields
+      const updatedOrder = await SellerOrder.findByIdAndUpdate(
+        id,
+        {
+          itemId: updateData.itemId,
+          itemName: updateData.itemName,
+          category: updateData.category,
+          unit: updateData.unit,
+          sku: newSku,
+          reQty: newReQty,
+          rate: updateData.rate !== undefined ? Number(updateData.rate) : originalOrder.rate,
+          totalAmount: updateData.totalAmount !== undefined ? Number(updateData.totalAmount) : newReQty * (originalOrder.rate || 0),
+          firmCode: updateData.firmCode || originalOrder.firmCode,
+          sellerId: updateData.sellerId || originalOrder.sellerId,
+          instituteName: updateData.instituteName || originalOrder.instituteName,
+          contractDate: updateData.contractDate !== undefined ? updateData.contractDate : originalOrder.contractDate,
+          contractNo: updateData.contractNo !== undefined ? updateData.contractNo : originalOrder.contractNo,
+          contractUrl: updateData.contractUrl !== undefined ? updateData.contractUrl : originalOrder.contractUrl,
+          remark: updateData.remark !== undefined ? updateData.remark : originalOrder.remark,
+        },
+        { new: true }
+      );
+
+      console.log(
+        `[ITEM CHANGE COMPLETE] Order: ${originalOrder.orderNo} | ${itemSku} → ${newSku} | reQty: ${oldReQty} → ${newReQty}`
+      );
+
+      return NextResponse.json(updatedOrder, { status: 200 });
+    }
+
+    // ================================================================
     // LOGIC A: RETURN ORDER (WITH MOVE TO TO-CHECK FEATURE)
     // ================================================================
     if (updateData.status === "RETURN ORDER") {
@@ -133,7 +210,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // Only enter this block if shipQty is LESS than total order qty
     if (
-      updateData.status === "READY TO SHIP" &&
+      (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY") &&
       updateData.isPartialFulfillment &&
       shipQty < originalOrder.reQty
     ) {
@@ -159,8 +236,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...shippedOrderObj,
         reQty: shipQty,
         totalAmount: shipQty * (originalOrder.rate || 0),
-        status: "READY TO SHIP",
+        status: updateData.status,
         orderNo: newOrderNo,
+        ...(updateData.status === "DELIVERY" && {
+          transportName: updateData.transportName || "",
+          transportRemark: updateData.transportRemark || "",
+          deliveryDate: updateData.deliveryDate || new Date().toISOString().split('T')[0]
+        })
       };
       await SellerOrder.create(shippedOrderData);
 

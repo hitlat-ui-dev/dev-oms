@@ -2,7 +2,9 @@
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2 } from "react-icons/fi";
+import BlockGuard from "@/components/BlockGuard";
+import Link from "next/link";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
@@ -30,6 +32,11 @@ export default function OrdersListPage() {
   const [showPartialShipModal, setShowPartialShipModal] = useState(false);
   const [shipQty, setShipQty] = useState(0);
   const [availableStock, setAvailableStock] = useState(0);
+  const [partialDeliveryState, setPartialDeliveryState] = useState<{
+    selectedOrderId: string;
+    shipQty: number;
+    isPartialFulfillment: boolean;
+  } | null>(null);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [stocks, setStocks] = useState<any[]>([]);
   const [filters, setFilters] = useState({
@@ -420,32 +427,104 @@ const shippingLock = useRef(false);
     }
   };
 
+  const handleDirectDeliverClick = () => {
+    if (!selectedOrderId) return;
+    const orderToUpdate = orders.find(o => o._id === selectedOrderId);
+    if (!orderToUpdate) return;
+
+    if (shipQty <= 0) {
+      setPartialError("Please add quantity to ship!");
+      return;
+    }
+
+    const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
+    const avStock = stockData?.totalQty ?? 0;
+
+    if (shipQty > orderToUpdate.reQty) {
+      alert("Quantity exceeds order limit");
+      return;
+    }
+
+    const shipQtyNum = Number(shipQty);
+
+    if (shipQtyNum > avStock) {
+      alert(`Available quantity is low! You only have ${avStock} in stock.`);
+      return;
+    }
+
+    const isFullQty = shipQtyNum === orderToUpdate.reQty;
+
+    setPartialDeliveryState({
+      selectedOrderId,
+      shipQty: shipQtyNum,
+      isPartialFulfillment: !isFullQty
+    });
+
+    setShowPartialShipModal(false);
+    setShowDeliveryModal(true);
+  };
+
   const submitDelivery = async () => {
     if (!deliveryData.transportName) return alert("Please select a transporter");
+    setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "DELIVERY",
-          activeTab: "READY TO SHIP",
-          transportName: deliveryData.transportName,
-          transportRemark: deliveryData.transportRemark,
-          deliveryDate: deliveryData.deliveryDate
-        }),
-      });
-
-      if (res.ok) {
-        setShowDeliveryModal(false);
-        setDeliveryData({
-          transportName: "", transportRemark: "",
-          deliveryDate: new Date().toISOString().split('T')[0]
+      if (partialDeliveryState) {
+        const res = await fetch(`/api/seller-orders/${partialDeliveryState.selectedOrderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "DELIVERY",
+            isPartialFulfillment: partialDeliveryState.isPartialFulfillment,
+            shipQty: partialDeliveryState.shipQty,
+            itemName: orders.find(o => o._id === partialDeliveryState.selectedOrderId)?.itemName,
+            activeTab: "TO CHECK",
+            userName: JSON.parse(localStorage.getItem("oms_user") || "{}")?.username || "Unknown User",
+            transportName: deliveryData.transportName,
+            transportRemark: deliveryData.transportRemark,
+            deliveryDate: deliveryData.deliveryDate
+          }),
         });
-        setSelectedOrderId(null);
-        fetchOrders();
+
+        if (res.ok) {
+          setShowDeliveryModal(false);
+          setDeliveryData({
+            transportName: "", transportRemark: "",
+            deliveryDate: new Date().toISOString().split('T')[0]
+          });
+          setPartialDeliveryState(null);
+          setSelectedOrderId(null);
+          fetchOrders();
+        } else {
+          const errorData = await res.json();
+          alert(errorData.error || "Split delivery failed");
+        }
+      } else {
+        const res = await fetch(`/api/seller-orders/${selectedOrderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "DELIVERY",
+            activeTab: "READY TO SHIP",
+            transportName: deliveryData.transportName,
+            transportRemark: deliveryData.transportRemark,
+            deliveryDate: deliveryData.deliveryDate
+          }),
+        });
+
+        if (res.ok) {
+          setShowDeliveryModal(false);
+          setDeliveryData({
+            transportName: "", transportRemark: "",
+            deliveryDate: new Date().toISOString().split('T')[0]
+          });
+          setSelectedOrderId(null);
+          fetchOrders();
+        }
       }
     } catch (err) {
       alert("Error saving delivery details");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -731,7 +810,21 @@ const shippingLock = useRef(false);
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
-    <div className="p-4 max-w-full mx-auto space-y-6">
+    <BlockGuard
+      permission="addOrder"
+      fallback={
+        <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50 text-center">
+          <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+          <Link
+            href="/dashboard"
+            className="text-sm bg-slate-900 text-white px-4 py-2 mt-4 rounded-lg hover:bg-slate-800 transition-all"
+          >
+            Go to Dashboard
+          </Link>
+        </div>
+      }
+    >
+      <div className="p-4 max-w-full mx-auto space-y-6">
       {/* Search and Header */}
       <div className="flex flex-col gap-6 mb-6">
         {/* Row 1: Title and Add Button */}
@@ -954,8 +1047,12 @@ const shippingLock = useRef(false);
                   <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
                   <div className="text-[9px] text-slate-800">SKU: {order.sku},
                     <b className="text-green-500">Stock: </b>
-                    <span className="font-bold text-slate-700">
+                    <span className="font-bold text-slate-700 mr-1">
                       {stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
+                    </span>
+                    <b className="text-amber-500">Re-Qty: </b>
+                    <span className="font-bold text-slate-700">
+                      {stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
                     </span>
                   </div>
                 </td>
@@ -1157,7 +1254,16 @@ const shippingLock = useRef(false);
       {/* --- MODALS --- */}
       {showDeliveryModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl border border-slate-100">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => {
+                setShowDeliveryModal(false);
+                setPartialDeliveryState(null);
+              }}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <FiX size={20} />
+            </button>
             <div className="flex items-center gap-3 mb-6">
               <div className="p-3 bg-emerald-500 text-white rounded-2xl">
                 <FiTruck size={24} />
@@ -1195,7 +1301,15 @@ const shippingLock = useRef(false);
                 />
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setShowDeliveryModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+                <button
+                  onClick={() => {
+                    setShowDeliveryModal(false);
+                    setPartialDeliveryState(null);
+                  }}
+                  className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]"
+                >
+                  Cancel
+                </button>
                 <button onClick={submitDelivery} className="flex-1 p-4 bg-emerald-500 text-white rounded-2xl font-black uppercase text-[10px]">Confirm</button>
               </div>
             </div>
@@ -1261,7 +1375,13 @@ const shippingLock = useRef(false);
 
       {showPartialShipModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-blue-100 relative">
+            <button
+              onClick={() => setShowPartialShipModal(false)}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <FiX size={20} />
+            </button>
             <div className="flex items-center gap-3 mb-6">
               <div className="p-3 bg-blue-600 text-white rounded-2xl"><FiTruck size={24} /></div>
               <div>
@@ -1312,7 +1432,13 @@ const shippingLock = useRef(false);
               </div>
 
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setShowPartialShipModal(false)} className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+                <button
+                  type="button"
+                  onClick={handleDirectDeliverClick}
+                  className="flex-1 p-4 bg-emerald-500 text-white rounded-2xl font-black uppercase text-[10px] hover:bg-emerald-600 active:scale-[0.98] transition-all"
+                >
+                  Direct Deliver
+                </button>
                 <button
                   disabled={isShipping}
                   onClick={submitPartialShipment}
@@ -1336,7 +1462,8 @@ const shippingLock = useRef(false);
           fetchTabData();
         }}
       />
-    </div>
+      </div>
+    </BlockGuard>
   );
 }
 

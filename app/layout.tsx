@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (!isMounted) {
     return (
       <html lang="en">
-        <body className="bg-[#f3f6f9]">
+        <body className="bg-[#f3f6f9]" suppressHydrationWarning>
           {/* Empty or a static splash screen to match the server */}
         </body>
       </html>
@@ -43,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
-      <body className="bg-[#f3f6f9] h-screen overflow-hidden" cz-shortcut-listen="true">
+      <body className="bg-[#f3f6f9] h-screen overflow-hidden" suppressHydrationWarning>
         {isLoading && !isLoginPage ? (
           <div className="h-screen flex items-center justify-center bg-[#f3f6f9]">
             <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-blue-600"></div>

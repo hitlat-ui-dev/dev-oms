@@ -8,12 +8,15 @@ const userSchema = new mongoose.Schema({
         addTransporter: { type: Boolean, default: false },
         addMyCompanies: { type: Boolean, default: false },
         stock: { type: Boolean, default: false },
-        editStock: { type: Boolean, default: false },
-        addVendor: { type: Boolean, default: false },
         addNewItem: { type: Boolean, default: false },
+        addVendor: { type: Boolean, default: false },
         purchase: { type: Boolean, default: false },
         boss: { type: Boolean, default: false },
         users: { type: Boolean, default: false },
-        dashboard: { type: Boolean, default: false },
+        backup: { type: Boolean, default: false },
+        manageStock: { type: Boolean, default: false },
+        receivePurchaseRate: { type: Boolean, default: false },
+        stockLastRate: { type: Boolean, default: false },
+        printLabels: { type: Boolean, default: false },
     }
 });

@@ -1,9 +1,31 @@
 "use client";
 import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck } from "react-icons/fi";
 import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export default function OrdersDashboard() {
   const router = useRouter();
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const session = localStorage.getItem("oms_user");
+    if (session) {
+      const parsedUser = JSON.parse(session);
+      setUser(parsedUser);
+
+      // Dynamically fetch and sync permissions on loading the orders dashboard
+      fetch(`/api/users?username=${encodeURIComponent(parsedUser.username)}`)
+        .then(res => res.json())
+        .then(updated => {
+          if (updated && updated.permissions) {
+            const freshSession = { ...parsedUser, permissions: updated.permissions };
+            localStorage.setItem("oms_user", JSON.stringify(freshSession));
+            setUser(freshSession);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
 
   const actions = [
     {
@@ -12,15 +34,8 @@ export default function OrdersDashboard() {
       icon: <FiList size={24} />,
       path: "/dashboard/orders/orders", // Path for the list page
       color: "bg-indigo-600",
-      shadow: "shadow-indigo-200"
-    }, 
-    {
-      title: "Add Order",
-      desc: "Create new sales order",
-      icon: <FiPlusCircle size={24} />,
-      path: "/dashboard/orders/add-order",
-      color: "bg-emerald-600",
-      shadow: "shadow-emerald-200"
+      shadow: "shadow-indigo-200",
+      permissionKey: "addOrder"
     },
     {
       title: "Add Seller",
@@ -28,7 +43,8 @@ export default function OrdersDashboard() {
       icon: <FiUserPlus size={24} />,
       path: "/dashboard/orders/add-seller",
       color: "bg-blue-600",
-      shadow: "shadow-blue-200"
+      shadow: "shadow-blue-200",
+      permissionKey: "addSeller"
     },
     {
       title: "Transpoter",
@@ -36,7 +52,8 @@ export default function OrdersDashboard() {
       icon: <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" height="24" width="24" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>,
       path: "/dashboard/orders/add-transporter",
       color: "bg-fuchsia-600", // Distinct purple/pink color
-      shadow: "shadow-fuchsia-200"
+      shadow: "shadow-fuchsia-200",
+      permissionKey: "addTransporter"
     },
     {
       title: "My Companies",
@@ -44,7 +61,8 @@ export default function OrdersDashboard() {
       icon: <FiBriefcase size={24} />,
       path: "/dashboard/orders/companies",
       color: "bg-slate-800",
-      shadow: "shadow-slate-200"
+      shadow: "shadow-slate-200",
+      permissionKey: "addMyCompanies"
     }
   ];
 
@@ -66,12 +84,19 @@ export default function OrdersDashboard() {
 
       {/* Action Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-        {actions.map((item, index) => (
-          <button
-            key={index}
-            onClick={() => router.push(item.path)}
-            className="group relative bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 text-left overflow-hidden"
-          >
+        {actions
+          .filter((item) => {
+            const usernameLower = user?.username?.trim().toLowerCase();
+            const isSuperAdmin = ["chintan", "hitesh"].includes(usernameLower) || user?.permissions?.boss === true;
+            if (isSuperAdmin) return true;
+            return user?.permissions?.[item.permissionKey] === true;
+          })
+          .map((item, index) => (
+            <button
+              key={index}
+              onClick={() => router.push(item.path)}
+              className="group relative bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 text-left overflow-hidden"
+            >
             {/* Background Decoration */}
             <div className={`absolute -right-4 -top-4 w-24 h-24 ${item.color} opacity-[0.03] rounded-full group-hover:scale-150 transition-transform duration-500`} />
             
