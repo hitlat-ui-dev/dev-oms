@@ -10,8 +10,8 @@ const HistorySchema = new mongoose.Schema({
   sellerName: String,
   vendorName: String,
   otherDetails: String,
-  byWhom: String
-  
+  byWhom: String,
+  rate: Number
 });
 
 const ItemSchema = new Schema({

@@ -19,6 +19,7 @@ export default function StockPage() {
   const [loginUser, setLoginUser] = useState<string>("");
   const [userPermissions, setUserPermissions] = useState<any>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
+  const [displayLimit, setDisplayLimit] = useState(100);
 
   useEffect(() => {
     const session = localStorage.getItem("oms_user");
@@ -113,6 +114,15 @@ export default function StockPage() {
       return 0;
     });
   }, [filteredStock, sortConfig]);
+
+  // Reset display limit when search queries change
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [nameSearch, categorySearch, skuSearch]);
+
+  const visibleStock = useMemo(() => {
+    return sortedStock.slice(0, displayLimit);
+  }, [sortedStock, displayLimit]);
 
   const downloadExcel = () => {
     // Prepare the data for Excel
@@ -290,7 +300,7 @@ export default function StockPage() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={showRate ? 9 : 7} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
-                ) : sortedStock.map((item, idx) => {
+                ) : visibleStock.map((item, idx) => {
                   const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
                   return (
@@ -410,6 +420,18 @@ export default function StockPage() {
               </tbody>
             </table>
           </div>
+
+          {sortedStock.length > displayLimit && (
+            <div className="flex justify-center p-6 bg-slate-50 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDisplayLimit((prev) => prev + 100)}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95"
+              >
+                Load More Items ({sortedStock.length - displayLimit} Remaining)
+              </button>
+            </div>
+          )}
 
           {filteredStock.length === 0 && !loading && (
             <div className="py-20 text-center">

@@ -50,7 +50,8 @@ export async function POST(req: Request) {
             qty: Number(receivedQty),
             date: new Date(),
             vendorName: vendor,
-            orderNo: orderNumber
+            orderNo: orderNumber,
+            rate: rate ? Number(rate) : undefined
           }
         }
       } as any,
