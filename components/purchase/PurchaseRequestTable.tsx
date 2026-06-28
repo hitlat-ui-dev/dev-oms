@@ -285,7 +285,7 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
 
                   </td>
 
-                  <td className="py-2 px-2 text-[10px] text-slate-500 border-r border-slate-100 ">
+                  <td className="py-2 px-2 text-[10px] text-slate-500 border-r border-slate-100 whitespace-pre-line">
                     {req.remark || "---"}
                   </td>
 

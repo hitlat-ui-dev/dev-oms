@@ -31,6 +31,13 @@ async function syncPurchaseRequest(
     status: "Purchase Request"
   });
 
+  // Get all pending seller orders for this item SKU to aggregate remarks
+  const pendingOrders = await db.collection("sellerorders").find({ sku: sku, status: "TO CHECK" }).toArray();
+  const aggregatedRemark = pendingOrders
+    .filter((o: any) => o.remark && o.remark.trim() !== "" && o.remark.trim() !== "No Remark")
+    .map((o: any) => `• ${o.instituteName || "Unknown Buyer"}: ${o.remark.trim()}`)
+    .join("\n");
+
   if (deficit > 0) {
     if (existingPR) {
       await db.collection("purchase_requests").updateOne(
@@ -38,6 +45,7 @@ async function syncPurchaseRequest(
         {
           $set: {
             prQty: deficit,
+            remark: aggregatedRemark || "Auto-generated deficit check",
             updatedAt: new Date()
           }
         }
@@ -51,7 +59,7 @@ async function syncPurchaseRequest(
         category: itemDetails?.category || stockDoc.category || "GENERAL",
         unit: itemDetails?.unit || stockDoc.unit || "NOS",
         prQty: deficit,
-        remark: itemDetails?.orderNo ? `Auto-generated from Order ${itemDetails.orderNo}` : "Auto-generated deficit check",
+        remark: aggregatedRemark || (itemDetails?.orderNo ? `Auto-generated from Order ${itemDetails.orderNo}` : "Auto-generated deficit check"),
         status: "Purchase Request",
         createdAt: new Date(),
         updatedAt: new Date(),
