@@ -2,6 +2,8 @@
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import BlockGuard from "@/components/BlockGuard";
+import Link from "next/link";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2 } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -731,7 +733,21 @@ const shippingLock = useRef(false);
   if (loading) return <div className="p-12 text-center font-black animate-pulse text-slate-400 uppercase">Loading Data...</div>;
 
   return (
-    <div className="p-4 max-w-full mx-auto space-y-6">
+    <BlockGuard
+      permission="addOrder"
+      fallback={
+        <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50 text-center">
+          <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+          <Link
+            href="/dashboard"
+            className="text-sm bg-slate-900 text-white px-4 py-2 mt-4 rounded-lg hover:bg-slate-800 transition-all"
+          >
+            Go to Dashboard
+          </Link>
+        </div>
+      }
+    >
+      <div className="p-4 max-w-full mx-auto space-y-6">
       {/* Search and Header */}
       <div className="flex flex-col gap-6 mb-6">
         {/* Row 1: Title and Add Button */}
@@ -1336,7 +1352,8 @@ const shippingLock = useRef(false);
           fetchTabData();
         }}
       />
-    </div>
+      </div>
+    </BlockGuard>
   );
 }
 

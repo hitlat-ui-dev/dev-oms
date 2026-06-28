@@ -15,18 +15,38 @@ export default function BlockGuard({ permission, children, fallback = null }: Bl
   useEffect(() => {
     setIsMounted(true);
     const data = localStorage.getItem("oms_user");
-    if (data) setUser(JSON.parse(data));
+    if (data) {
+      const parsedUser = JSON.parse(data);
+      setUser(parsedUser);
+
+      // Fetch latest permissions dynamically from server to update session
+      fetch(`/api/users?username=${encodeURIComponent(parsedUser.username)}`)
+        .then(res => res.json())
+        .then(updated => {
+          if (updated && updated.permissions) {
+            const freshSession = { ...parsedUser, permissions: updated.permissions };
+            localStorage.setItem("oms_user", JSON.stringify(freshSession));
+            setUser(freshSession);
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   if (!isMounted) return null;
 
-  // BLACKLIST LOGIC: If the permission is explicitly 'true', the user is BLOCKED.
-  const isBlocked = Array.isArray(permission)
-    ? permission.some(p => user?.permissions?.[p] === true)
-    : user?.permissions?.[permission] === true;
+  const usernameLower = user?.username?.trim().toLowerCase();
+  const isSuperAdmin = ["chintan", "hitesh"].includes(usernameLower) || user?.permissions?.boss === true;
 
-  if (isBlocked) {
-    return <>{fallback}</>; // Shows nothing or a custom message
+  // WHITELIST LOGIC: If the permission is 'true', or if the user is a super admin, they have access.
+  const hasAccess = isSuperAdmin || (
+    Array.isArray(permission)
+      ? permission.some(p => user?.permissions?.[p] === true)
+      : user?.permissions?.[permission] === true
+  );
+
+  if (!hasAccess) {
+    return <>{fallback}</>; // Shows nothing or custom fallback
   }
 
   return <>{children}</>; // Shows the actual content

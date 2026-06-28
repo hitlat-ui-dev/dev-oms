@@ -83,7 +83,6 @@ export default function Header() {
       <div className="flex items-center gap-4 md:gap-8">
         <div className="text-right border-r border-slate-700 pr-4 md:pr-8">
           <h2 className="text-sm md:text-lg font-bold leading-none capitalize">{user.username}</h2>
-          <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] block mt-0.5">{user.role}</span>
         </div>
         <button 
           onClick={handleLogout}

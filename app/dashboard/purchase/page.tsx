@@ -12,7 +12,6 @@ export default function PurchasePage() {
     //{ name: "Purchase Return", path: "/dashboard/purchase/return", icon: <FiRotateCcw />, color: "bg-[#f20505]" },
     { name: "Purchase", path: "/dashboard/purchase/purchase", icon: <FiSend />, color: "bg-[#00a86b]" },
     { name: "Add Vendor", path: "/dashboard/purchase/add-vendor", icon: <FiUserPlus />, color: "bg-[#8b2ef5]" },
-    { name: "Add Item", path: "/dashboard/purchase/add-item", icon: <FiBox />, color: "bg-[#ff5100]" },
     //{ name: "Purchase Reports", path: "/dashboard/purchase/reports", icon: <FiFileText />, color: "bg-[#5c5cf5]" },
     
   ];
