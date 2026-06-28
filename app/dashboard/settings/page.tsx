@@ -25,6 +25,7 @@ const initialState = {
         receivePurchaseRate: false,
         stockLastRate: false,
         printLabels: false,
+        hideStockItem: false,
     },
 };
 
@@ -43,7 +44,8 @@ const MODULE_GROUPS = [
         permissions: [
             { key: "stock", label: "View Warehouse Stock" },
             { key: "addNewItem", label: "Configure New Item" },
-            { key: "stockLastRate", label: "Hide Last Rate on Stock Page" }
+            { key: "stockLastRate", label: "Hide Last Rate on Stock Page" },
+            { key: "hideStockItem", label: "View Hide/Show stock item toggle column" }
         ]
     },
     {
@@ -187,6 +189,7 @@ export default function ManageUsers() {
                 receivePurchaseRate: user.permissions?.receivePurchaseRate || false,
                 stockLastRate: user.permissions?.stockLastRate || false,
                 printLabels: user.permissions?.printLabels || false,
+                hideStockItem: user.permissions?.hideStockItem || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });

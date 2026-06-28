@@ -161,10 +161,11 @@ export default function StockPage() {
   const isSuperAdmin = ["chintan", "hitesh"].includes(loginUser?.toLowerCase()) || userPermissions?.boss === true;
   const showRate = isSuperAdmin || userPermissions?.stockLastRate !== true;
   const showAddNewItem = isSuperAdmin || userPermissions?.addNewItem === true;
+  const showHideColumn = isSuperAdmin || userPermissions?.hideStockItem === true;
 
   const activeColumnsCount = useMemo(() => {
     let count = 0;
-    if (visibleColumns.hide) count++;
+    if (showHideColumn && visibleColumns.hide) count++;
     if (visibleColumns.sku) count++;
     if (visibleColumns.itemName) count++;
     if (visibleColumns.category) count++;
@@ -175,18 +176,18 @@ export default function StockPage() {
     if (showRate && visibleColumns.lastRate) count++;
     if (showRate && visibleColumns.total) count++;
     return count;
-  }, [visibleColumns, showRate]);
+  }, [visibleColumns, showRate, showHideColumn]);
 
   const leftSummaryColspan = useMemo(() => {
     let count = 0;
-    if (visibleColumns.hide) count++;
+    if (showHideColumn && visibleColumns.hide) count++;
     if (visibleColumns.sku) count++;
     if (visibleColumns.itemName) count++;
     if (visibleColumns.category) count++;
     if (visibleColumns.location) count++;
     if (visibleColumns.latestRate) count++;
     return count;
-  }, [visibleColumns]);
+  }, [visibleColumns, showHideColumn]);
 
   return (
     <BlockGuard
@@ -317,15 +318,17 @@ export default function StockPage() {
         {/* Dynamic Column Toggles Checkboxes row */}
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-wrap gap-x-6 gap-y-3 items-center justify-start text-[10px] font-black uppercase text-slate-500 tracking-wider">
           <span className="text-slate-400 font-black">Toggle Columns:</span>
-          <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
-            <input
-              type="checkbox"
-              checked={visibleColumns.hide}
-              onChange={(e) => setVisibleColumns({ ...visibleColumns, hide: e.target.checked })}
-              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
-            />
-            Hide Button
-          </label>
+          {showHideColumn && (
+            <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
+              <input
+                type="checkbox"
+                checked={visibleColumns.hide}
+                onChange={(e) => setVisibleColumns({ ...visibleColumns, hide: e.target.checked })}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 w-4 h-4 transition-all"
+              />
+              Hide Button
+            </label>
+          )}
           <label className="flex items-center gap-2 cursor-pointer hover:text-blue-600 transition-colors select-none">
             <input
               type="checkbox"
@@ -418,7 +421,7 @@ export default function StockPage() {
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-900 text-white">
                 <tr>
-                  {visibleColumns.hide && (
+                  {showHideColumn && visibleColumns.hide && (
                     <th className="py-5 px-4 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 text-center select-none whitespace-nowrap">
                       Hide
                     </th>
@@ -482,7 +485,7 @@ export default function StockPage() {
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
                   return (
                     <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
-                      {visibleColumns.hide && (
+                      {showHideColumn && visibleColumns.hide && (
                         <td className="py-4 px-4 text-center border-r border-slate-50">
                           <button
                             onClick={async () => {
