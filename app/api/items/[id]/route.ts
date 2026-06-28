@@ -14,14 +14,14 @@ export async function PATCH(
     const { id } = await params;
     const data = await req.json();
 
-    // 2. Define the exact fields allowed to change
-    const updateFields = {
-      itemName: data.itemName,
-      sku: data.sku,
-      category: data.category,
-      unit: data.unit,
-      location: data.location
-    };
+    // 2. Define the fields allowed to change dynamically
+    const updateFields: any = {};
+    if (data.itemName !== undefined) updateFields.itemName = data.itemName;
+    if (data.sku !== undefined) updateFields.sku = data.sku;
+    if (data.category !== undefined) updateFields.category = data.category;
+    if (data.unit !== undefined) updateFields.unit = data.unit;
+    if (data.location !== undefined) updateFields.location = data.location;
+    if (data.hidden !== undefined) updateFields.hidden = data.hidden;
 
     // 3. STEP A: Update the Stock document first
     const stockResult = await db.collection("stock").findOneAndUpdate(
@@ -39,13 +39,7 @@ export async function PATCH(
     if (targetItemId) {
       itemsResult = await db.collection("items").updateOne(
         { _id: new ObjectId(targetItemId.toString()) }, // Force conversion to ObjectId
-        { $set: {
-            itemName: updateFields.itemName,
-            sku: updateFields.sku,
-            category: updateFields.category,
-            unit: updateFields.unit,
-            location: updateFields.location
-        }}
+        { $set: updateFields }
       );
     }
 

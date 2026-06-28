@@ -5,7 +5,7 @@ import BlockGuard from "@/components/BlockGuard";
 import ItemReportModal from "@/components/ItemReportModal";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
-import { FiMapPin, FiPackage, FiTrendingUp, FiSearch, FiEdit, FiDownload, FiArrowUp, FiArrowDown } from "react-icons/fi";
+import { FiMapPin, FiPackage, FiTrendingUp, FiSearch, FiEdit, FiDownload, FiArrowUp, FiArrowDown, FiEye, FiEyeOff } from "react-icons/fi";
 
 
 export default function StockPage() {
@@ -254,6 +254,9 @@ export default function StockPage() {
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-900 text-white">
                 <tr>
+                  <th className="py-5 px-4 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 text-center select-none whitespace-nowrap">
+                    Hide
+                  </th>
                   <th onClick={() => handleSort("sku")} className="py-5 px-6 text-[10px] font-black uppercase tracking-widest border-r border-slate-800 cursor-pointer select-none hover:bg-slate-800 transition-colors group whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">SKU{getSortIcon("sku")}</span>
                   </th>
@@ -286,12 +289,39 @@ export default function StockPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan={showRate ? 8 : 6} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
+                  <tr><td colSpan={showRate ? 9 : 7} className="py-20 text-center font-bold text-slate-400 animate-pulse">LOADING STOCK DATA...</td></tr>
                 ) : sortedStock.map((item, idx) => {
                   const rateNumber = parseFloat(String(item.rateDisplay || item.rate || 0).replace(/[^0-9.-]+/g, "")) || 0;
                   const rowTotalValue = (item.totalQty || 0) * rateNumber;
                   return (
                     <tr key={idx} className="hover:bg-blue-50/30 transition-all group">
+                      <td className="py-4 px-4 text-center border-r border-slate-50">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const newHiddenVal = !item.hidden;
+                              const res = await fetch(`/api/items/${item._id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ hidden: newHiddenVal })
+                              });
+                              if (res.ok) {
+                                fetchStock();
+                              }
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                          className={`p-1.5 rounded-lg border transition-all ${
+                            item.hidden
+                              ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                              : "bg-green-50 text-green-600 border-green-200 hover:bg-green-100"
+                          }`}
+                          title={item.hidden ? "Click to Show Item" : "Click to Hide Item"}
+                        >
+                          {item.hidden ? <FiEyeOff size={14} /> : <FiEye size={14} />}
+                        </button>
+                      </td>
                       <td className="py-4 px-6 uppercase font-bold text-xs text-blue-600">{item.sku}</td>
 
                       <td className="py-4 px-6 border-r border-slate-50 cursor-pointer" onClick={() => setSelectedSku(item.sku)}>
@@ -355,7 +385,7 @@ export default function StockPage() {
                 })}
                 {filteredStock.length > 0 && (
                   <tr className="bg-slate-900 text-white font-black border-t-2 border-slate-700">
-                    <td colSpan={4} className="py-5 px-6 text-xs uppercase tracking-wider text-left">
+                    <td colSpan={5} className="py-5 px-6 text-xs uppercase tracking-wider text-left">
                       Grand Total Live Summary
                     </td>
                     <td className="py-5 px-6 text-center text-blue-300 text-sm">

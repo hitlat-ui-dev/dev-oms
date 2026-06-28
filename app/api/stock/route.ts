@@ -23,7 +23,8 @@ export async function GET() {
         reQty: item.reQty || 0,
         totalQty: item.quantity || 0, // Matching your 'quantity' field in DB
         unit: item.unit || "pcs",
-        rateDisplay: rateDisplay
+        rateDisplay: rateDisplay,
+        hidden: item.hidden || false
       };
     });
 

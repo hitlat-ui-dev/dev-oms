@@ -38,7 +38,23 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
   useEffect(() => {
     if (initialData) {
-      setFormData(initialData);
+      setFormData({
+        firmCode: initialData.firmCode || "",
+        sellerId: initialData.sellerId || "",
+        instituteName: initialData.instituteName || "",
+        itemId: initialData.itemId || "",
+        itemName: initialData.itemName || "",
+        category: initialData.category || "",
+        unit: initialData.unit || "",
+        sku: initialData.sku || "",
+        contractDate: initialData.contractDate || "",
+        contractNo: initialData.contractNo || "",
+        contractUrl: initialData.contractUrl || "",
+        orderQty: initialData.orderQty || "",
+        reQty: initialData.reQty || "",
+        rate: initialData.rate || "",
+        remark: initialData.remark || "",
+      });
     }
   }, [initialData]);
 
@@ -323,7 +339,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 }}
               />
               <datalist id="stock-items">
-                {stocks.map((i: any) => (
+                {stocks.filter((i: any) => i.hidden !== true).map((i: any) => (
                   <option key={i._id} value={i.itemName}>
                     {i.sku} — {i.category} ({i.unit})
                   </option>
