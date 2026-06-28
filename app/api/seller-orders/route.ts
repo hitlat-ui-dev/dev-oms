@@ -10,6 +10,72 @@ async function connectDB() {
   }
 }
 
+async function syncPurchaseRequest(
+  db: any,
+  sku: string,
+  itemDetails?: { itemId?: string; itemName?: string; category?: string; unit?: string; orderNo?: string }
+) {
+  if (!sku) return;
+  const stockDoc = await db.collection("stock").findOne({ sku: sku });
+  if (!stockDoc) return;
+
+  const availableStock = Number(stockDoc.quantity || 0);
+  const totalReQty = Number(stockDoc.reQty || 0);
+
+  // Calculate active purchase orders (ordered stock on the way)
+  const opOrders = await db.collection("Order place Purchase").find({ sku: sku }).toArray();
+  const orderedStock = opOrders.reduce((sum: number, o: any) => sum + Number(o.orderQty || 0), 0);
+
+  const deficit = totalReQty - (availableStock + orderedStock);
+
+  const existingPR = await db.collection("purchase_requests").findOne({
+    sku: sku,
+    status: "Purchase Request"
+  });
+
+  // Get all pending seller orders for this item SKU to aggregate remarks
+  const pendingOrders = await db.collection("sellerorders").find({ sku: sku, status: "TO CHECK" }).toArray();
+  const aggregatedRemark = pendingOrders
+    .filter((o: any) => o.remark && o.remark.trim() !== "" && o.remark.trim() !== "No Remark")
+    .map((o: any) => `• ${o.instituteName || "Unknown Buyer"}: ${o.remark.trim()}`)
+    .join("\n");
+
+  if (deficit > 0) {
+    if (existingPR) {
+      await db.collection("purchase_requests").updateOne(
+        { _id: existingPR._id },
+        {
+          $set: {
+            prQty: deficit,
+            remark: aggregatedRemark || "Auto-generated deficit check",
+            updatedAt: new Date()
+          }
+        }
+      );
+      console.log(`[SYNC PR UPDATE] SKU: ${sku} | Updated PR | Qty: ${existingPR.prQty} → ${deficit}`);
+    } else {
+      await db.collection("purchase_requests").insertOne({
+        itemId: itemDetails?.itemId || String(stockDoc._id || ""),
+        itemName: itemDetails?.itemName || stockDoc.itemName || "",
+        sku: sku,
+        category: itemDetails?.category || stockDoc.category || "GENERAL",
+        unit: itemDetails?.unit || stockDoc.unit || "NOS",
+        prQty: deficit,
+        remark: aggregatedRemark || (itemDetails?.orderNo ? `Auto-generated from Order ${itemDetails.orderNo}` : "Auto-generated deficit check"),
+        status: "Purchase Request",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      console.log(`[SYNC PR CREATE] SKU: ${sku} | Created PR | Qty: ${deficit}`);
+    }
+  } else {
+    if (existingPR) {
+      await db.collection("purchase_requests").deleteOne({ _id: existingPR._id });
+      console.log(`[SYNC PR DELETE] SKU: ${sku} | Deficit resolved, deleted PR`);
+    }
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const client = await clientPromise;
@@ -72,6 +138,23 @@ export async function POST(req: Request) {
       );
     } else {
       console.log("[NEW ORDER STOCK SYNC] Skipped: Missing SKU or orderQty is 0");
+    }
+
+    // --- 5. AUTO PURCHASE REQUEST (Stock Deficit Check) ---
+    // After updating reQty, check if total pending orders exceed available stock.
+    // If so, auto-create or update an existing Purchase Request for the deficit.
+    if (itemSku && orderQty > 0) {
+      try {
+        await syncPurchaseRequest(db, itemSku, {
+          itemId: data.itemId,
+          itemName: data.itemName,
+          category: data.category,
+          unit: data.unit,
+          orderNo: newOrderNo
+        });
+      } catch (prError) {
+        console.error("[AUTO PR ERROR] Failed to sync purchase request:", prError);
+      }
     }
 
     return NextResponse.json(newOrder, { status: 201 });

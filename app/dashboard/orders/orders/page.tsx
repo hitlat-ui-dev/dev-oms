@@ -18,6 +18,7 @@ export default function OrdersListPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [displayLimit, setDisplayLimit] = useState(50);
   const [activeTab, setActiveTab] = useState("ALL");
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -84,18 +85,18 @@ export default function OrdersListPage() {
   const fetchTabData = async () => {
     try {
       // 1. YOUR ORIGINAL STOCK LOGIC (Kept exactly the same)
-      const stockRes = await fetch('/api/stock');
+      const stockRes = await fetch(`/api/stock?t=${Date.now()}`);
       const stockData = await stockRes.json();
       setStock(Array.isArray(stockData) ? stockData : stockData.items || []);
 
       // 2. YOUR ORIGINAL SELLERS LOGIC (Kept exactly the same)
-      const sellerRes = await fetch('/api/sellers');
+      const sellerRes = await fetch(`/api/sellers?t=${Date.now()}`);
       const sellerData = await sellerRes.json();
       setSellers(Array.isArray(sellerData) ? sellerData : []);
 
       // 3. NEW COMPANY LOGIC (Added as a separate try-catch so it cannot break the others)
       try {
-        const companyRes = await fetch('/api/companies');
+        const companyRes = await fetch(`/api/companies?t=${Date.now()}`);
         if (companyRes.ok) {
           const companyData = await companyRes.json();
           setCompanies(Array.isArray(companyData) ? companyData : []);
@@ -171,6 +172,15 @@ export default function OrdersListPage() {
       return numB - numA; // High numbers first (e.g. 098, 097...)
     });
 
+  // Reset display limit when filters or tab change
+  useEffect(() => {
+    setDisplayLimit(50);
+  }, [filters, activeTab]);
+
+  const visibleOrders = useMemo(() => {
+    return filteredOrders.slice(0, displayLimit);
+  }, [filteredOrders, displayLimit]);
+
   const clearFilters = () => {
     setFilters({
       itemName: "",
@@ -187,7 +197,7 @@ export default function OrdersListPage() {
   const fetchOrders = useCallback(async () => {
     try {
       setReloading(true);
-      const res = await fetch("/api/seller-orders");
+      const res = await fetch(`/api/seller-orders?t=${Date.now()}`);
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -197,6 +207,13 @@ export default function OrdersListPage() {
       setReloading(false);
     }
   }, []);
+
+  const handleRefreshAll = useCallback(async () => {
+    await Promise.all([
+      fetchOrders(),
+      fetchTabData()
+    ]);
+  }, [fetchOrders]);
 
   useEffect(() => {
     fetchOrders();
@@ -923,7 +940,7 @@ const shippingLock = useRef(false);
               <button
                 type="button"
                 disabled={reloading}
-                onClick={fetchOrders}
+                onClick={handleRefreshAll}
                 className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider text-blue-600 bg-white hover:bg-blue-50 border border-blue-100 disabled:opacity-40 rounded-lg transition-all active:scale-95 cursor-pointer shadow-sm"
                 title="Refresh Live Orders"
               >
@@ -1000,7 +1017,7 @@ const shippingLock = useRef(false);
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-[11px]">
-            {filteredOrders.map((order) => (
+            {visibleOrders.map((order) => (
               <tr key={order._id} className="hover:bg-slate-50 transition-colors divide-x divide-slate-100">
                 {activeTab === "ALL" && (
                   <td className="px-2 py-2 text-center">
@@ -1212,9 +1229,20 @@ const shippingLock = useRef(false);
                 </td>
               </tr>
             ))}
-
           </tbody>
         </table>
+
+        {filteredOrders.length > displayLimit && (
+          <div className="flex justify-center p-6 bg-slate-50 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setDisplayLimit((prev) => prev + 50)}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95"
+            >
+              Load More Orders ({filteredOrders.length - displayLimit} Remaining)
+            </button>
+          </div>
+        )}
         {filteredOrders.length > 0 && (
           <div className="sticky bottom-0 w-full bg-slate-900 p-5 mt-4 border-t-2 border-blue-500 flex items-center justify-end shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-10">
             <div className="flex flex-col items-end">

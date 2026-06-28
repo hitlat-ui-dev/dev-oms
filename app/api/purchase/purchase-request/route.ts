@@ -6,8 +6,9 @@ export async function GET() {
     const client = await clientPromise;
     const db = client.db();
 
-      const data = await db.collection("purchase_requests").aggregate([
-    { $sort: { createdAt: -1 } },
+    // 1. Fetch purchase requests
+    const data = await db.collection("purchase_requests").aggregate([
+      { $sort: { createdAt: -1 } },
       {
         $lookup: {
           from: "items",
@@ -20,11 +21,8 @@ export async function GET() {
         $replaceRoot: {
           newRoot: {
             $mergeObjects: [
-              // Fields from purchase_requests (takes priority for ID/Dates)
               "$$ROOT",
-              // Merge first object from items if found
               { $arrayElemAt: ["$masterInfo", 0] },
-              // Overwrite with original PR data to ensure status/qty remain correct
               { 
                 _id: "$$ROOT._id", 
                 createdAt: "$$ROOT.createdAt", 
@@ -37,7 +35,40 @@ export async function GET() {
       { $project: { masterInfo: 0 } } 
     ]).toArray();
 
-    return NextResponse.json(data);
+    // 2. Fetch Order place Purchase totals grouped by SKU
+    const opTotals = await db.collection("Order place Purchase").aggregate([
+      {
+        $group: {
+          _id: { $toUpper: { $trim: { input: "$sku" } } },
+          totalOrderQty: { $sum: { $convert: { input: "$orderQty", to: "double", onError: 0 } } }
+        }
+      }
+    ]).toArray();
+    const opMap: Record<string, number> = {};
+    opTotals.forEach((t: any) => { if (t._id) opMap[t._id] = t.totalOrderQty; });
+
+    // 3. Fetch stock to get reQty
+    const stockItems = await db.collection("stock").find({}).toArray();
+    const stockMap: Record<string, number> = {};
+    stockItems.forEach((s: any) => {
+      const skuKey = (s.sku || "").trim().toUpperCase();
+      if (skuKey) stockMap[skuKey] = Number(s.reQty || 0);
+    });
+
+    // 4. Enrich purchase requests with extraQty and opQty
+    const enrichedData = data.map((pr: any) => {
+      const skuKey = (pr.sku || "").trim().toUpperCase();
+      const orderedQty = opMap[skuKey] || 0;
+      const reQty = stockMap[skuKey] || 0;
+      const extra = Math.max(0, orderedQty - reQty);
+      return {
+        ...pr,
+        extraQty: extra,
+        opQty: orderedQty
+      };
+    });
+
+    return NextResponse.json(enrichedData);
   } catch (error) {
     return NextResponse.json([]);
   }

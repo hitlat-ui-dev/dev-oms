@@ -43,6 +43,7 @@ export default function PurchaseLogisticsPage() {
   const [receivedRequests, setReceivedRequests] = useState<any[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]); // Typed as StockItem array
   const [vendors, setVendors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState("Purchase Request");
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -69,6 +70,7 @@ export default function PurchaseLogisticsPage() {
   // 3. Unified Fetch Logic with "Newest First" sorting
   const fetchTabData = async () => {
     try {
+      setLoading(true);
       // Always refresh stock to keep quantities accurate
       const stockRes = await fetch('/api/stock');
       const stockData = await stockRes.json();
@@ -79,7 +81,10 @@ export default function PurchaseLogisticsPage() {
       else if (activeTab === "Order Place") endpoint = "/api/purchase/order-place";
       else if (activeTab === "Received Purchase") endpoint = "/api/purchase/purchase-received";
 
-      if (!endpoint) return;
+      if (!endpoint) {
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch(endpoint);
       const data = await res.json();
@@ -95,6 +100,8 @@ export default function PurchaseLogisticsPage() {
 
     } catch (err) {
       console.error("Fetch error:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -329,6 +336,7 @@ export default function PurchaseLogisticsPage() {
             <ReceivedPurchaseTable
               data={filteredReceivedData}
               onRefresh={fetchTabData}
+              loading={loading}
 
               // Pass the state values:
               filterDate={filterDate}

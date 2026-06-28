@@ -206,7 +206,16 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
                   </td>
 
                   <td className="py-2 px-2 font-bold text-slate-700 text-[13px] border-r border-slate-100">
-                    {req.prQty} <span className="text-[9px] text-slate-400 font-normal">{req.unit}</span>
+                    <div>
+                      {req.prQty} <span className="text-[9px] text-slate-400 font-normal">{req.unit}</span>
+                    </div>
+                    {req.opQty > 0 && (
+                      <div className="mt-0.5">
+                        <span className="text-[9px] font-black text-emerald-600 uppercase tracking-wider">
+                          op: {req.opQty} {req.unit || "NOS"}
+                        </span>
+                      </div>
+                    )}
                   </td>
 
                   <td className="py-2 px-2 border-r border-slate-100">
@@ -276,7 +285,7 @@ export default function PurchaseRequestTable({ data, vendors, stockData, onInput
 
                   </td>
 
-                  <td className="py-2 px-2 text-[10px] text-slate-500 border-r border-slate-100 ">
+                  <td className="py-2 px-2 text-[10px] text-slate-500 border-r border-slate-100 whitespace-pre-line">
                     {req.remark || "---"}
                   </td>
 

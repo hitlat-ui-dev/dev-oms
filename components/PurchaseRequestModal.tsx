@@ -262,7 +262,7 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
                     onChange={(e) => handleTextChange(e.target.value)}
                   />
                   <datalist id="inventory-items">
-                    {stockData.map((item, idx) => (
+                    {stockData.filter((item: any) => item.hidden !== true).map((item, idx) => (
                       <option key={idx} value={item.itemName}>
                         {/* This shows the SKU next to the name in the dropdown */}
                         {item.sku} | {item.category} | {item.totalQty ?? item.quantity ?? 0} in stock

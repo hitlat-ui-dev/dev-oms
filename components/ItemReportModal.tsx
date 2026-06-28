@@ -15,6 +15,26 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
   }, [sku]);
   console.log(data);
 
+  const totalDebit = data?.history ? data.history.reduce((sum: number, row: any) => {
+    const logTypeLower = row.type ? String(row.type).toLowerCase() : "";
+    const isDebit = row.qty < 0 ||
+      logTypeLower.includes("remove") ||
+      logTypeLower.includes("damage") ||
+      logTypeLower.includes("scrap") ||
+      logTypeLower.includes("sell");
+    return sum + (isDebit ? Math.abs(row.qty) : 0);
+  }, 0) : 0;
+
+  const totalCredit = data?.history ? data.history.reduce((sum: number, row: any) => {
+    const logTypeLower = row.type ? String(row.type).toLowerCase() : "";
+    const isDebit = row.qty < 0 ||
+      logTypeLower.includes("remove") ||
+      logTypeLower.includes("damage") ||
+      logTypeLower.includes("scrap") ||
+      logTypeLower.includes("sell");
+    return sum + (!isDebit ? row.qty : 0);
+  }, 0) : 0;
+
   if (loading) return null;
 
   return (
@@ -46,16 +66,14 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                 <th className="pb-3">Date</th>
                 <th className="pb-3">Type</th>
                 <th className="pb-3 pl-4">Details</th>
+                <th className="pb-3 text-right pr-4">Rate</th>
                 <th className="pb-3 text-center text-red-500 bg-red-50/50">Debit (-)</th>
                 <th className="pb-3 text-center text-green-600 bg-green-50/50">Credit (+)</th>
-
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {data?.history.map((row: any, i: number) => {
                 // Logic to decide if qty goes to Debit or Credit
-                //const isDebit = row.qty < 0;
-
                 const logTypeLower = row.type ? String(row.type).toLowerCase() : "";
 
                 // Explicit condition matching for Debit actions
@@ -79,9 +97,6 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                       {row.type === 'SELL' && (
                         <p><b>Order NO. :</b> {row.orderNo || 'N/A'} | <b>Market:</b> {row.sellerName || 'N/A'}</p>
                       )}
-                      {/* {(row.type === 'PURCHASE' || row.type === 'PURCHASE_RETURN') && (
-                        <p><b>Vendor:</b> {row.vendorName || 'N/A'} | <b>Inv:</b> {row.orderNo || 'N/A'}</p>
-                      )} */}
                       {row.type === 'Opening Stock' && (
                         <p className="italic text-slate-800 font-bold">Initial Stock Entry</p>
                       )}
@@ -107,6 +122,11 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                         </>
                       )}
                     </td>
+                    {/* Rate Column */}
+                    <td className="py-4 text-right pr-4 font-bold text-slate-700">
+                      {row.rate ? `₹${Number(row.rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                    </td>
+
                     {/* Debit Column */}
                     <td className="py-4 text-center font-bold text-red-500 bg-red-50/20">
                       {isDebit ? Math.abs(row.qty) : ""}
@@ -116,12 +136,20 @@ export default function ItemReportModal({ sku, onClose }: { sku: string, onClose
                     <td className="py-4 text-center font-bold text-green-600 bg-green-50/20">
                       {!isDebit ? row.qty : ""}
                     </td>
-
-
                   </tr>
                 );
               })}
             </tbody>
+            {data?.history?.length > 0 && (
+              <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-black text-slate-800">
+                <tr>
+                  <td colSpan={3} className="py-4 pl-4 text-xs uppercase tracking-wider text-left">Total Summary</td>
+                  <td className="py-4 text-right pr-4">—</td>
+                  <td className="py-4 text-center text-red-600 bg-red-50/30 text-sm">{totalDebit.toLocaleString()}</td>
+                  <td className="py-4 text-center text-green-600 bg-green-50/30 text-sm">{totalCredit.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
 
           {data?.history?.length === 0 && (

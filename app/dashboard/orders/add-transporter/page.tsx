@@ -1,11 +1,12 @@
 "use client";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { FiPlus, FiSave, FiTruck, FiPhone, FiUser, FiMapPin, FiList } from "react-icons/fi";
 
 export default function AddTransporterPage() {
     const [list, setList] = useState<any[]>([]);
+    const [searchQuery, setSearchQuery] = useState("");
     const [formData, setFormData] = useState({
         name: "",
         address: "",
@@ -24,6 +25,20 @@ export default function AddTransporterPage() {
             console.error("Fetch error", err);
         }
     };
+
+    const filteredList = useMemo(() => {
+        if (!searchQuery) return list;
+        const q = searchQuery.toLowerCase();
+        return list.filter((item: any) => 
+            String(item.name || "").toLowerCase().includes(q) ||
+            String(item.address || "").toLowerCase().includes(q) ||
+            String(item.deliveryArea || "").toLowerCase().includes(q) ||
+            item.contacts?.some((c: any) => 
+                String(c.person || "").toLowerCase().includes(q) ||
+                String(c.mobile || "").toLowerCase().includes(q)
+            )
+        );
+    }, [list, searchQuery]);
 
     const addContactField = () => {
         setFormData({ ...formData, contacts: [...formData.contacts, { person: "", mobile: "" }] });
@@ -158,12 +173,23 @@ fallback={
 
             {/* 2. ALL DATA LIST */}
             <div className="space-y-6">
-                <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 px-2 flex items-center gap-2">
-                    <FiList className="text-blue-600" /> All Transporters
-                </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-2">
+                    <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                        <FiList className="text-blue-600" /> All Transporters
+                    </h3>
+                    <div className="relative w-full sm:max-w-xs">
+                        <input
+                            type="text"
+                            placeholder="Search transporter..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider outline-none focus:bg-white focus:border-blue-500 transition-all placeholder:text-slate-400"
+                        />
+                    </div>
+                </div>
 
                 <div className="grid grid-cols-1 gap-6">
-  {list.map((item, index) => (
+  {filteredList.map((item, index) => (
     <div key={item._id} className="bg-white p-5 rounded-[2rem] border border-slate-200 shadow-sm hover:border-fuchsia-200 transition-colors">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
 

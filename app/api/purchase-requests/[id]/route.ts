@@ -21,15 +21,36 @@ export async function PATCH(
     }
 
     // 2. Prepare the data for the "purchase_requests" collection
-    // We remove the old _id to let MongoDB create a new one, or keep it if you prefer
-    const { _id, orderNumber, ...restOfData } = itemToMove;
-
+    // Check if an active Purchase Request already exists for this SKU
     const targetCollection = db.collection("purchase_requests");
-    await targetCollection.insertOne({
-      ...restOfData,
-      status: "pending", // Reset status
-      updatedAt: new Date()
+    const existingPR = await targetCollection.findOne({
+      sku: itemToMove.sku || "N/A",
+      status: "Purchase Request"
     });
+
+    const qtyToRevert = Number(itemToMove.orderQty || itemToMove.prQty || 0);
+
+    if (existingPR) {
+      // Merge by incrementing prQty of the existing PR
+      await targetCollection.updateOne(
+        { _id: existingPR._id },
+        {
+          $inc: { prQty: qtyToRevert },
+          $set: { updatedAt: new Date() }
+        }
+      );
+      console.log(`[REVERT PR MERGE] SKU: ${itemToMove.sku} | Merged ${qtyToRevert} into existing PR`);
+    } else {
+      // Create a new PR document
+      const { _id, orderNumber, ...restOfData } = itemToMove;
+      await targetCollection.insertOne({
+        ...restOfData,
+        prQty: qtyToRevert,
+        status: "Purchase Request",
+        updatedAt: new Date()
+      });
+      console.log(`[REVERT PR CREATE] SKU: ${itemToMove.sku} | Created new PR with qty ${qtyToRevert}`);
+    }
 
     // 3. Delete from the "Order place Purchase" collection
     await sourceCollection.deleteOne({ _id: new ObjectId(id) });
