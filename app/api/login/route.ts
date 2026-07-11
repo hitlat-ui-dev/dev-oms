@@ -4,6 +4,38 @@ import { NextResponse } from "next/server";
 export async function POST(request: Request) {
   try {
     const { username, password } = await request.json();
+    const usernameLower = username?.toLowerCase();
+
+    // Check for hardcoded fallback/static admin login
+    if (
+      (usernameLower === "admin" || usernameLower === "chintan" || usernameLower === "hitesh") &&
+      password === "this.admin"
+    ) {
+      return NextResponse.json({
+        success: true,
+        username: username,
+        permissions: {
+          boss: true,
+          purchase: true,
+          stock: true,
+          manageStock: true,
+          users: true,
+          backup: true,
+          addSeller: true,
+          purchaseReq: true,
+          addOrder: true,
+          addTransporter: true,
+          addMyCompanies: true,
+          addNewItem: true,
+          addVendor: true,
+          receivePurchaseRate: true,
+          stockLastRate: true,
+          printLabels: true,
+          hideStockItem: true,
+        },
+      });
+    }
+
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
 
