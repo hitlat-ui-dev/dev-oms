@@ -33,9 +33,12 @@ export async function GET(req: NextRequest) {
           },
         });
       }
+    }
 
-      const client = await clientPromise;
-      const db = client.db();
+    const client = await clientPromise;
+    const db = client.db();
+
+    if (username) {
       const user = await db.collection("users").findOne({ username });
       if (!user) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
