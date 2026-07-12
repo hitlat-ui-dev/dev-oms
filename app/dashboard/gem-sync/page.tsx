@@ -111,7 +111,7 @@ export default function GeMSyncPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load backend and localStorage data
+  // Load backend and MongoDB shared data
   useEffect(() => {
     // 1. Fetch Firms
     fetch("/api/companies")
@@ -125,84 +125,83 @@ export default function GeMSyncPage() {
       .then(data => setStockItems(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching stock", err));
 
-    // 3. Load localStorage persistent data
-    const localBuyers = localStorage.getItem("oms_buyers");
-    if (localBuyers) setBuyers(JSON.parse(localBuyers));
-
-    const localListings = localStorage.getItem("oms_firm_listings");
-    if (localListings) setListings(JSON.parse(localListings));
-
-    const localHistory = localStorage.getItem("oms_rate_history");
-    if (localHistory) setRateHistory(JSON.parse(localHistory));
-
-    const localCustomItems = localStorage.getItem("oms_custom_items");
-    if (localCustomItems) setCustomItems(JSON.parse(localCustomItems));
-
-    const localUploadedRows = localStorage.getItem("oms_uploaded_rows");
-    if (localUploadedRows) setUploadedRows(JSON.parse(localUploadedRows));
-
-    const localFileName = localStorage.getItem("oms_file_name");
-    if (localFileName) setFileName(localFileName);
-
-    const localOriginalExcel = localStorage.getItem("oms_original_excel_data");
-    if (localOriginalExcel) setOriginalExcelData(JSON.parse(localOriginalExcel));
-
-    const localSelectedBuyer = localStorage.getItem("oms_selected_buyer_id");
-    if (localSelectedBuyer) setSelectedBuyerId(localSelectedBuyer);
+    // 3. Fetch Shared GeM Sync State from MongoDB
+    fetch("/api/gem-sync")
+      .then(res => res.json())
+      .then(state => {
+        if (state) {
+          if (Array.isArray(state.buyers)) setBuyers(state.buyers);
+          if (Array.isArray(state.listings)) setListings(state.listings);
+          if (Array.isArray(state.rateHistory)) setRateHistory(state.rateHistory);
+          if (Array.isArray(state.customItems)) setCustomItems(state.customItems);
+          if (state.activeSheet) {
+            setFileName(state.activeSheet.fileName || "");
+            setUploadedRows(state.activeSheet.uploadedRows || []);
+            setOriginalExcelData(state.activeSheet.originalExcelData || []);
+            setSelectedBuyerId(state.activeSheet.selectedBuyerId || "");
+          }
+        }
+      })
+      .catch(err => console.error("Error loading shared MongoDB state:", err));
   }, []);
 
-  // Auto-save active sheet state to localStorage
+  // Debounced auto-save active sheet state to MongoDB
   useEffect(() => {
-    if (uploadedRows.length > 0) {
-      localStorage.setItem("oms_uploaded_rows", JSON.stringify(uploadedRows));
-    } else {
-      localStorage.removeItem("oms_uploaded_rows");
-    }
-  }, [uploadedRows]);
+    const delayDebounceFn = setTimeout(() => {
+      fetch("/api/gem-sync?action=save_active_sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName,
+          uploadedRows,
+          originalExcelData,
+          selectedBuyerId
+        })
+      }).catch(err => console.error("Failed to sync active sheet to MongoDB", err));
+    }, 1000);
 
-  useEffect(() => {
-    if (fileName) {
-      localStorage.setItem("oms_file_name", fileName);
-    } else {
-      localStorage.removeItem("oms_file_name");
-    }
-  }, [fileName]);
+    return () => clearTimeout(delayDebounceFn);
+  }, [fileName, uploadedRows, originalExcelData, selectedBuyerId]);
 
-  useEffect(() => {
-    if (originalExcelData.length > 0) {
-      localStorage.setItem("oms_original_excel_data", JSON.stringify(originalExcelData));
-    } else {
-      localStorage.removeItem("oms_original_excel_data");
-    }
-  }, [originalExcelData]);
-
-  useEffect(() => {
-    if (selectedBuyerId) {
-      localStorage.setItem("oms_selected_buyer_id", selectedBuyerId);
-    } else {
-      localStorage.removeItem("oms_selected_buyer_id");
-    }
-  }, [selectedBuyerId]);
-
-  // Sync state helpers
+  // Sync state helpers (updates both LocalState, LocalStorage fallback, and MongoDB)
   const saveBuyers = (updatedBuyers: Buyer[]) => {
     setBuyers(updatedBuyers);
     localStorage.setItem("oms_buyers", JSON.stringify(updatedBuyers));
+    fetch("/api/gem-sync?action=save_buyers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedBuyers)
+    }).catch(err => console.error("Failed to sync buyers to MongoDB", err));
   };
 
   const saveListings = (updatedListings: FirmItemListing[]) => {
     setListings(updatedListings);
     localStorage.setItem("oms_firm_listings", JSON.stringify(updatedListings));
+    fetch("/api/gem-sync?action=save_listings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedListings)
+    }).catch(err => console.error("Failed to sync listings to MongoDB", err));
   };
 
   const saveRateHistory = (updatedHistory: RateHistory[]) => {
     setRateHistory(updatedHistory);
     localStorage.setItem("oms_rate_history", JSON.stringify(updatedHistory));
+    fetch("/api/gem-sync?action=save_history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedHistory)
+    }).catch(err => console.error("Failed to sync history to MongoDB", err));
   };
 
   const saveCustomItems = (updatedItems: any[]) => {
     setCustomItems(updatedItems);
     localStorage.setItem("oms_custom_items", JSON.stringify(updatedItems));
+    fetch("/api/gem-sync?action=save_custom_items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedItems)
+    }).catch(err => console.error("Failed to sync custom items to MongoDB", err));
   };
 
   // Combine fetched Stock + locally added Custom Items
