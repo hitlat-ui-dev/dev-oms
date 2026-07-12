@@ -12,25 +12,21 @@ export async function GET() {
     const listings = await db.collection("gem_listings").find({}).toArray();
     const rateHistory = await db.collection("gem_rate_history").find({}).toArray();
     const customItems = await db.collection("gem_custom_items").find({}).toArray();
-    const activeSheetDoc = await db.collection("gem_active_sheet").findOne({ id: "current" });
+    const sheets = await db.collection("gem_sheets").find({}).toArray();
 
     // Clean MongoDB _id fields for React/JSON serialization
     const cleanBuyers = buyers.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanListings = listings.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanHistory = rateHistory.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanCustomItems = customItems.map(({ _id, ...rest }) => ({ ...rest }));
+    const cleanSheets = sheets.map(({ _id, ...rest }) => ({ ...rest }));
 
     return NextResponse.json({
       buyers: cleanBuyers,
       listings: cleanListings,
       rateHistory: cleanHistory,
       customItems: cleanCustomItems,
-      activeSheet: activeSheetDoc ? {
-        fileName: activeSheetDoc.fileName || "",
-        uploadedRows: activeSheetDoc.uploadedRows || [],
-        originalExcelData: activeSheetDoc.originalExcelData || [],
-        selectedBuyerId: activeSheetDoc.selectedBuyerId || ""
-      } : { fileName: "", uploadedRows: [], originalExcelData: [], selectedBuyerId: "" }
+      sheets: cleanSheets
     });
   } catch (error) {
     console.error("GET gem-sync error:", error);
@@ -89,12 +85,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    if (action === "save_active_sheet") {
+    if (action === "save_sheet") {
+      if (!body.id) {
+        return NextResponse.json({ error: "Sheet ID is required" }, { status: 400 });
+      }
       const sanitizedRows = sanitizeBody(body.uploadedRows || []);
-      await db.collection("gem_active_sheet").updateOne(
-        { id: "current" },
+      await db.collection("gem_sheets").updateOne(
+        { id: body.id },
         { 
           $set: { 
+            id: body.id,
             fileName: body.fileName || "",
             uploadedRows: sanitizedRows,
             originalExcelData: body.originalExcelData || [],
@@ -104,6 +104,14 @@ export async function POST(req: Request) {
         },
         { upsert: true }
       );
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delete_sheet") {
+      if (!body.id) {
+        return NextResponse.json({ error: "Sheet ID is required" }, { status: 400 });
+      }
+      await db.collection("gem_sheets").deleteOne({ id: body.id });
       return NextResponse.json({ success: true });
     }
 

@@ -14,7 +14,8 @@ import {
   FiAlertTriangle,
   FiExternalLink,
   FiArrowLeft,
-  FiTrash2
+  FiTrash2,
+  FiDatabase
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -23,6 +24,15 @@ interface Buyer {
   id: string;
   name: string;
   createdAt: string;
+}
+
+interface SavedSheet {
+  id: string;
+  fileName: string;
+  uploadedRows: UploadedRow[];
+  originalExcelData: any[];
+  selectedBuyerId: string;
+  updatedAt: string;
 }
 
 interface FirmItemListing {
@@ -77,9 +87,11 @@ export default function GeMSyncPage() {
   const [customItems, setCustomItems] = useState<any[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers">("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets">("upload");
 
   // Excel Upload states
+  const [sheets, setSheets] = useState<SavedSheet[]>([]);
+  const [activeSheetId, setActiveSheetId] = useState<string>("");
   const [selectedBuyerId, setSelectedBuyerId] = useState<string>("");
   const [newBuyerName, setNewBuyerName] = useState<string>("");
   const [uploadedRows, setUploadedRows] = useState<UploadedRow[]>([]);
@@ -134,11 +146,18 @@ export default function GeMSyncPage() {
           if (Array.isArray(state.listings)) setListings(state.listings);
           if (Array.isArray(state.rateHistory)) setRateHistory(state.rateHistory);
           if (Array.isArray(state.customItems)) setCustomItems(state.customItems);
-          if (state.activeSheet) {
-            setFileName(state.activeSheet.fileName || "");
-            setUploadedRows(state.activeSheet.uploadedRows || []);
-            setOriginalExcelData(state.activeSheet.originalExcelData || []);
-            setSelectedBuyerId(state.activeSheet.selectedBuyerId || "");
+          if (Array.isArray(state.sheets)) {
+            setSheets(state.sheets);
+            // Default load the latest active sheet
+            if (state.sheets.length > 0) {
+              const sorted = [...state.sheets].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+              const latest = sorted[0];
+              setActiveSheetId(latest.id);
+              setFileName(latest.fileName);
+              setUploadedRows(latest.uploadedRows);
+              setOriginalExcelData(latest.originalExcelData);
+              setSelectedBuyerId(latest.selectedBuyerId);
+            }
           }
         }
       })
@@ -147,21 +166,35 @@ export default function GeMSyncPage() {
 
   // Debounced auto-save active sheet state to MongoDB
   useEffect(() => {
+    if (!activeSheetId || !fileName) return;
+
     const delayDebounceFn = setTimeout(() => {
-      fetch("/api/gem-sync?action=save_active_sheet", {
+      fetch("/api/gem-sync?action=save_sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: activeSheetId,
           fileName,
           uploadedRows,
           originalExcelData,
           selectedBuyerId
         })
-      }).catch(err => console.error("Failed to sync active sheet to MongoDB", err));
+      })
+      .then(() => {
+        // Refresh sheet list
+        fetch("/api/gem-sync")
+          .then(res => res.json())
+          .then(state => {
+            if (state && Array.isArray(state.sheets)) {
+              setSheets(state.sheets);
+            }
+          });
+      })
+      .catch(err => console.error("Failed to sync sheet to MongoDB", err));
     }, 1000);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [fileName, uploadedRows, originalExcelData, selectedBuyerId]);
+  }, [activeSheetId, fileName, uploadedRows, originalExcelData, selectedBuyerId]);
 
   // Sync state helpers (updates both LocalState, LocalStorage fallback, and MongoDB)
   const saveBuyers = (updatedBuyers: Buyer[]) => {
@@ -234,6 +267,7 @@ export default function GeMSyncPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setActiveSheetId("sheet_" + Date.now());
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -296,10 +330,29 @@ export default function GeMSyncPage() {
   };
 
   const handleClearSheet = () => {
+    setActiveSheetId("");
     setUploadedRows([]);
     setFileName("");
     setOriginalExcelData([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleDeleteSheet = (sheetId: string) => {
+    if (!confirm("Are you sure you want to delete this sheet from the library?")) return;
+
+    fetch("/api/gem-sync?action=delete_sheet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: sheetId })
+    })
+    .then(() => {
+      setSheets(prev => prev.filter(s => s.id !== sheetId));
+      if (activeSheetId === sheetId) {
+        handleClearSheet();
+      }
+      alert("✓ Sheet deleted successfully from shared database.");
+    })
+    .catch(err => console.error("Error deleting sheet:", err));
   };
 
   // Add Buyer helper
@@ -718,6 +771,12 @@ export default function GeMSyncPage() {
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "buyers" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
                 <FiUsers /> Buyer History
+              </button>
+              <button 
+                onClick={() => setActiveTab("sheets")}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <FiDatabase /> Sheet Library
               </button>
             </div>
           </div>
@@ -1364,6 +1423,82 @@ export default function GeMSyncPage() {
                 )}
               </div>
 
+            </div>
+          )}
+
+          {/* =================== TAB 4: SHEET LIBRARY =================== */}
+          {activeTab === "sheets" && (
+            <div className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800 bg-slate-900/40">
+                <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                  <FiDatabase className="text-blue-500" /> Uploaded Sheets Library
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
+              </div>
+
+              {sheets.length === 0 ? (
+                <div className="p-12 text-center text-slate-500 space-y-2">
+                  <FiDatabase size={32} className="mx-auto text-slate-600" />
+                  <p className="text-xs">No saved sheets found in the shared database.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-950/40 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                        <th className="py-3.5 px-6">File Name</th>
+                        <th className="py-3.5 px-6">Associated Buyer</th>
+                        <th className="py-3.5 px-6 text-center w-36">Total Items</th>
+                        <th className="py-3.5 px-6 text-center w-48">Last Saved</th>
+                        <th className="py-3.5 px-6 text-center w-64">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/40">
+                      {sheets.map(sheet => {
+                        const buyerName = buyers.find(b => b.id === sheet.selectedBuyerId)?.name || "Unassigned";
+                        return (
+                          <tr key={sheet.id} className="hover:bg-slate-900/10 transition-colors">
+                            <td className="py-4 px-6 font-bold text-slate-200">{sheet.fileName}</td>
+                            <td className="py-4 px-6">
+                              <span className="bg-slate-900 py-1 px-2.5 rounded-lg border border-slate-800 text-[11px] font-semibold text-slate-300">
+                                {buyerName}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 text-center font-mono font-bold text-slate-300">{sheet.uploadedRows?.length || 0}</td>
+                            <td className="py-4 px-6 text-center font-mono text-slate-400">
+                              {sheet.updatedAt ? new Date(sheet.updatedAt).toLocaleString() : "—"}
+                            </td>
+                            <td className="py-4 px-6 text-center">
+                              <div className="flex gap-2 justify-center">
+                                <button
+                                  onClick={() => {
+                                    setActiveSheetId(sheet.id);
+                                    setFileName(sheet.fileName);
+                                    setUploadedRows(sheet.uploadedRows);
+                                    setOriginalExcelData(sheet.originalExcelData);
+                                    setSelectedBuyerId(sheet.selectedBuyerId);
+                                    setActiveTab("upload"); // Switch to mapping view
+                                  }}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                  Resume Mapping
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSheet(sheet.id)}
+                                  className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-2 px-3 rounded-lg transition-all flex items-center justify-center"
+                                  title="Delete Sheet"
+                                >
+                                  <FiTrash2 size={12} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
