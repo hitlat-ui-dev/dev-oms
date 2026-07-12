@@ -755,41 +755,43 @@ export default function GeMSyncPage() {
                               <td className="py-4 px-4 text-center font-mono font-bold text-slate-300 w-24 min-w-[96px]">{row.qty || "—"}</td>
                               
                               <td className="py-4 px-4 min-w-[240px]">
-                                {isMatched ? (
-                                  <div className="space-y-1.5">
-                                    <select
-                                      value={row.mappedItemId}
-                                      onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: e.target.value } : r))}
-                                      className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 focus:outline-none focus:border-blue-500 w-full"
-                                    >
-                                      {allItemsList.map(item => (
-                                        <option key={item._id} value={item._id}>{item.sku} - {item.itemName}</option>
-                                      ))}
-                                    </select>
-                                    
-                                    {/* Last Quoted Hint */}
-                                    {lastQuoted && (
-                                      <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/10 display inline-block">
-                                        Last Quote: ₹{lastQuoted.rate} (Min {lastQuoted.minQty}) on {lastQuoted.date}
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2">
+                                <div className="space-y-1.5">
+                                  {!isMatched && (
                                     <span className="text-[10px] font-black tracking-wider uppercase text-amber-500 bg-amber-500/10 py-1 px-2.5 rounded-md border border-amber-500/20 inline-flex items-center gap-1">
                                       <FiAlertTriangle /> New / Unmatched
                                     </span>
-                                    <div className="flex gap-2">
-                                      <select
-                                        onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: e.target.value } : r))}
-                                        className="bg-slate-950 border border-slate-800 text-xs font-bold text-slate-400 rounded-lg p-2 focus:outline-none focus:border-blue-500 flex-1"
-                                        defaultValue=""
-                                      >
-                                        <option value="" disabled>Map to existing stock...</option>
-                                        {allItemsList.map(item => (
-                                          <option key={item._id} value={item._id}>{item.sku} - {item.itemName}</option>
-                                        ))}
-                                      </select>
+                                  )}
+                                  
+                                  <div className="flex gap-2">
+                                    <input
+                                      key={row.mappedItemId}
+                                      type="text"
+                                      list={`stock-options-${row.index}`}
+                                      placeholder="Search or select stock..."
+                                      className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 focus:outline-none focus:border-blue-500 flex-1"
+                                      defaultValue={mappedItem ? `${mappedItem.sku} - ${mappedItem.itemName}` : ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (!val) {
+                                          setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: "" } : r));
+                                          return;
+                                        }
+                                        const match = allItemsList.find(item => 
+                                          `${item.sku} - ${item.itemName}` === val || 
+                                          item.itemName === val
+                                        );
+                                        if (match) {
+                                          setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: match._id } : r));
+                                        }
+                                      }}
+                                    />
+                                    <datalist id={`stock-options-${row.index}`}>
+                                      {allItemsList.map(item => (
+                                        <option key={item._id} value={`${item.sku} - ${item.itemName}`} />
+                                      ))}
+                                    </datalist>
+
+                                    {!isMatched && (
                                       <button
                                         onClick={() => {
                                           setUnmatchedIndex(row.index);
@@ -806,9 +808,16 @@ export default function GeMSyncPage() {
                                       >
                                         <FiPlus />
                                       </button>
-                                    </div>
+                                    )}
                                   </div>
-                                )}
+
+                                  {/* Last Quoted Hint */}
+                                  {isMatched && lastQuoted && (
+                                    <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/10 display inline-block">
+                                      Last Quote: ₹{lastQuoted.rate} (Min {lastQuoted.minQty}) on {lastQuoted.date}
+                                    </span>
+                                  )}
+                                </div>
 
                                 {/* Inline resolution Form */}
                                 {unmatchedIndex === row.index && (
