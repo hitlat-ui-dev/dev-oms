@@ -13,7 +13,8 @@ import {
   FiCheckCircle, 
   FiAlertTriangle,
   FiExternalLink,
-  FiArrowLeft
+  FiArrowLeft,
+  FiTrash2
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -676,6 +677,12 @@ export default function GeMSyncPage() {
     saveListings(updatedListings);
   };
 
+  const handleDeleteListing = (listingId: string) => {
+    if (!confirm("Are you sure you want to delete this listing from the sync checklist?")) return;
+    const updatedListings = listings.filter(lst => lst.id !== listingId);
+    saveListings(updatedListings);
+  };
+
   return (
     <BlockGuard permission="stock">
       <div className="p-4 md:p-8 bg-[#0b0f19] min-h-screen text-slate-100 font-sans">
@@ -1232,12 +1239,21 @@ export default function GeMSyncPage() {
                                 </td>
 
                                 <td className="py-3.5 px-4 text-center">
-                                  <button
-                                    onClick={() => handleOpenRevision(lst)}
-                                    className="bg-slate-900 hover:bg-slate-800 text-amber-500 border border-slate-800 hover:border-amber-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5 mx-auto"
-                                  >
-                                    <FiEdit size={12} /> Revise Rate
-                                  </button>
+                                  <div className="flex gap-2 justify-center">
+                                    <button
+                                      onClick={() => handleOpenRevision(lst)}
+                                      className="bg-slate-900 hover:bg-slate-800 text-amber-500 border border-slate-800 hover:border-amber-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                                    >
+                                      <FiEdit size={12} /> Revise Rate
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteListing(lst.id)}
+                                      className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center"
+                                      title="Delete Listing"
+                                    >
+                                      <FiTrash2 size={12} />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
