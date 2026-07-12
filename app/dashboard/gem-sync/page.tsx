@@ -944,12 +944,27 @@ export default function GeMSyncPage() {
                               </td>
                               
                               <td className="py-4 px-4 text-center w-[120px] min-w-[120px]">
-                                <button
-                                  onClick={() => handleConfirmMapping(row)}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors w-full"
-                                >
-                                  Link Row
-                                </button>
+                                {listings.some(lst => 
+                                  lst.buyerId === selectedBuyerId && 
+                                  lst.itemId === row.mappedItemId && 
+                                  lst.firmCode === row.firmCode &&
+                                  row.mappedItemId &&
+                                  row.firmCode
+                                ) ? (
+                                  <button
+                                    onClick={() => handleConfirmMapping(row)}
+                                    className="bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30 font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg w-full transition-colors"
+                                  >
+                                    ✓ Linked
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleConfirmMapping(row)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors w-full"
+                                  >
+                                    Link Row
+                                  </button>
+                                )}
                               </td>
 
                             </tr>
