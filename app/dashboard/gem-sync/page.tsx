@@ -707,7 +707,9 @@ export default function GeMSyncPage() {
                     >
                       <FiDownload /> Download Filled Excel
                     </button>
-                                  {/* Excel Sheet Table */}
+                  </div>
+
+                  {/* Excel Sheet Table */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
