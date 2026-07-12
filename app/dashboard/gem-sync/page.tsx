@@ -797,6 +797,12 @@ export default function GeMSyncPage() {
               >
                 <FiUsers /> Buyer History
               </button>
+              <button
+                onClick={() => setActiveTab("master")}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "master" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <FiList /> Master List
+              </button>
             </div>
           </div>
 
