@@ -94,6 +94,8 @@ export default function GeMSyncPage() {
   const [selectedListingForRevision, setSelectedListingForRevision] = useState<FirmItemListing | null>(null);
   const [newRateValue, setNewRateValue] = useState<string>("");
   const [newMinQtyValue, setNewMinQtyValue] = useState<string>("");
+  const [newGemLinkValue, setNewGemLinkValue] = useState<string>("");
+  const [newAvailGemStockValue, setNewAvailGemStockValue] = useState<string>("");
   const [revisionReason, setRevisionReason] = useState<string>("negotiated revision");
 
   // Unmatched Resolution states
@@ -505,6 +507,8 @@ export default function GeMSyncPage() {
     setSelectedListingForRevision(listing);
     setNewRateValue(String(listing.rate));
     setNewMinQtyValue(String(listing.minQty));
+    setNewGemLinkValue(listing.gemLink || "");
+    setNewAvailGemStockValue(String(listing.availGemStock || 0));
     setRevisionReason("negotiated revision");
     setIsRevisionOpen(true);
   };
@@ -514,6 +518,7 @@ export default function GeMSyncPage() {
 
     const rateVal = parseFloat(newRateValue);
     const minQtyVal = parseInt(newMinQtyValue) || 1;
+    const availStockVal = parseInt(newAvailGemStockValue) || 0;
 
     if (isNaN(rateVal) || rateVal <= 0) {
       alert("Please enter a valid rate.");
@@ -529,6 +534,8 @@ export default function GeMSyncPage() {
           ...lst,
           rate: rateVal,
           minQty: minQtyVal,
+          gemLink: newGemLinkValue.trim(),
+          availGemStock: availStockVal,
           status: "Pending" as const // Flag checklist as pending again
         };
       }
@@ -1274,6 +1281,29 @@ export default function GeMSyncPage() {
                         value={newMinQtyValue}
                         onChange={(e) => setNewMinQtyValue(e.target.value)}
                         placeholder="1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">GeM Product URL</label>
+                      <input 
+                        type="text"
+                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white"
+                        value={newGemLinkValue}
+                        onChange={(e) => setNewGemLinkValue(e.target.value)}
+                        placeholder="Paste GeM Listing URL..."
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Avail GeM Stock</label>
+                      <input 
+                        type="number"
+                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
+                        value={newAvailGemStockValue}
+                        onChange={(e) => setNewAvailGemStockValue(e.target.value)}
+                        placeholder="0"
                       />
                     </div>
                   </div>
