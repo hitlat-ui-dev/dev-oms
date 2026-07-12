@@ -104,6 +104,7 @@ export default function GeMSyncPage() {
   const [buyerSearchQuery, setBuyerSearchQuery] = useState<string>("");
   const [selectedHistoryBuyerId, setSelectedHistoryBuyerId] = useState<string>("");
   const [masterSearchQuery, setMasterSearchQuery] = useState<string>("");
+  const [librarySearchQuery, setLibrarySearchQuery] = useState<string>("");
 
   // Modal / Revision states
   const [isRevisionOpen, setIsRevisionOpen] = useState(false);
@@ -377,21 +378,58 @@ export default function GeMSyncPage() {
     return buyers.filter(b => b.name.toLowerCase().includes(buyerSearchQuery.toLowerCase()));
   }, [buyers, buyerSearchQuery]);
 
-  // Filtered Listings for Master List
+  // Filtered Listings for Master List (Sorted by item name to group duplicates consecutively)
   const filteredMasterListings = useMemo(() => {
-    if (!masterSearchQuery.trim()) return listings;
-    const query = masterSearchQuery.toLowerCase();
-    return listings.filter(lst => {
-      const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "";
-      const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
+    let list = listings;
+    if (masterSearchQuery.trim()) {
+      const query = masterSearchQuery.toLowerCase();
+      list = listings.filter(lst => {
+        const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "";
+        const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
+        return (
+          lst.itemName.toLowerCase().includes(query) ||
+          (inventoryItem?.sku && inventoryItem.sku.toLowerCase().includes(query)) ||
+          lst.firmCode.toLowerCase().includes(query) ||
+          buyerName.toLowerCase().includes(query)
+        );
+      });
+    }
+    return [...list].sort((a, b) => a.itemName.localeCompare(b.itemName));
+  }, [listings, masterSearchQuery, buyers, allItemsList]);
+
+  // Pre-calculate rowSpan indexes for visually merging identical items
+  const masterRowSpans = useMemo(() => {
+    const spans: number[] = [];
+    let i = 0;
+    while (i < filteredMasterListings.length) {
+      let span = 1;
+      while (
+        i + span < filteredMasterListings.length &&
+        filteredMasterListings[i].itemName === filteredMasterListings[i + span].itemName
+      ) {
+        span++;
+      }
+      spans[i] = span;
+      for (let j = 1; j < span; j++) {
+        spans[i + j] = 0;
+      }
+      i += span;
+    }
+    return spans;
+  }, [filteredMasterListings]);
+
+  // Filtered Sheets for Sheet Library
+  const filteredSheets = useMemo(() => {
+    if (!librarySearchQuery.trim()) return sheets;
+    const query = librarySearchQuery.toLowerCase();
+    return sheets.filter(sheet => {
+      const buyerName = buyers.find(b => b.id === sheet.selectedBuyerId)?.name || "";
       return (
-        lst.itemName.toLowerCase().includes(query) ||
-        (inventoryItem?.sku && inventoryItem.sku.toLowerCase().includes(query)) ||
-        lst.firmCode.toLowerCase().includes(query) ||
+        sheet.fileName.toLowerCase().includes(query) ||
         buyerName.toLowerCase().includes(query)
       );
     });
-  }, [listings, masterSearchQuery, buyers, allItemsList]);
+  }, [sheets, librarySearchQuery, buyers]);
 
   // Check Duplicate Rate Warnings
   const checkDuplicateRateWarning = (itemId: string, currentRate: number, currentFirmCode: string) => {
@@ -413,6 +451,17 @@ export default function GeMSyncPage() {
     return null;
   };
 
+  const formatDate = (dateInput: Date | string) => {
+    if (!dateInput) return "—";
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return "—";
+    const day = String(d.getDate()).padStart(2, "0");
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = months[d.getMonth()].toLowerCase();
+    const year = String(d.getFullYear()).slice(-2);
+    return `${day}-${month}-${year}`;
+  };
+
   // Lookup last quote hint for returning buyer
   const getLastQuotedHint = (itemId: string, buyerId: string) => {
     if (!itemId || !buyerId) return null;
@@ -426,7 +475,7 @@ export default function GeMSyncPage() {
       return {
         rate: matches[0].newRate,
         minQty: matches[0].newMinQty,
-        date: new Date(matches[0].timestamp).toLocaleDateString()
+        date: formatDate(matches[0].timestamp)
       };
     }
 
@@ -439,7 +488,7 @@ export default function GeMSyncPage() {
       return {
         rate: listingMatches[0].rate,
         minQty: listingMatches[0].minQty,
-        date: new Date(listingMatches[0].date).toLocaleDateString()
+        date: formatDate(listingMatches[0].date)
       };
     }
 
@@ -1027,7 +1076,21 @@ export default function GeMSyncPage() {
                                           item.itemName === val
                                         );
                                         if (match) {
-                                          setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: match._id } : r));
+                                          // Auto-fill from first found Master List listing
+                                          const matchedListing = listings.find(lst => lst.itemId === match._id);
+                                          if (matchedListing) {
+                                            setUploadedRows(prev => prev.map(r => r.index === row.index ? { 
+                                              ...r, 
+                                              mappedItemId: match._id,
+                                              firmCode: matchedListing.firmCode,
+                                              rate: matchedListing.rate,
+                                              availGemStock: matchedListing.availGemStock || 0,
+                                              minQty: matchedListing.minQty || 1,
+                                              gemLink: matchedListing.gemLink || ""
+                                            } : r));
+                                          } else {
+                                            setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: match._id } : r));
+                                          }
                                         }
                                       }}
                                     />
@@ -1056,6 +1119,40 @@ export default function GeMSyncPage() {
                                       </button>
                                     )}
                                   </div>
+
+                                  {/* Quick Fill Options from Master List */}
+                                  {isMatched && (
+                                    (() => {
+                                      const previousListings = listings.filter(l => l.itemId === row.mappedItemId);
+                                      if (previousListings.length > 0) {
+                                        return (
+                                          <div className="flex flex-wrap gap-1 mt-1.5 p-1.5 bg-slate-950/40 rounded-lg border border-slate-900">
+                                            <span className="text-[9px] font-black text-amber-500/80 uppercase tracking-widest block w-full mb-1">Quick Fill from Master List:</span>
+                                            {previousListings.map(prev => (
+                                              <button
+                                                key={prev.id}
+                                                type="button"
+                                                onClick={() => {
+                                                  setUploadedRows(prevRows => prevRows.map(r => r.index === row.index ? {
+                                                    ...r,
+                                                    firmCode: prev.firmCode,
+                                                    rate: prev.rate,
+                                                    availGemStock: prev.availGemStock || 0,
+                                                    minQty: prev.minQty || 1,
+                                                    gemLink: prev.gemLink || ""
+                                                  } : r));
+                                                }}
+                                                className="bg-[#1a2333]/70 hover:bg-blue-950/80 text-blue-400 hover:text-blue-300 border border-slate-800/60 hover:border-blue-700/40 text-[9px] py-1 px-2 rounded-md font-bold transition-all"
+                                              >
+                                                {prev.firmCode}: ₹{prev.rate}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        );
+                                      }
+                                      return null;
+                                    })()
+                                  )}
 
                                   {/* Last Quoted Hint */}
                                   {isMatched && lastQuoted && (
@@ -1410,7 +1507,7 @@ export default function GeMSyncPage() {
                                 <div className="flex justify-between items-start">
                                   <h4 className="font-bold text-slate-200">{hist.itemName}</h4>
                                   <span className="text-[10px] text-slate-500 font-mono">
-                                    {new Date(hist.timestamp).toLocaleString()}
+                                    {formatDate(hist.timestamp)}
                                   </span>
                                 </div>
 
@@ -1454,17 +1551,31 @@ export default function GeMSyncPage() {
           {/* =================== TAB 4: SHEET LIBRARY =================== */}
           {activeTab === "sheets" && (
             <div className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-slate-800 bg-slate-900/40">
-                <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
-                  <FiDatabase className="text-blue-500" /> Uploaded Sheets Library
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
+              <div className="p-6 border-b border-slate-800 bg-slate-900/40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                    <FiDatabase className="text-blue-500" /> Uploaded Sheets Library
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
+                </div>
+
+                {/* Search bar inside Sheet Library */}
+                <div className="relative w-full sm:w-72">
+                  <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-sm" />
+                  <input 
+                    type="text"
+                    placeholder="Search sheets library..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
+                    value={librarySearchQuery}
+                    onChange={(e) => setLibrarySearchQuery(e.target.value)}
+                  />
+                </div>
               </div>
 
-              {sheets.length === 0 ? (
+              {filteredSheets.length === 0 ? (
                 <div className="p-12 text-center text-slate-500 space-y-2">
                   <FiDatabase size={32} className="mx-auto text-slate-600" />
-                  <p className="text-xs">No saved sheets found in the shared database.</p>
+                  <p className="text-xs">No saved sheets match your search query.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1479,7 +1590,7 @@ export default function GeMSyncPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/40">
-                      {sheets.map(sheet => {
+                      {filteredSheets.map(sheet => {
                         const buyerName = buyers.find(b => b.id === sheet.selectedBuyerId)?.name || "Unassigned";
                         return (
                           <tr key={sheet.id} className="hover:bg-slate-900/10 transition-colors">
@@ -1491,7 +1602,7 @@ export default function GeMSyncPage() {
                             </td>
                             <td className="py-4 px-6 text-center font-mono font-bold text-slate-300">{sheet.uploadedRows?.length || 0}</td>
                             <td className="py-4 px-6 text-center font-mono text-slate-400">
-                              {sheet.updatedAt ? new Date(sheet.updatedAt).toLocaleString() : "—"}
+                              {sheet.updatedAt ? formatDate(sheet.updatedAt) : "—"}
                             </td>
                             <td className="py-4 px-6 text-center">
                               <div className="flex gap-2 justify-center">
@@ -1572,16 +1683,19 @@ export default function GeMSyncPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/40">
-                      {filteredMasterListings.map(lst => {
+                      {filteredMasterListings.map((lst, idx) => {
                         const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "Unassigned";
                         const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
+                        const rowSpan = masterRowSpans[idx];
                         
                         return (
                           <tr key={lst.id} className="hover:bg-slate-900/10 transition-colors">
-                            <td className="py-4 px-6">
-                              <span className="text-[10px] font-mono text-slate-500 block mb-0.5">{inventoryItem?.sku || "CUSTOM"}</span>
-                              <span className="font-bold text-slate-200 block">{lst.itemName}</span>
-                            </td>
+                            {rowSpan > 0 && (
+                              <td className="py-4 px-6 border-r border-slate-800/40 bg-slate-900/10 align-middle" rowSpan={rowSpan}>
+                                <span className="text-[10px] font-mono text-slate-500 block mb-0.5">{inventoryItem?.sku || "CUSTOM"}</span>
+                                <span className="font-bold text-slate-200 block">{lst.itemName}</span>
+                              </td>
+                            )}
                             <td className="py-4 px-6">
                               <span className="bg-slate-900 py-1 px-2.5 rounded-lg border border-slate-800 text-[11px] font-bold text-slate-300">
                                 {lst.firmCode}
