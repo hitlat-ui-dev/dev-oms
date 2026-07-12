@@ -87,7 +87,7 @@ export default function GeMSyncPage() {
   const [customItems, setCustomItems] = useState<any[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets">("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets">("sheets");
 
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
@@ -755,6 +755,12 @@ export default function GeMSyncPage() {
             {/* Action Tabs */}
             <div className="flex gap-1 bg-slate-900/60 p-1.5 rounded-xl border border-slate-800 self-stretch md:self-auto">
               <button 
+                onClick={() => setActiveTab("sheets")}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                <FiDatabase /> Sheet Library
+              </button>
+              <button 
                 onClick={() => setActiveTab("upload")}
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "upload" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
@@ -771,12 +777,6 @@ export default function GeMSyncPage() {
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "buyers" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
                 <FiUsers /> Buyer History
-              </button>
-              <button 
-                onClick={() => setActiveTab("sheets")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
-              >
-                <FiDatabase /> Sheet Library
               </button>
             </div>
           </div>
