@@ -26,6 +26,7 @@ const initialState = {
         stockLastRate: false,
         printLabels: false,
         hideStockItem: false,
+        gemLinks: false,
     },
 };
 
@@ -64,7 +65,8 @@ const MODULE_GROUPS = [
             { key: "users", label: "Settings / User Access Page" },
             { key: "backup", label: "Database JSON Zip Backup" },
             { key: "printLabels", label: "Print Labels Page" },
-            { key: "manageStock", label: "Manage Stock Page" }
+            { key: "manageStock", label: "Manage Stock Page" },
+            { key: "gemLinks", label: "GeM Links / Mapping Page" }
         ]
     }
 ];
@@ -190,6 +192,7 @@ export default function ManageUsers() {
                 stockLastRate: user.permissions?.stockLastRate || false,
                 printLabels: user.permissions?.printLabels || false,
                 hideStockItem: user.permissions?.hideStockItem || false,
+                gemLinks: user.permissions?.gemLinks || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });

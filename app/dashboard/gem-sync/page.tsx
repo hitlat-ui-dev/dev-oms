@@ -804,7 +804,7 @@ export default function GeMSyncPage() {
   };
 
   return (
-    <BlockGuard permission="stock">
+    <BlockGuard permission="gemLinks">
       <div className="p-4 md:p-8 bg-[#0b0f19] min-h-screen text-slate-100 font-sans">
         <div className="w-full mx-auto">
 
@@ -815,7 +815,7 @@ export default function GeMSyncPage() {
                 <FiArrowLeft /> Back to Dashboard
               </Link>
               <h1 className="text-3xl font-black tracking-tight text-white uppercase flex items-center gap-3">
-                GeM Sync Console
+                GeM Links Console
               </h1>
               <p className="text-slate-400 text-xs mt-1">Manage buyer requirements, upload quotes, revise rates, and checklist sync logs.</p>
             </div>

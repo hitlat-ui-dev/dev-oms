@@ -62,6 +62,7 @@ export default function OrdersListPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [isBulkDelivery, setIsBulkDelivery] = useState(false);
 
   const [isShipping, setIsShipping] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -218,6 +219,10 @@ export default function OrdersListPage() {
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  useEffect(() => {
+    setSelectedOrderIds([]);
+  }, [activeTab]);
 
   // Fetch Transporters
   useEffect(() => {
@@ -485,7 +490,38 @@ const shippingLock = useRef(false);
     if (!deliveryData.transportName) return alert("Please select a transporter");
     setIsSubmitting(true);
     try {
-      if (partialDeliveryState) {
+      if (isBulkDelivery) {
+        const promises = selectedOrderIds.map(orderId => {
+          return fetch(`/api/seller-orders/${orderId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: "DELIVERY",
+              activeTab: "READY TO SHIP",
+              transportName: deliveryData.transportName,
+              transportRemark: deliveryData.transportRemark,
+              deliveryDate: deliveryData.deliveryDate
+            }),
+          });
+        });
+
+        const results = await Promise.all(promises);
+        const failed = results.filter(r => !r.ok);
+        if (failed.length > 0) {
+          alert(`Bulk delivery completed: ${results.length - failed.length} succeeded, ${failed.length} failed.`);
+        } else {
+          alert("All selected orders marked as delivered successfully!");
+        }
+
+        setShowDeliveryModal(false);
+        setDeliveryData({
+          transportName: "", transportRemark: "",
+          deliveryDate: new Date().toISOString().split('T')[0]
+        });
+        setSelectedOrderIds([]);
+        setIsBulkDelivery(false);
+        fetchOrders();
+      } else if (partialDeliveryState) {
         const res = await fetch(`/api/seller-orders/${partialDeliveryState.selectedOrderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -991,6 +1027,22 @@ const shippingLock = useRef(false);
             }
           </button>
         )}
+        {activeTab === "READY TO SHIP" && selectedOrderIds.length > 0 && (
+          <button
+            onClick={() => {
+              setIsBulkDelivery(true);
+              setDeliveryData({
+                transportName: "",
+                transportRemark: "",
+                deliveryDate: new Date().toISOString().split('T')[0]
+              });
+              setShowDeliveryModal(true);
+            }}
+            className="flex items-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-sm font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 mb-1 mr-2 cursor-pointer"
+          >
+            <FiTruck className="text-sm mr-1.5" /> Bulk Deliver ({selectedOrderIds.length})
+          </button>
+        )}
       </div>
 
       {/* Table Container */}
@@ -1000,6 +1052,24 @@ const shippingLock = useRef(false);
             <tr className="divide-x divide-slate-200">
               {activeTab === "ALL" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">Paid</th>}
               {activeTab === "DELIVERY" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center"> </th>}
+              {activeTab === "READY TO SHIP" && (
+                <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                    checked={visibleOrders.length > 0 && visibleOrders.every(o => selectedOrderIds.includes(o._id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        const visibleIds = visibleOrders.map(o => o._id);
+                        setSelectedOrderIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+                      } else {
+                        const visibleIds = visibleOrders.map(o => o._id);
+                        setSelectedOrderIds(prev => prev.filter(id => !visibleIds.includes(id)));
+                      }
+                    }}
+                  />
+                </th>
+              )}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Order No</th>
               {/* <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Date</th> */}
               <th className="px-3 py-3 text-[12px] font-bold uppercase text-slate-600">Firm</th>
@@ -1025,6 +1095,22 @@ const shippingLock = useRef(false);
                   </td>
                 )}
                 {activeTab === "DELIVERY" && (
+                  <td className="px-2 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                      checked={selectedOrderIds.includes(order._id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedOrderIds([...selectedOrderIds, order._id]);
+                        } else {
+                          setSelectedOrderIds(selectedOrderIds.filter(id => id !== order._id));
+                        }
+                      }}
+                    />
+                  </td>
+                )}
+                {activeTab === "READY TO SHIP" && (
                   <td className="px-2 py-2 text-center">
                     <input
                       type="checkbox"
@@ -1301,14 +1387,19 @@ const shippingLock = useRef(false);
             <div className="space-y-5">
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Select Transport</label>
-                <select
+                <input
+                  type="text"
+                  list="transporter-options"
+                  placeholder="Search or choose transporter..."
                   className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-2 focus:ring-emerald-500"
                   value={deliveryData.transportName}
                   onChange={(e) => setDeliveryData({ ...deliveryData, transportName: e.target.value })}
-                >
-                  <option value="">Choose Transporter...</option>
-                  {transporters.map(t => <option key={t._id} value={t.name}>{t.name}</option>)}
-                </select>
+                />
+                <datalist id="transporter-options">
+                  {transporters.map(t => (
+                    <option key={t._id} value={t.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Delivery Date</label>

@@ -58,7 +58,7 @@ export default function DashboardPage() {
       role: ["Owner", "Manager"]
     },
     {
-      name: "GeM Sync",
+      name: "GeM Links",
       path: "/dashboard/gem-sync",
       sub: "UPLOAD & SYNC",
       icon: <FiRefreshCw />,
@@ -98,8 +98,8 @@ export default function DashboardPage() {
     if (item.name === "Backup") {
       return user?.permissions?.backup === true;
     }
-    if (item.name === "GeM Sync") {
-      return true;
+    if (item.name === "GeM Links") {
+      return user?.permissions?.gemLinks === true;
     }
     return true; // default fallback
   };

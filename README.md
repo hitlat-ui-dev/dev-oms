@@ -1,4 +1,4 @@
-﻿# Dev OMS — Order & Inventory Management System
+# Dev OMS — Order & Inventory Management System
 
 A robust, real-time **Order & Inventory Management System** built with **Next.js 16 (App Router)**. Designed for internal warehouse and sales operations — tracking stock levels, seller orders, purchases, and deliveries from a single dashboard.
 
@@ -106,8 +106,14 @@ Orders move through a defined pipeline of statuses:
 ### 🖨️ Print Labels (`/dashboard/print-labels`)
 - Generate and download shipping labels as PDF using `jspdf`.
 
+### 🔗 GeM Links Module (`/dashboard/gem-sync`)
+- **Requirement Mapping Console** — upload client requirement sheets and map items directly to live warehouse stock.
+- **Auto-Fill Details** — auto-fills pricing, firm codes, stock counts, and GeM URLs on item mapping selection.
+- **Multi-Sheet Library** — store and resume mapping worksheets directly from MongoDB database state.
+- **Master Mapped List** — view visually consolidated mapped configurations grouped by item name.
+
 ### ⚙️ Settings & Admin (`/dashboard/settings`, `/dashboard/admin`)
-- Manage user accounts and their module-level permissions.
+- Manage user accounts and their module-level permissions (including the new `GeM Links` access control).
 
 ---
 
@@ -187,4 +193,5 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 📄 Additional Documentation
 
-For detailed module logic, stock synchronization rules, and API behaviour, see [`system_documentation.md`](./system_documentation.md).
+- For detailed version history and features, see [`CHANGELOG.md`](./CHANGELOG.md).
+- For detailed module logic, stock synchronization rules, and API behaviour, see [`system_documentation.md`](./system_documentation.md).
