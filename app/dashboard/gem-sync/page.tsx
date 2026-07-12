@@ -166,14 +166,15 @@ export default function GeMSyncPage() {
     const cleanName = name.trim().toLowerCase();
     
     // 1. Exact match
-    const exact = allItemsList.find(item => item.itemName.trim().toLowerCase() === cleanName);
+    const exact = allItemsList.find(item => item?.itemName && item.itemName.trim().toLowerCase() === cleanName);
     if (exact) return exact._id;
 
     // 2. Substring match (contains)
-    const substring = allItemsList.find(item => 
-      cleanName.includes(item.itemName.trim().toLowerCase()) || 
-      item.itemName.trim().toLowerCase().includes(cleanName)
-    );
+    const substring = allItemsList.find(item => {
+      if (!item?.itemName) return false;
+      const dbName = item.itemName.trim().toLowerCase();
+      return cleanName.includes(dbName) || dbName.includes(cleanName);
+    });
     if (substring) return substring._id;
 
     return "";
@@ -187,36 +188,41 @@ export default function GeMSyncPage() {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const bstr = evt.target?.result;
-      const workbook = XLSX.read(bstr, { type: "binary" });
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const data: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+      try {
+        const bstr = evt.target?.result;
+        const workbook = XLSX.read(bstr, { type: "binary" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const data: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-      setOriginalExcelData(data);
+        setOriginalExcelData(data);
 
-      // Try to parse rows and match headers
-      const parsedRows: UploadedRow[] = data.map((row: any, index) => {
-        // Try finding item name in columns
-        const originalName = row["Item Name"] || row["Item"] || row["Name"] || row["Particulars"] || Object.values(row)[0] || "";
-        const qty = Number(row["Item count"] || row["Quantity"] || row["Qty"] || row["Qty Required"] || row["Req Qty"] || 0);
-        const rate = Number(row["Rate"] || row["Price"] || row["Quote Rate"] || 0);
-        
-        const mappedItemId = findFuzzyMatch(String(originalName));
+        // Try to parse rows and match headers
+        const parsedRows: UploadedRow[] = data.map((row: any, index) => {
+          // Try finding item name in columns
+          const originalName = row["Item Name"] || row["Item"] || row["Name"] || row["Particulars"] || Object.values(row)[0] || "";
+          const qty = Number(row["Item count"] || row["Quantity"] || row["Qty"] || row["Qty Required"] || row["Req Qty"] || 0);
+          const rate = Number(row["Rate"] || row["Price"] || row["Quote Rate"] || 0);
+          
+          const mappedItemId = findFuzzyMatch(String(originalName));
 
-        return {
-          index,
-          originalName: String(originalName),
-          qty,
-          rate,
-          mappedItemId,
-          firmCode: "",
-          gemLink: "",
-          minQty: 1
-        };
-      });
+          return {
+            index,
+            originalName: String(originalName),
+            qty,
+            rate,
+            mappedItemId,
+            firmCode: "",
+            gemLink: "",
+            minQty: 1
+          };
+        });
 
-      setUploadedRows(parsedRows);
+        setUploadedRows(parsedRows);
+      } catch (err) {
+        console.error("Error parsing excel file:", err);
+        alert("Failed to parse the Excel file. Please check the console for details.");
+      }
     };
     reader.readAsBinaryString(file);
   };
