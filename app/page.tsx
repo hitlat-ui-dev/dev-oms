@@ -18,9 +18,9 @@ export default function RootPage() {
 
   return (
     <div className="bg-[#f3f6f9] min-h-screen flex items-center justify-center">
-       <div className="animate-pulse text-slate-400 font-bold uppercase tracking-widest">
-         Initializing Workspace...
-       </div>
+      <div className="animate-pulse text-slate-400 font-bold uppercase tracking-widest">
+        Initializing Workspace...
+      </div>
     </div>
   );
 }
