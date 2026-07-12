@@ -136,7 +136,52 @@ export default function GeMSyncPage() {
 
     const localCustomItems = localStorage.getItem("oms_custom_items");
     if (localCustomItems) setCustomItems(JSON.parse(localCustomItems));
+
+    const localUploadedRows = localStorage.getItem("oms_uploaded_rows");
+    if (localUploadedRows) setUploadedRows(JSON.parse(localUploadedRows));
+
+    const localFileName = localStorage.getItem("oms_file_name");
+    if (localFileName) setFileName(localFileName);
+
+    const localOriginalExcel = localStorage.getItem("oms_original_excel_data");
+    if (localOriginalExcel) setOriginalExcelData(JSON.parse(localOriginalExcel));
+
+    const localSelectedBuyer = localStorage.getItem("oms_selected_buyer_id");
+    if (localSelectedBuyer) setSelectedBuyerId(localSelectedBuyer);
   }, []);
+
+  // Auto-save active sheet state to localStorage
+  useEffect(() => {
+    if (uploadedRows.length > 0) {
+      localStorage.setItem("oms_uploaded_rows", JSON.stringify(uploadedRows));
+    } else {
+      localStorage.removeItem("oms_uploaded_rows");
+    }
+  }, [uploadedRows]);
+
+  useEffect(() => {
+    if (fileName) {
+      localStorage.setItem("oms_file_name", fileName);
+    } else {
+      localStorage.removeItem("oms_file_name");
+    }
+  }, [fileName]);
+
+  useEffect(() => {
+    if (originalExcelData.length > 0) {
+      localStorage.setItem("oms_original_excel_data", JSON.stringify(originalExcelData));
+    } else {
+      localStorage.removeItem("oms_original_excel_data");
+    }
+  }, [originalExcelData]);
+
+  useEffect(() => {
+    if (selectedBuyerId) {
+      localStorage.setItem("oms_selected_buyer_id", selectedBuyerId);
+    } else {
+      localStorage.removeItem("oms_selected_buyer_id");
+    }
+  }, [selectedBuyerId]);
 
   // Sync state helpers
   const saveBuyers = (updatedBuyers: Buyer[]) => {
@@ -248,6 +293,13 @@ export default function GeMSyncPage() {
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const handleClearSheet = () => {
+    setUploadedRows([]);
+    setFileName("");
+    setOriginalExcelData([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // Add Buyer helper
@@ -435,7 +487,51 @@ export default function GeMSyncPage() {
     const matchedItemObj = allItemsList.find(i => i._id === row.mappedItemId);
     const buyerObj = buyers.find(b => b.id === selectedBuyerId);
 
-    // Create or update Listing
+    // Check if listing already exists to toggle (UNLINK) or override (prevent duplicates)
+    const existing = listings.find(lst => 
+      lst.buyerId === selectedBuyerId && 
+      lst.itemId === row.mappedItemId && 
+      lst.firmCode === row.firmCode &&
+      row.mappedItemId &&
+      row.firmCode
+    );
+
+    if (existing) {
+      // Check if values are identical
+      const isIdentical = 
+        existing.rate === row.rate &&
+        existing.minQty === row.minQty &&
+        existing.gemLink === (row.gemLink || "") &&
+        (existing.availGemStock || 0) === (row.availGemStock || 0);
+
+      if (isIdentical) {
+        // Toggle UNLINK (remove it)
+        const updatedListings = listings.filter(lst => lst.id !== existing.id);
+        saveListings(updatedListings);
+        alert("✓ Unlinked row successfully.");
+        return;
+      } else {
+        // Values changed -> UPDATE listing instead of creating a duplicate
+        const updatedListings = listings.map(lst => {
+          if (lst.id === existing.id) {
+            return {
+              ...lst,
+              rate: row.rate,
+              minQty: row.minQty,
+              gemLink: row.gemLink || "",
+              availGemStock: row.availGemStock || 0,
+              status: "Pending" as const
+            };
+          }
+          return lst;
+        });
+        saveListings(updatedListings);
+        alert("✓ Updated linked values successfully.");
+        return;
+      }
+    }
+
+    // Otherwise, create new Listing
     const newListing: FirmItemListing = {
       id: "listing_" + Date.now() + "_" + row.index,
       firmCode: row.firmCode,
@@ -729,6 +825,15 @@ export default function GeMSyncPage() {
                     >
                       <FiUploadCloud size={16} /> {fileName ? "Change Sheet" : "Choose Excel Sheet"}
                     </button>
+
+                    {fileName && (
+                      <button
+                        onClick={handleClearSheet}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-red-950/40 text-red-400 border-red-900/35 hover:bg-red-950/60 cursor-pointer"
+                      >
+                        Clear Sheet
+                      </button>
+                    )}
 
                     {fileName && (
                       <span className="text-xs text-emerald-400 font-bold bg-emerald-500/10 py-1.5 px-3 rounded-lg border border-emerald-500/20 truncate max-w-xs">
