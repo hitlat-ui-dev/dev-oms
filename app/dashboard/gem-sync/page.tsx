@@ -707,22 +707,20 @@ export default function GeMSyncPage() {
                     >
                       <FiDownload /> Download Filled Excel
                     </button>
-                  </div>
-
-                  {/* Excel Sheet Table */}
+                                  {/* Excel Sheet Table */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-950 text-slate-400 font-black uppercase tracking-wider border-b border-slate-800">
-                          <th className="py-4 px-4 text-center w-12">#</th>
-                          <th className="py-4 px-4">Uploaded Requirement</th>
-                          <th className="py-4 px-4 text-center w-24">Req. Qty</th>
-                          <th className="py-4 px-4">Inventory Mapping</th>
-                          <th className="py-4 px-4">Firm Selection</th>
-                          <th className="py-4 px-4 w-32">Rate (₹)</th>
-                          <th className="py-4 px-4 w-28">Min Qty</th>
-                          <th className="py-4 px-4">GeM Link</th>
-                          <th className="py-4 px-4 text-center w-28">Actions</th>
+                          <th className="py-4 px-4 text-center w-12 min-w-[48px]">#</th>
+                          <th className="py-4 px-4 min-w-[200px]">Uploaded Requirement</th>
+                          <th className="py-4 px-4 text-center w-24 min-w-[96px]">Req. Qty</th>
+                          <th className="py-4 px-4 min-w-[240px]">Inventory Mapping</th>
+                          <th className="py-4 px-4 w-[180px] min-w-[180px]">Firm Selection</th>
+                          <th className="py-4 px-4 w-[120px] min-w-[120px]">Rate (₹)</th>
+                          <th className="py-4 px-4 w-[100px] min-w-[100px]">Min Qty</th>
+                          <th className="py-4 px-4 w-[200px] min-w-[200px]">GeM Link</th>
+                          <th className="py-4 px-4 text-center w-[120px] min-w-[120px]">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -739,16 +737,16 @@ export default function GeMSyncPage() {
                           return (
                             <tr key={row.index} className="hover:bg-slate-900/20 transition-colors">
                               
-                              <td className="py-4 px-4 text-center text-slate-500 font-mono">{row.index + 1}</td>
+                              <td className="py-4 px-4 text-center text-slate-500 font-mono min-w-[48px]">{row.index + 1}</td>
                               
-                              <td className="py-4 px-4">
+                              <td className="py-4 px-4 min-w-[200px]">
                                 <span className="font-bold text-slate-200 block">{row.originalName}</span>
                                 {row.rate > 0 && <span className="text-[10px] text-slate-500 mt-0.5 block">Original Rate: ₹{row.rate}</span>}
                               </td>
                               
-                              <td className="py-4 px-4 text-center font-mono font-bold text-slate-300">{row.qty || "—"}</td>
+                              <td className="py-4 px-4 text-center font-mono font-bold text-slate-300 w-24 min-w-[96px]">{row.qty || "—"}</td>
                               
-                              <td className="py-4 px-4">
+                              <td className="py-4 px-4 min-w-[240px]">
                                 {isMatched ? (
                                   <div className="space-y-1.5">
                                     <select
@@ -873,7 +871,7 @@ export default function GeMSyncPage() {
                                 )}
                               </td>
                               
-                              <td className="py-4 px-4">
+                              <td className="py-4 px-4 w-[180px] min-w-[180px]">
                                 <select
                                   value={row.firmCode}
                                   onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, firmCode: e.target.value } : r))}
@@ -886,7 +884,7 @@ export default function GeMSyncPage() {
                                 </select>
                               </td>
                               
-                              <td className="py-4 px-4 font-mono">
+                              <td className="py-4 px-4 font-mono w-[120px] min-w-[120px]">
                                 <div className="space-y-1">
                                   <input
                                     type="number"
@@ -908,7 +906,7 @@ export default function GeMSyncPage() {
                                 </div>
                               </td>
 
-                              <td className="py-4 px-4 font-mono">
+                              <td className="py-4 px-4 font-mono w-[100px] min-w-[100px]">
                                 <input
                                   type="number"
                                   value={row.minQty}
@@ -918,7 +916,7 @@ export default function GeMSyncPage() {
                                 />
                               </td>
 
-                              <td className="py-4 px-4">
+                              <td className="py-4 px-4 w-[200px] min-w-[200px]">
                                 <input
                                   type="text"
                                   value={row.gemLink}
@@ -928,7 +926,7 @@ export default function GeMSyncPage() {
                                 />
                               </td>
                               
-                              <td className="py-4 px-4 text-center">
+                              <td className="py-4 px-4 text-center w-[120px] min-w-[120px]">
                                 <button
                                   onClick={() => handleConfirmMapping(row)}
                                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors w-full"
