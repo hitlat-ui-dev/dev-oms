@@ -31,6 +31,7 @@ interface FirmItemListing {
   itemName: string;
   gemLink: string;
   rate: number;
+  availGemStock?: number;
   minQty: number;
   status: "Synced" | "Pending";
   buyerId: string;
@@ -59,6 +60,7 @@ interface UploadedRow {
   mappedItemId: string;
   firmCode: string;
   gemLink: string;
+  availGemStock: number;
   minQty: number;
 }
 
@@ -197,6 +199,24 @@ export default function GeMSyncPage() {
 
         setOriginalExcelData(data);
 
+        // Auto-extract buyer name from sheet file name
+        const defaultBuyerName = file.name.replace(/\.[^/.]+$/, "");
+        let buyerId = "";
+        const existingBuyer = buyers.find(b => b.name.toLowerCase() === defaultBuyerName.toLowerCase());
+        if (existingBuyer) {
+          buyerId = existingBuyer.id;
+        } else {
+          const newBuyer: Buyer = {
+            id: "buyer_" + Date.now(),
+            name: defaultBuyerName,
+            createdAt: new Date().toISOString()
+          };
+          saveBuyers([...buyers, newBuyer]);
+          buyerId = newBuyer.id;
+        }
+        setSelectedBuyerId(buyerId);
+        setBuyerSearchQuery(defaultBuyerName);
+
         // Try to parse rows and match headers
         const parsedRows: UploadedRow[] = data.map((row: any, index) => {
           // Try finding item name in columns
@@ -214,6 +234,7 @@ export default function GeMSyncPage() {
             mappedItemId,
             firmCode: "",
             gemLink: "",
+            availGemStock: 0,
             minQty: 1
           };
         });
@@ -341,6 +362,7 @@ export default function GeMSyncPage() {
       itemName: newCustomItem.itemName,
       gemLink: newUnmatchedItem.gemLink.trim(),
       rate: rateVal,
+      availGemStock: 0,
       minQty: minQtyVal,
       status: "Pending",
       buyerId: selectedBuyerId,
@@ -375,7 +397,8 @@ export default function GeMSyncPage() {
           firmCode: newUnmatchedItem.firmCode,
           gemLink: newUnmatchedItem.gemLink.trim(),
           minQty: minQtyVal,
-          rate: rateVal
+          rate: rateVal,
+          availGemStock: 0
         };
       }
       return row;
@@ -418,6 +441,7 @@ export default function GeMSyncPage() {
       itemName: matchedItemObj?.itemName || row.originalName,
       gemLink: row.gemLink || "",
       rate: row.rate,
+      availGemStock: row.availGemStock || 0,
       minQty: row.minQty || 1,
       status: "Pending",
       buyerId: selectedBuyerId,
@@ -463,6 +487,7 @@ export default function GeMSyncPage() {
       return {
         ...row,
         "Quoted Rate (₹)": matchedListing?.rate || mappedRow?.rate || "",
+        "Avail gem stock": matchedListing?.availGemStock || mappedRow?.availGemStock || 0,
         "Min Qty": matchedListing?.minQty || mappedRow?.minQty || "",
         "GeM Link": matchedListing?.gemLink || mappedRow?.gemLink || "",
         "Mapped Firm": matchedListing?.firmCode || mappedRow?.firmCode || ""
@@ -635,6 +660,24 @@ export default function GeMSyncPage() {
                     </div>
                   </div>
 
+                  {/* Selected Buyer Name - Editable */}
+                  {selectedBuyerId && (
+                    <div className="pt-2 border-t border-slate-805/60 space-y-1.5">
+                      <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest block">Selected Buyer (Rename if wrong)</label>
+                      <input 
+                        type="text" 
+                        value={buyers.find(b => b.id === selectedBuyerId)?.name || ""}
+                        onChange={(e) => {
+                          const newName = e.target.value;
+                          if (!newName.trim()) return;
+                          saveBuyers(buyers.map(b => b.id === selectedBuyerId ? { ...b, name: newName } : b));
+                        }}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-xs text-white font-bold focus:outline-none focus:border-blue-500"
+                        placeholder="Buyer Name..."
+                      />
+                    </div>
+                  )}
+
                   {/* Add New Buyer */}
                   <div className="pt-2 border-t border-slate-800/60 flex gap-2">
                     <input 
@@ -726,6 +769,7 @@ export default function GeMSyncPage() {
                           <th className="py-4 px-4 min-w-[240px]">Inventory Mapping</th>
                           <th className="py-4 px-4 w-[180px] min-w-[180px]">Firm Selection</th>
                           <th className="py-4 px-4 w-[120px] min-w-[120px]">Rate (₹)</th>
+                          <th className="py-4 px-4 w-[120px] min-w-[120px]">Avail gem stock</th>
                           <th className="py-4 px-4 w-[100px] min-w-[100px]">Min Qty</th>
                           <th className="py-4 px-4 w-[200px] min-w-[200px]">GeM Link</th>
                           <th className="py-4 px-4 text-center w-[120px] min-w-[120px]">Actions</th>
@@ -923,6 +967,16 @@ export default function GeMSyncPage() {
                                 </div>
                               </td>
 
+                              <td className="py-4 px-4 font-mono w-[120px] min-w-[120px]">
+                                <input
+                                  type="number"
+                                  value={row.availGemStock || ""}
+                                  onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, availGemStock: parseInt(e.target.value) || 0 } : r))}
+                                  className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
+                                  placeholder="0"
+                                />
+                              </td>
+
                               <td className="py-4 px-4 font-mono w-[100px] min-w-[100px]">
                                 <input
                                   type="number"
@@ -1017,6 +1071,7 @@ export default function GeMSyncPage() {
                               <th className="py-3 px-4">Item Name</th>
                               <th className="py-3 px-4">GeM Product URL</th>
                               <th className="py-3 px-4 text-center w-36">Rate</th>
+                              <th className="py-3 px-4 text-center w-32">Avail gem stock</th>
                               <th className="py-3 px-4 text-center w-28">Min Qty</th>
                               <th className="py-3 px-4 text-center w-40">Actions</th>
                             </tr>
@@ -1054,6 +1109,10 @@ export default function GeMSyncPage() {
 
                                 <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">
                                   ₹{lst.rate}
+                                </td>
+
+                                <td className="py-3.5 px-4 text-center font-mono text-slate-300">
+                                  {lst.availGemStock || 0}
                                 </td>
 
                                 <td className="py-3.5 px-4 text-center font-mono text-slate-300">
