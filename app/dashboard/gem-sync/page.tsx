@@ -88,7 +88,7 @@ export default function GeMSyncPage() {
   const [customItems, setCustomItems] = useState<any[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets">("sheets");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets" | "master">("master");
 
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
@@ -103,6 +103,7 @@ export default function GeMSyncPage() {
   // Search/Filters states
   const [buyerSearchQuery, setBuyerSearchQuery] = useState<string>("");
   const [selectedHistoryBuyerId, setSelectedHistoryBuyerId] = useState<string>("");
+  const [masterSearchQuery, setMasterSearchQuery] = useState<string>("");
 
   // Modal / Revision states
   const [isRevisionOpen, setIsRevisionOpen] = useState(false);
@@ -375,6 +376,22 @@ export default function GeMSyncPage() {
     if (!buyerSearchQuery.trim()) return buyers;
     return buyers.filter(b => b.name.toLowerCase().includes(buyerSearchQuery.toLowerCase()));
   }, [buyers, buyerSearchQuery]);
+
+  // Filtered Listings for Master List
+  const filteredMasterListings = useMemo(() => {
+    if (!masterSearchQuery.trim()) return listings;
+    const query = masterSearchQuery.toLowerCase();
+    return listings.filter(lst => {
+      const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "";
+      const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
+      return (
+        lst.itemName.toLowerCase().includes(query) ||
+        (inventoryItem?.sku && inventoryItem.sku.toLowerCase().includes(query)) ||
+        lst.firmCode.toLowerCase().includes(query) ||
+        buyerName.toLowerCase().includes(query)
+      );
+    });
+  }, [listings, masterSearchQuery, buyers, allItemsList]);
 
   // Check Duplicate Rate Warnings
   const checkDuplicateRateWarning = (itemId: string, currentRate: number, currentFirmCode: string) => {
