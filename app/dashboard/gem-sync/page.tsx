@@ -199,7 +199,7 @@ export default function GeMSyncPage() {
       const parsedRows: UploadedRow[] = data.map((row: any, index) => {
         // Try finding item name in columns
         const originalName = row["Item Name"] || row["Item"] || row["Name"] || row["Particulars"] || Object.values(row)[0] || "";
-        const qty = Number(row["Quantity"] || row["Qty"] || row["Qty Required"] || row["Req Qty"] || 0);
+        const qty = Number(row["Item count"] || row["Quantity"] || row["Qty"] || row["Qty Required"] || row["Req Qty"] || 0);
         const rate = Number(row["Rate"] || row["Price"] || row["Quote Rate"] || 0);
         
         const mappedItemId = findFuzzyMatch(String(originalName));
@@ -665,13 +665,11 @@ export default function GeMSyncPage() {
                       onChange={handleExcelUpload}
                       className="hidden"
                       ref={fileInputRef}
-                      disabled={!selectedBuyerId}
                     />
                     
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={!selectedBuyerId}
-                      className={`w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border ${selectedBuyerId ? "bg-slate-950 text-slate-200 border-slate-800 hover:bg-slate-900 cursor-pointer" : "bg-slate-950/40 text-slate-600 border-slate-950 cursor-not-allowed"}`}
+                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-slate-950 text-slate-200 border-slate-800 hover:bg-slate-900 cursor-pointer"
                     >
                       <FiUploadCloud size={16} /> {fileName ? "Change Sheet" : "Choose Excel Sheet"}
                     </button>
@@ -683,8 +681,8 @@ export default function GeMSyncPage() {
                     )}
 
                     {!selectedBuyerId && (
-                      <span className="text-xs text-amber-500 font-bold bg-amber-500/10 py-1.5 px-3 rounded-lg border border-amber-500/20">
-                        ⚠️ Please select a Buyer first to enable upload.
+                      <span className="text-xs text-slate-400 font-bold bg-slate-900 py-1.5 px-3 rounded-lg border border-slate-800">
+                        Optional: Select a buyer on the left to track history.
                       </span>
                     )}
                   </div>
