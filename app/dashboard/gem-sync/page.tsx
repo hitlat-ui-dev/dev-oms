@@ -2,20 +2,21 @@
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { 
-  FiUploadCloud, 
-  FiDownload, 
-  FiPlus, 
-  FiSearch, 
-  FiEdit, 
-  FiClock, 
-  FiUsers, 
-  FiCheckCircle, 
+import {
+  FiUploadCloud,
+  FiDownload,
+  FiPlus,
+  FiSearch,
+  FiEdit,
+  FiClock,
+  FiUsers,
+  FiCheckCircle,
   FiAlertTriangle,
   FiExternalLink,
   FiArrowLeft,
   FiTrash2,
-  FiDatabase
+  FiDatabase,
+  FiList
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -79,7 +80,7 @@ export default function GeMSyncPage() {
   // Database state (fetched from real API)
   const [companies, setCompanies] = useState<any[]>([]);
   const [stockItems, setStockItems] = useState<any[]>([]);
-  
+
   // Local state (persisted in localStorage)
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [listings, setListings] = useState<FirmItemListing[]>([]);
@@ -92,6 +93,7 @@ export default function GeMSyncPage() {
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<string>("");
+
   const [selectedBuyerId, setSelectedBuyerId] = useState<string>("");
   const [newBuyerName, setNewBuyerName] = useState<string>("");
   const [uploadedRows, setUploadedRows] = useState<UploadedRow[]>([]);
@@ -180,17 +182,17 @@ export default function GeMSyncPage() {
           selectedBuyerId
         })
       })
-      .then(() => {
-        // Refresh sheet list
-        fetch("/api/gem-sync")
-          .then(res => res.json())
-          .then(state => {
-            if (state && Array.isArray(state.sheets)) {
-              setSheets(state.sheets);
-            }
-          });
-      })
-      .catch(err => console.error("Failed to sync sheet to MongoDB", err));
+        .then(() => {
+          // Refresh sheet list
+          fetch("/api/gem-sync")
+            .then(res => res.json())
+            .then(state => {
+              if (state && Array.isArray(state.sheets)) {
+                setSheets(state.sheets);
+              }
+            });
+        })
+        .catch(err => console.error("Failed to sync sheet to MongoDB", err));
     }, 1000);
 
     return () => clearTimeout(delayDebounceFn);
@@ -246,7 +248,7 @@ export default function GeMSyncPage() {
   const findFuzzyMatch = (name: string) => {
     if (!name) return "";
     const cleanName = name.trim().toLowerCase();
-    
+
     // 1. Exact match
     const exact = allItemsList.find(item => item?.itemName && item.itemName.trim().toLowerCase() === cleanName);
     if (exact) return exact._id;
@@ -304,7 +306,7 @@ export default function GeMSyncPage() {
           const originalName = row["Item Name"] || row["Item"] || row["Name"] || row["Particulars"] || Object.values(row)[0] || "";
           const qty = Number(row["Item count"] || row["Quantity"] || row["Qty"] || row["Qty Required"] || row["Req Qty"] || 0);
           const rate = Number(row["Rate"] || row["Price"] || row["Quote Rate"] || 0);
-          
+
           const mappedItemId = findFuzzyMatch(String(originalName));
 
           return {
@@ -345,14 +347,14 @@ export default function GeMSyncPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: sheetId })
     })
-    .then(() => {
-      setSheets(prev => prev.filter(s => s.id !== sheetId));
-      if (activeSheetId === sheetId) {
-        handleClearSheet();
-      }
-      alert("✓ Sheet deleted successfully from shared database.");
-    })
-    .catch(err => console.error("Error deleting sheet:", err));
+      .then(() => {
+        setSheets(prev => prev.filter(s => s.id !== sheetId));
+        if (activeSheetId === sheetId) {
+          handleClearSheet();
+        }
+        alert("✓ Sheet deleted successfully from shared database.");
+      })
+      .catch(err => console.error("Error deleting sheet:", err));
   };
 
   // Add Buyer helper
@@ -377,10 +379,10 @@ export default function GeMSyncPage() {
   // Check Duplicate Rate Warnings
   const checkDuplicateRateWarning = (itemId: string, currentRate: number, currentFirmCode: string) => {
     if (!itemId || !currentRate) return null;
-    
+
     // Look in current active listings or past histories for this item with a different rate
-    const otherListingWithDiffRate = listings.find(lst => 
-      lst.itemId === itemId && 
+    const otherListingWithDiffRate = listings.find(lst =>
+      lst.itemId === itemId &&
       lst.rate !== currentRate
     );
 
@@ -397,7 +399,7 @@ export default function GeMSyncPage() {
   // Lookup last quote hint for returning buyer
   const getLastQuotedHint = (itemId: string, buyerId: string) => {
     if (!itemId || !buyerId) return null;
-    
+
     // Find the latest history record for this buyer and item
     const matches = rateHistory
       .filter(hist => hist.buyerId === buyerId && hist.itemName === allItemsList.find(i => i._id === itemId)?.itemName)
@@ -541,9 +543,9 @@ export default function GeMSyncPage() {
     const buyerObj = buyers.find(b => b.id === selectedBuyerId);
 
     // Check if listing already exists to toggle (UNLINK) or override (prevent duplicates)
-    const existing = listings.find(lst => 
-      lst.buyerId === selectedBuyerId && 
-      lst.itemId === row.mappedItemId && 
+    const existing = listings.find(lst =>
+      lst.buyerId === selectedBuyerId &&
+      lst.itemId === row.mappedItemId &&
       lst.firmCode === row.firmCode &&
       row.mappedItemId &&
       row.firmCode
@@ -551,7 +553,7 @@ export default function GeMSyncPage() {
 
     if (existing) {
       // Check if values are identical
-      const isIdentical = 
+      const isIdentical =
         existing.rate === row.rate &&
         existing.minQty === row.minQty &&
         existing.gemLink === (row.gemLink || "") &&
@@ -630,8 +632,8 @@ export default function GeMSyncPage() {
 
     const filledData = originalExcelData.map((row, index) => {
       const mappedRow = uploadedRows.find(r => r.index === index);
-      const matchedListing = listings.find(lst => 
-        lst.buyerId === selectedBuyerId && 
+      const matchedListing = listings.find(lst =>
+        lst.buyerId === selectedBuyerId &&
         lst.itemId === mappedRow?.mappedItemId
       );
 
@@ -739,7 +741,7 @@ export default function GeMSyncPage() {
     <BlockGuard permission="stock">
       <div className="p-4 md:p-8 bg-[#0b0f19] min-h-screen text-slate-100 font-sans">
         <div className="w-full mx-auto">
-          
+
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-800">
             <div>
@@ -751,28 +753,28 @@ export default function GeMSyncPage() {
               </h1>
               <p className="text-slate-400 text-xs mt-1">Manage buyer requirements, upload quotes, revise rates, and checklist sync logs.</p>
             </div>
-            
+
             {/* Action Tabs */}
             <div className="flex gap-1 bg-slate-900/60 p-1.5 rounded-xl border border-slate-800 self-stretch md:self-auto">
-              <button 
+              <button
                 onClick={() => setActiveTab("sheets")}
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
                 <FiDatabase /> Sheet Library
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab("upload")}
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "upload" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
                 <FiUploadCloud /> Upload Sheet
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab("checklist")}
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "checklist" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
                 <FiCheckCircle /> Sync Checklist
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab("buyers")}
                 className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "buyers" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
               >
@@ -784,21 +786,21 @@ export default function GeMSyncPage() {
           {/* =================== TAB 1: UPLOAD & MAP SHEET =================== */}
           {activeTab === "upload" && (
             <div className="space-y-6">
-              
+
               {/* Buyer Selector + File upload Card */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
+
                 {/* Buyer selection */}
                 <div className="bg-[#131a26] p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <FiUsers className="text-blue-500" /> 1. Select / Add Buyer
                   </h3>
-                  
+
                   {/* Select Buyer Auto-complete list */}
                   <div className="space-y-2">
                     <div className="relative">
                       <FiSearch className="absolute left-4 top-3.5 text-slate-400 text-sm" />
-                      <input 
+                      <input
                         type="text"
                         placeholder="Search buyer..."
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
@@ -806,7 +808,7 @@ export default function GeMSyncPage() {
                         onChange={(e) => setBuyerSearchQuery(e.target.value)}
                       />
                     </div>
-                    
+
                     {/* Autocomplete list */}
                     <div className="max-h-40 overflow-y-auto bg-slate-950/80 rounded-xl border border-slate-900 p-2 space-y-1">
                       {filteredBuyers.length === 0 ? (
@@ -832,8 +834,8 @@ export default function GeMSyncPage() {
                   {selectedBuyerId && (
                     <div className="pt-2 border-t border-slate-805/60 space-y-1.5">
                       <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest block">Selected Buyer (Rename if wrong)</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={buyers.find(b => b.id === selectedBuyerId)?.name || ""}
                         onChange={(e) => {
                           const newName = e.target.value;
@@ -848,8 +850,8 @@ export default function GeMSyncPage() {
 
                   {/* Add New Buyer */}
                   <div className="pt-2 border-t border-slate-800/60 flex gap-2">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="New buyer name..."
                       className="flex-1 bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
                       value={newBuyerName}
@@ -876,14 +878,14 @@ export default function GeMSyncPage() {
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-4 items-center">
-                    <input 
-                      type="file" 
+                    <input
+                      type="file"
                       accept=".xlsx, .xls"
                       onChange={handleExcelUpload}
                       className="hidden"
                       ref={fileInputRef}
                     />
-                    
+
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-slate-950 text-slate-200 border-slate-800 hover:bg-slate-900 cursor-pointer"
@@ -919,7 +921,7 @@ export default function GeMSyncPage() {
               {/* Uploaded rows matching table */}
               {uploadedRows.length > 0 && (
                 <div className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-                  
+
                   {/* Table title bar */}
                   <div className="p-6 border-b border-slate-800 bg-slate-900/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                     <div>
@@ -956,25 +958,25 @@ export default function GeMSyncPage() {
                         {uploadedRows.map((row) => {
                           const isMatched = !!row.mappedItemId;
                           const mappedItem = allItemsList.find(i => i._id === row.mappedItemId);
-                          
+
                           // Duplicate rate warning check
                           const duplicateWarning = checkDuplicateRateWarning(row.mappedItemId, row.rate, row.firmCode);
-                          
+
                           // Returning buyer history hint
                           const lastQuoted = getLastQuotedHint(row.mappedItemId, selectedBuyerId);
 
                           return (
                             <tr key={row.index} className="hover:bg-slate-900/20 transition-colors">
-                              
+
                               <td className="py-4 px-4 text-center text-slate-500 font-mono min-w-[48px]">{row.index + 1}</td>
-                              
+
                               <td className="py-4 px-4 min-w-[200px]">
                                 <span className="font-bold text-slate-200 block">{row.originalName}</span>
                                 {row.rate > 0 && <span className="text-[10px] text-slate-500 mt-0.5 block">Original Rate: ₹{row.rate}</span>}
                               </td>
-                              
+
                               <td className="py-4 px-4 text-center font-mono font-bold text-slate-300 w-24 min-w-[96px]">{row.qty || "—"}</td>
-                              
+
                               <td className="py-4 px-4 min-w-[240px]">
                                 <div className="space-y-1.5">
                                   {!isMatched && (
@@ -982,7 +984,7 @@ export default function GeMSyncPage() {
                                       <FiAlertTriangle /> New / Unmatched
                                     </span>
                                   )}
-                                  
+
                                   <div className="flex gap-2">
                                     <input
                                       key={row.mappedItemId}
@@ -997,8 +999,8 @@ export default function GeMSyncPage() {
                                           setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: "" } : r));
                                           return;
                                         }
-                                        const match = allItemsList.find(item => 
-                                          `${item.sku} - ${item.itemName}` === val || 
+                                        const match = allItemsList.find(item =>
+                                          `${item.sku} - ${item.itemName}` === val ||
                                           item.itemName === val
                                         );
                                         if (match) {
@@ -1044,16 +1046,16 @@ export default function GeMSyncPage() {
                                 {unmatchedIndex === row.index && (
                                   <div className="mt-4 p-4 bg-slate-950 border border-blue-600/30 rounded-xl space-y-3">
                                     <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Organically Add New Item</h4>
-                                    
+
                                     <div className="space-y-2">
-                                      <input 
-                                        type="text" 
+                                      <input
+                                        type="text"
                                         placeholder="Confirm Item Name..."
                                         value={newUnmatchedItem.name}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, name: e.target.value }))}
                                         className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
                                       />
-                                      
+
                                       <select
                                         value={newUnmatchedItem.firmCode}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, firmCode: e.target.value }))}
@@ -1065,8 +1067,8 @@ export default function GeMSyncPage() {
                                         ))}
                                       </select>
 
-                                      <input 
-                                        type="text" 
+                                      <input
+                                        type="text"
                                         placeholder="Paste GeM Listing URL..."
                                         value={newUnmatchedItem.gemLink}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, gemLink: e.target.value }))}
@@ -1074,15 +1076,15 @@ export default function GeMSyncPage() {
                                       />
 
                                       <div className="grid grid-cols-2 gap-2">
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           placeholder="Quote Rate (₹)"
                                           value={newUnmatchedItem.rate}
                                           onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, rate: e.target.value }))}
                                           className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono"
                                         />
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           placeholder="Min Qty"
                                           value={newUnmatchedItem.minQty}
                                           onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, minQty: e.target.value }))}
@@ -1092,13 +1094,13 @@ export default function GeMSyncPage() {
                                     </div>
 
                                     <div className="flex gap-2 justify-end">
-                                      <button 
+                                      <button
                                         onClick={() => setUnmatchedIndex(null)}
                                         className="px-3 py-1.5 rounded-lg border border-slate-850 hover:bg-slate-900 text-[10px] uppercase font-bold"
                                       >
                                         Cancel
                                       </button>
-                                      <button 
+                                      <button
                                         onClick={() => saveUnmatchedItem(row.index)}
                                         className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-[10px] uppercase font-black"
                                       >
@@ -1108,7 +1110,7 @@ export default function GeMSyncPage() {
                                   </div>
                                 )}
                               </td>
-                              
+
                               <td className="py-4 px-4 w-[180px] min-w-[180px]">
                                 <select
                                   value={row.firmCode}
@@ -1121,7 +1123,7 @@ export default function GeMSyncPage() {
                                   ))}
                                 </select>
                               </td>
-                              
+
                               <td className="py-4 px-4 font-mono w-[120px] min-w-[120px]">
                                 <div className="space-y-1">
                                   <input
@@ -1131,10 +1133,10 @@ export default function GeMSyncPage() {
                                     className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
                                     placeholder="0.00"
                                   />
-                                  
+
                                   {/* Duplicate rate warning */}
                                   {duplicateWarning && (
-                                    <span 
+                                    <span
                                       className="text-[9px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/10 block font-sans cursor-help"
                                       title={duplicateWarning.message}
                                     >
@@ -1173,11 +1175,11 @@ export default function GeMSyncPage() {
                                   placeholder="GeM Link..."
                                 />
                               </td>
-                              
+
                               <td className="py-4 px-4 text-center w-[120px] min-w-[120px]">
-                                {listings.some(lst => 
-                                  lst.buyerId === selectedBuyerId && 
-                                  lst.itemId === row.mappedItemId && 
+                                {listings.some(lst =>
+                                  lst.buyerId === selectedBuyerId &&
+                                  lst.itemId === row.mappedItemId &&
                                   lst.firmCode === row.firmCode &&
                                   row.mappedItemId &&
                                   row.firmCode
@@ -1219,7 +1221,7 @@ export default function GeMSyncPage() {
 
                 return (
                   <div key={firm._id} className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-                    
+
                     {/* Header */}
                     <div className="p-6 border-b border-slate-800 bg-slate-900/40 flex justify-between items-center">
                       <div>
@@ -1228,7 +1230,7 @@ export default function GeMSyncPage() {
                         </h3>
                         <p className="text-xs text-slate-400 mt-1">Checklist of items ready to be synced to GeM Marketplace portal.</p>
                       </div>
-                      
+
                       <div className="text-right">
                         <span className="text-xs font-mono font-bold bg-blue-500/10 text-blue-400 py-1.5 px-3 rounded-lg border border-blue-500/20">
                           {syncedCount} / {firmListings.length} Synced
@@ -1257,21 +1259,21 @@ export default function GeMSyncPage() {
                             {firmListings.map(lst => (
                               <tr key={lst.id} className="hover:bg-slate-900/10 transition-colors">
                                 <td className="py-3.5 px-4 text-center">
-                                  <input 
+                                  <input
                                     type="checkbox"
                                     checked={lst.status === "Synced"}
                                     onChange={() => toggleSyncStatus(lst.id)}
                                     className="w-4.5 h-4.5 rounded bg-slate-950 border-slate-800 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
                                   />
                                 </td>
-                                
+
                                 <td className="py-3.5 px-4">
                                   <span className="font-bold text-slate-200">{lst.itemName}</span>
                                 </td>
-                                
+
                                 <td className="py-3.5 px-4">
                                   {lst.gemLink ? (
-                                    <a 
+                                    <a
                                       href={lst.gemLink}
                                       target="_blank"
                                       rel="noreferrer"
@@ -1329,13 +1331,13 @@ export default function GeMSyncPage() {
           {/* =================== TAB 3: BUYER HISTORY =================== */}
           {activeTab === "buyers" && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
+
               {/* Buyers list */}
               <div className="bg-[#131a26] p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                 <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
                   <FiUsers className="text-blue-500" /> Buyers Directories
                 </h3>
-                
+
                 <div className="space-y-2">
                   {buyers.length === 0 ? (
                     <p className="text-slate-500 text-xs text-center py-4">No buyers stored yet.</p>
@@ -1357,7 +1359,7 @@ export default function GeMSyncPage() {
               <div className="lg:col-span-2 bg-[#131a26] p-6 rounded-2xl border border-slate-800 shadow-xl min-h-[400px]">
                 {selectedHistoryBuyerId ? (
                   <div className="space-y-6">
-                    
+
                     {/* Title */}
                     <div>
                       <h3 className="font-black text-sm text-white uppercase tracking-wider">
@@ -1380,7 +1382,7 @@ export default function GeMSyncPage() {
                               <div className="absolute -left-10.5 top-0.5 bg-slate-900 border-2 border-blue-500 w-4.5 h-4.5 rounded-full flex items-center justify-center">
                                 <div className="bg-blue-500 w-1.5 h-1.5 rounded-full" />
                               </div>
-                              
+
                               <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-855 space-y-2">
                                 <div className="flex justify-between items-start">
                                   <h4 className="font-bold text-slate-200">{hist.itemName}</h4>
@@ -1399,7 +1401,7 @@ export default function GeMSyncPage() {
                                       Initial Quote: <span className="font-mono text-emerald-400 font-bold">₹{hist.newRate}</span>
                                     </div>
                                   )}
-                                  
+
                                   <div className="text-xs text-slate-400">
                                     Min Qty: <span className="font-mono">{hist.newMinQty}</span>
                                   </div>
@@ -1502,11 +1504,108 @@ export default function GeMSyncPage() {
             </div>
           )}
 
+          {/* =================== TAB 5: MASTER LIST =================== */}
+          {activeTab === "master" && (
+            <div className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800 bg-slate-900/40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                    <FiList className="text-blue-500" /> Master Mapped Listings
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">Consolidated record of all items mapped and linked to firms across all uploaded sheets.</p>
+                </div>
+                
+                {/* Search bar inside Master List */}
+                <div className="relative w-full sm:w-72">
+                  <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-sm" />
+                  <input 
+                    type="text"
+                    placeholder="Search master list..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
+                    value={masterSearchQuery}
+                    onChange={(e) => setMasterSearchQuery(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {filteredMasterListings.length === 0 ? (
+                <div className="p-12 text-center text-slate-500 space-y-2">
+                  <FiList size={32} className="mx-auto text-slate-600" />
+                  <p className="text-xs">No mapped listings found in the master list.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-950/40 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                        <th className="py-3.5 px-6">SKU / Item Name</th>
+                        <th className="py-3.5 px-6">Firm</th>
+                        <th className="py-3.5 px-6 text-center w-32">Rate</th>
+                        <th className="py-3.5 px-6 text-center w-36">Avail gem stock</th>
+                        <th className="py-3.5 px-6 text-center w-28">Min Qty</th>
+                        <th className="py-3.5 px-6">Linked Buyer</th>
+                        <th className="py-3.5 px-6">GeM URL</th>
+                        <th className="py-3.5 px-6 text-center w-28">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/40">
+                      {filteredMasterListings.map(lst => {
+                        const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "Unassigned";
+                        const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
+                        
+                        return (
+                          <tr key={lst.id} className="hover:bg-slate-900/10 transition-colors">
+                            <td className="py-4 px-6">
+                              <span className="text-[10px] font-mono text-slate-500 block mb-0.5">{inventoryItem?.sku || "CUSTOM"}</span>
+                              <span className="font-bold text-slate-200 block">{lst.itemName}</span>
+                            </td>
+                            <td className="py-4 px-6">
+                              <span className="bg-slate-900 py-1 px-2.5 rounded-lg border border-slate-800 text-[11px] font-bold text-slate-300">
+                                {lst.firmCode}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 text-center font-mono font-bold text-slate-200">₹{lst.rate}</td>
+                            <td className="py-4 px-6 text-center font-mono text-slate-300">{lst.availGemStock || 0}</td>
+                            <td className="py-4 px-6 text-center font-mono text-slate-300">{lst.minQty}</td>
+                            <td className="py-4 px-6 text-slate-400">{buyerName}</td>
+                            <td className="py-4 px-6">
+                              {lst.gemLink ? (
+                                <a 
+                                  href={lst.gemLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-blue-400 hover:underline flex items-center gap-1"
+                                >
+                                  GeM Listing <FiExternalLink size={12} />
+                                </a>
+                              ) : (
+                                <span className="text-slate-500 italic">No link</span>
+                              )}
+                            </td>
+                            <td className="py-4 px-6 text-center">
+                              <button
+                                onClick={() => handleDeleteListing(lst.id)}
+                                className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center mx-auto"
+                                title="Unlink / Delete Listing"
+                              >
+                                <FiTrash2 size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* =================== REVISION DIALOG MODAL =================== */}
           {isRevisionOpen && selectedListingForRevision && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
               <div className="bg-[#131a26] border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95">
-                
+
                 {/* Header */}
                 <div className="p-6 border-b border-slate-800 bg-slate-900/40">
                   <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
@@ -1520,7 +1619,7 @@ export default function GeMSyncPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">New Rate (₹)</label>
-                      <input 
+                      <input
                         type="number"
                         className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
                         value={newRateValue}
@@ -1530,7 +1629,7 @@ export default function GeMSyncPage() {
                     </div>
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">New Min Qty</label>
-                      <input 
+                      <input
                         type="number"
                         className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
                         value={newMinQtyValue}
@@ -1543,7 +1642,7 @@ export default function GeMSyncPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">GeM Product URL</label>
-                      <input 
+                      <input
                         type="text"
                         className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white"
                         value={newGemLinkValue}
@@ -1553,7 +1652,7 @@ export default function GeMSyncPage() {
                     </div>
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Avail GeM Stock</label>
-                      <input 
+                      <input
                         type="number"
                         className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
                         value={newAvailGemStockValue}
@@ -1565,7 +1664,7 @@ export default function GeMSyncPage() {
 
                   <div>
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Reason for Revision</label>
-                    <textarea 
+                    <textarea
                       rows={3}
                       className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
                       value={revisionReason}
