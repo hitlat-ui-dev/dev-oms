@@ -576,7 +576,7 @@ export default function GeMSyncPage() {
   return (
     <BlockGuard permission="stock">
       <div className="p-4 md:p-8 bg-[#0b0f19] min-h-screen text-slate-100 font-sans">
-        <div className="max-w-7xl mx-auto">
+        <div className="w-full mx-auto">
           
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-800">
