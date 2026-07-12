@@ -57,6 +57,14 @@ export default function DashboardPage() {
       color: "bg-[#8b2ef5]",
       role: ["Owner", "Manager"]
     },
+    {
+      name: "GeM Sync",
+      path: "/dashboard/gem-sync",
+      sub: "UPLOAD & SYNC",
+      icon: <FiRefreshCw />,
+      color: "bg-[#f59e0b]",
+      role: ["Owner", "Manager"]
+    },
     // { name: "My Companies", path: "/dashboard/companies", sub: "MANAGE NOW", icon: <FiBriefcase />, color: "bg-[#ff5100]", role: ["Owner"] },
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"], permissionKey: "users", },
     { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" }
@@ -89,6 +97,9 @@ export default function DashboardPage() {
     }
     if (item.name === "Backup") {
       return user?.permissions?.backup === true;
+    }
+    if (item.name === "GeM Sync") {
+      return true;
     }
     return true; // default fallback
   };
