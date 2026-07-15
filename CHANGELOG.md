@@ -2,6 +2,23 @@
 
 All notable changes to the **Dev OMS** project will be documented in this file.
 
+## [1.2.0] - 2026-07-15
+
+### Added
+- **🔔 Header Workspace To-Do & Chat Dropdowns**:
+  - Moved workspace actions directly to the header, removing the redundant To-Do dashboard landing card.
+  - **Tasks Checklist Popover**: Clicking "Workspace" toggles a checklist showing pending tasks, assignee tags, and an inline form to add quick tasks.
+  - **Autocomplete `@name` suggestions**: Typing `@` in the task input opens a floating auto-filtered list of team members for instant assignment autocomplete.
+  - **Direct Messages Popover**: Clicking "Chat" toggles a dual-pane direct messaging panel. Lists team members on the left with unread indicators, and a private message history with text input on the right.
+  - **"All Members" Tab**: Integrates the shared group discussion channel directly into the Chat popup interface.
+  - **Real-Time DM Notifications**: Renders a red pulsating notification badge on the header's Chat button when new messages arrive from other team members.
+- **👥 Collaborative Workspace Workspace Page (`/dashboard/todo-chat`)**:
+  - Created a full workspace view with a detailed To-Do dashboard (assignees, due dates, reminder dates) and Slack-style live chat room with auto-polling.
+  - Refactored styles to support high-contrast light theme overrides.
+- **📈 Seller Order GeM Stock Automation**:
+  - Automated `availGemStock` decrement in `gem_listings` on order creation if a valid GeM contract URL is provided.
+  - Disabled GeM stock changes during status transitions (cancellations, shipments, returns) as per client workflow rules.
+
 ## [1.1.0] - 2026-07-12
 
 ### Added

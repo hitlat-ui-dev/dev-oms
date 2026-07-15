@@ -115,6 +115,29 @@ export async function POST(req: Request) {
       status: data.status || "TO CHECK",
     });
 
+    // Deduct stock from GeM Listings if a contract URL is provided
+    if (orderQty > 0 && data.contractUrl && data.contractUrl.trim() !== "") {
+      await db.collection("gem_listings").updateOne(
+        { 
+          firmCode: data.firmCode, 
+          itemId: String(data.itemId)
+        },
+        {
+          $inc: { availGemStock: -orderQty }
+        }
+      );
+      await db.collection("gem_listings").updateOne(
+        { 
+          firmCode: data.firmCode, 
+          itemId: String(data.itemId),
+          availGemStock: { $lt: 0 }
+        },
+        {
+          $set: { availGemStock: 0 }
+        }
+      );
+    }
+
     // --- 4. UPDATE STOCK & ITEMS DB (The Synced SKU Fix) ---
     if (itemSku && orderQty > 0) {
       const skuFilter = { sku: itemSku };

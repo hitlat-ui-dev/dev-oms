@@ -115,6 +115,13 @@ Orders move through a defined pipeline of statuses:
 ### ⚙️ Settings & Admin (`/dashboard/settings`, `/dashboard/admin`)
 - Manage user accounts and their module-level permissions (including the new `GeM Links` access control).
 
+
+### 🔔 Team Workspace & Direct Chat
+- **Instant Workspace Checklist** — Manage pending checklist items, toggle completion, and check assignees directly from the header "Workspace" button dropdown.
+- **Inline `@name` Autocomplete** — Typing `@` in the task input opens a floating auto-filtered list of team members to easily autocomplete assignments.
+- **Header Chat Popover** — A direct messaging interface next to Workspace in the header. Chat with team members person-wise or use the consolidated "All Members" room for group discussions. Displays pulsating badges for unread messages.
+- **Full Team Workspace Page (`/dashboard/todo-chat`)** — Full Microsoft To-Do style planner with due dates and live chat feed, fully adaptive to light and dark themes.
+
 ---
 
 ## 🔄 Real-Time Stock Synchronization

@@ -10,7 +10,8 @@ import {
   FiSettings,
   FiPrinter,
   FiDatabase,
-  FiSliders
+  FiSliders,
+  FiCheckSquare
 } from "react-icons/fi";
 
 

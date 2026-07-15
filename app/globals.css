@@ -3,6 +3,14 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  
+  --gem-bg: #0b0f19;
+  --gem-card: #131a26;
+  --gem-text-primary: #cbd5e1;
+  --gem-text-secondary: #94a3b8;
+  --gem-border: #1e293b;
+  --gem-table-header: #0f172a;
+  --gem-table-row-hover: rgba(255, 255, 255, 0.05);
 }
 
 @theme inline {
@@ -38,6 +46,14 @@ button:disabled,
 .theme-light main {
   --background: #f1f5f9;
   --foreground: #0f172a;
+  
+  --gem-bg: #f1f5f9;
+  --gem-card: #ffffff;
+  --gem-text-primary: #0f172a;
+  --gem-text-secondary: #475569;
+  --gem-border: #cbd5e1;
+  --gem-table-header: #f8fafc;
+  --gem-table-row-hover: rgba(0, 0, 0, 0.02);
 }
 
 .theme-light body {
@@ -74,12 +90,17 @@ button:disabled,
 }
 
 .theme-light .border-slate-800,
+.theme-light .border-slate-805,
+.theme-light .border-slate-800\/40,
+.theme-light .border-slate-800\/60,
 .theme-light .border-slate-855,
-.theme-light .border-slate-900 {
-  border-color: #e2e8f0 !important;
+.theme-light .border-slate-900,
+.theme-light .border-slate-900\/40 {
+  border-color: #cbd5e1 !important;
 }
 
 .theme-light .text-slate-100,
+.theme-light .text-slate-200,
 .theme-light .text-white {
   color: #0f172a !important;
 }
@@ -95,6 +116,9 @@ button:disabled,
 .theme-light .bg-slate-950,
 .theme-light .bg-slate-950\/40,
 .theme-light .bg-slate-900\/60,
+.theme-light .bg-slate-900\/40,
+.theme-light .bg-slate-900\/20,
+.theme-light .bg-slate-900\/10,
 .theme-light .bg-\[\#020617\] {
   background-color: #f8fafc !important;
   color: #0f172a !important;
@@ -253,5 +277,107 @@ button:disabled,
 .theme-light .text-slate-500 {
   color: #475569 !important;
 }
+
+/* Custom class overrides for Gem Sync Page */
+.theme-light .gem-sync-container {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.theme-light .gem-sync-card {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+.theme-light .gem-sync-inner-card {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+/* Custom class overrides for Team Workspace / Todo Chat Page */
+.theme-light .todo-chat-container {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.theme-light .todo-chat-card {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-light .todo-chat-filter-bg {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .todo-chat-filter-btn {
+  color: #475569 !important;
+}
+
+.theme-light .todo-chat-filter-btn:hover {
+  color: #0f172a !important;
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-light .todo-chat-filter-btn.active {
+  background-color: #8b5cf6 !important;
+  color: #ffffff !important;
+}
+
+.theme-light .todo-chat-input-wrapper {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .todo-chat-task-item {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .todo-chat-task-item:hover {
+  background-color: #f8fafc !important;
+  border-color: #8b5cf6/40 !important;
+}
+
+.theme-light .todo-chat-task-item.completed {
+  background-color: rgba(241, 245, 249, 0.5) !important;
+  border-color: #cbd5e1 !important;
+  opacity: 0.7 !important;
+}
+
+.theme-light .todo-chat-task-item.completed .todo-chat-task-title {
+  color: #94a3b8 !important;
+}
+
+.theme-light .todo-chat-chat-bubble {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .todo-chat-chat-bubble-me {
+  background-color: #8b5cf6 !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+}
+
+.theme-light .todo-chat-avatar {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
+.theme-light .todo-chat-avatar-me {
+  background-color: #8b5cf6 !important;
+  border-color: #7c3aed !important;
+  color: #ffffff !important;
+}
+
+
 
 
