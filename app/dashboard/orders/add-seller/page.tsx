@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX } from "react-icons/fi";
+import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -12,6 +12,8 @@ interface Seller {
   mobile?: string;
   address?: string;
   place?: string;
+  sellerBillName?: string;
+  statementDescriptionName?: string[];
   createdAt: string;
 }
 
@@ -23,15 +25,17 @@ export default function AddSellerPage() {
   const [search, setSearch] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: keyof Seller; direction: 'asc' | 'desc' } | null>(null);
 
-  // Added _id to formData to handle updates correctly
   const [formData, setFormData] = useState({
     _id: "",
     instituteName: "",
     buyerName: "",
     mobile: "",
     address: "",
-    place: ""
+    place: "",
+    sellerBillName: "",
+    statementDescriptionName: [] as string[]
   });
+  const [descInput, setDescInput] = useState("");
 
   const fetchSellers = async () => {
     try {
@@ -54,7 +58,9 @@ export default function AddSellerPage() {
   const sortedSellers = useMemo(() => {
     let items = [...sellers].filter(s =>
       s.instituteName.toLowerCase().includes(search.toLowerCase()) ||
-      s.buyerName?.toLowerCase().includes(search.toLowerCase())
+      s.buyerName?.toLowerCase().includes(search.toLowerCase()) ||
+      s.sellerBillName?.toLowerCase().includes(search.toLowerCase()) ||
+      s.statementDescriptionName?.some(d => d.toLowerCase().includes(search.toLowerCase()))
     );
     if (sortConfig !== null) {
       items.sort((a, b) => {
@@ -68,9 +74,34 @@ export default function AddSellerPage() {
     return items;
   }, [sellers, sortConfig, search]);
 
-  // Unified reset function
   const resetForm = () => {
-    setFormData({ _id: "", instituteName: "", buyerName: "", mobile: "", address: "", place: "" });
+    setFormData({
+      _id: "",
+      instituteName: "",
+      buyerName: "",
+      mobile: "",
+      address: "",
+      place: "",
+      sellerBillName: "",
+      statementDescriptionName: []
+    });
+    setDescInput("");
+  };
+
+  const handleAddDescName = () => {
+    const trimmed = descInput.trim();
+    if (!trimmed) return;
+    const namesToAdd = trimmed.split(",").map(n => n.trim()).filter(Boolean);
+    const newNames = Array.from(new Set([...formData.statementDescriptionName, ...namesToAdd]));
+    setFormData({ ...formData, statementDescriptionName: newNames });
+    setDescInput("");
+  };
+
+  const handleRemoveDescName = (indexToRemove: number) => {
+    setFormData({
+      ...formData,
+      statementDescriptionName: formData.statementDescriptionName.filter((_, idx) => idx !== indexToRemove)
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -78,7 +109,7 @@ export default function AddSellerPage() {
     setLoading(true);
     try {
       const res = await fetch("/api/sellers", {
-        method: "POST", // API handles update if _id is present
+        method: "POST",
         body: JSON.stringify(formData),
         headers: { "Content-Type": "application/json" }
       });
@@ -94,14 +125,21 @@ export default function AddSellerPage() {
   };
 
   const handleEdit = (seller: Seller) => {
+    const descNames = Array.isArray(seller.statementDescriptionName)
+      ? seller.statementDescriptionName
+      : (seller.statementDescriptionName ? [seller.statementDescriptionName] : []);
+
     setFormData({
-      _id: seller._id, // Set the ID so the backend knows to update
+      _id: seller._id,
       instituteName: seller.instituteName,
       buyerName: seller.buyerName || "",
       mobile: seller.mobile || "",
       address: seller.address || "",
-      place: seller.place || ""
+      place: seller.place || "",
+      sellerBillName: seller.sellerBillName || "",
+      statementDescriptionName: descNames
     });
+    setDescInput("");
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -165,7 +203,7 @@ export default function AddSellerPage() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Buyer Name</label>
                 <div className="relative">
                   <FiUser className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="text" value={formData.buyerName} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700" placeholder="Buyer Name" onChange={(e) => setFormData({ ...formData, buyerName: e.target.value })} />
+                  <input type="text" value={formData.buyerName} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="Buyer Name" onChange={(e) => setFormData({ ...formData, buyerName: e.target.value })} />
                 </div>
               </div>
 
@@ -173,7 +211,7 @@ export default function AddSellerPage() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mobile No.</label>
                 <div className="relative">
                   <FiPhone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="text" value={formData.mobile} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700" placeholder="Mobile" onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
+                  <input type="text" value={formData.mobile} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="Mobile" onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
                 </div>
               </div>
 
@@ -181,7 +219,15 @@ export default function AddSellerPage() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Place</label>
                 <div className="relative">
                   <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="text" value={formData.place} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700" placeholder="City" onChange={(e) => setFormData({ ...formData, place: e.target.value })} />
+                  <input type="text" value={formData.place} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="City" onChange={(e) => setFormData({ ...formData, place: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Seller Bill Name</label>
+                <div className="relative">
+                  <FiFileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input type="text" value={formData.sellerBillName} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="Seller Bill Name" onChange={(e) => setFormData({ ...formData, sellerBillName: e.target.value })} />
                 </div>
               </div>
 
@@ -189,7 +235,60 @@ export default function AddSellerPage() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Full Address</label>
                 <div className="relative">
                   <FiHome className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="text" value={formData.address} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700" placeholder="Street Address" onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+                  <input type="text" value={formData.address} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="Street Address" onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+                </div>
+              </div>
+
+              {/* Statement Description Name - Multi-input */}
+              <div className="space-y-2 md:col-span-3">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+                  <span>Statement Description Name</span>
+                  <span className="text-slate-400 font-normal lowercase">(supports multiple names)</span>
+                </label>
+                <div className="space-y-3">
+                  <div className="relative flex items-center">
+                    <FiTag className="absolute left-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={descInput}
+                      className="w-full pl-12 pr-28 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all"
+                      placeholder="Type name and click Add or press Enter"
+                      onChange={(e) => setDescInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddDescName();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddDescName}
+                      className="absolute right-3 px-4 py-2.5 bg-slate-900 text-white rounded-xl font-black text-xs hover:bg-slate-800 transition-all flex items-center gap-1.5 uppercase tracking-wider"
+                    >
+                      <FiPlus size={14} /> Add
+                    </button>
+                  </div>
+
+                  {formData.statementDescriptionName.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {formData.statementDescriptionName.map((name, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-50 text-blue-700 border border-blue-200/80 rounded-xl text-xs font-bold shadow-sm"
+                        >
+                          <span>{name}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveDescName(idx)}
+                            className="text-blue-400 hover:text-rose-600 transition-colors p-0.5 rounded-md hover:bg-rose-50"
+                          >
+                            <FiX size={14} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -220,11 +319,10 @@ export default function AddSellerPage() {
                   <th onClick={() => handleSort('buyerName')} className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors">
                     <div className="flex items-center gap-1">Buyer {sortConfig?.key === 'buyerName' && (sortConfig.direction === 'asc' ? <FiChevronUp /> : <FiChevronDown />)}</div>
                   </th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Bill Name</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Statement Descriptions</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact</th>
-
-                  {/* NEW ADDRESS HEADER */}
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Address</th>
-
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
                 </tr>
@@ -234,16 +332,27 @@ export default function AddSellerPage() {
                   <tr key={seller._id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="p-5 font-black text-slate-700 text-xs">{seller.instituteName}</td>
                     <td className="p-5 font-bold text-slate-500 text-xs">{seller.buyerName || "---"}</td>
+                    <td className="p-5 font-bold text-slate-600 text-xs">{seller.sellerBillName || "---"}</td>
+                    <td className="p-5">
+                      {seller.statementDescriptionName && seller.statementDescriptionName.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {seller.statementDescriptionName.map((name, i) => (
+                            <span key={i} className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-lg border border-blue-200/60">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs font-bold text-slate-400">---</span>
+                      )}
+                    </td>
                     <td className="p-5 font-bold text-slate-500 text-xs">{seller.mobile || "---"}</td>
-
-                    {/* NEW ADDRESS DATA CELL */}
                     <td
                       className="p-5 font-medium text-slate-500 text-[11px] max-w-52 truncate cursor-help"
                       title={seller.address}
                     >
                       {seller.address || "---"}
                     </td>
-
                     <td className="p-5 font-bold text-slate-400 text-[10px]">{seller.place || "---"}</td>
                     <td className="p-5 text-right">
                       <button onClick={() => handleEdit(seller)} className="p-2 bg-slate-100 text-slate-400 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm">

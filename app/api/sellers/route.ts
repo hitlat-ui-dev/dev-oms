@@ -46,13 +46,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Institute Name is required" }, { status: 400 });
     }
 
+    // Parse statementDescriptionName as array of trimmed non-empty strings
+    let descNames: string[] = [];
+    if (Array.isArray(data.statementDescriptionName)) {
+      descNames = data.statementDescriptionName.map((s: any) => String(s).trim()).filter(Boolean);
+    } else if (typeof data.statementDescriptionName === "string" && data.statementDescriptionName.trim()) {
+      descNames = data.statementDescriptionName.split(",").map((s: string) => s.trim()).filter(Boolean);
+    }
+
     // 2. Prepare Data (Cleaning nulls/undefined to empty strings)
     const sellerData = {
       instituteName: data.instituteName.trim(),
       buyerName: data.buyerName?.trim() || "",
       mobile: data.mobile?.trim() || "",
       address: data.address?.trim() || "",
-      place: data.place?.trim() || ""
+      place: data.place?.trim() || "",
+      sellerBillName: data.sellerBillName?.trim() || "",
+      statementDescriptionName: descNames
     };
 
     // 3. Update if _id exists, else Create

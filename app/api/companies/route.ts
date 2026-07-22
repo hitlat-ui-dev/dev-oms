@@ -1,41 +1,52 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
-import Company from "@/models/Company";
-import mongoose from "mongoose";
-
-async function connectDB() {
-  // Uses your existing clientPromise logic
-  await clientPromise;
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connect(process.env.MONGODB_URI as string);
-  }
-}
+import { ObjectId } from "mongodb";
 
 // GET: To display the list in your table
 export async function GET() {
   try {
-    await connectDB();
-    const companies = await Company.find({}).sort({ createdAt: -1 });
+    const client = await clientPromise;
+    const db = client.db();
+    const companies = await db.collection("companies").find({}).sort({ createdAt: -1 }).toArray();
     return NextResponse.json(companies);
   } catch (error) {
     return NextResponse.json({ error: "Failed to fetch companies" }, { status: 500 });
   }
 }
 
-// POST: To save new companies
+// POST: To save new companies or update existing ones
 export async function POST(req: Request) {
   try {
-    await connectDB();
+    const client = await clientPromise;
+    const db = client.db();
     const data = await req.json();
-    
-    // Ensure data is saved in Uppercase for consistency
-    const newCompany = await Company.create({
-      firmName: data.firmName.toUpperCase(),
-      firmCode: data.firmCode.toUpperCase()
-    });
-    
-    return NextResponse.json(newCompany, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to save company" }, { status: 500 });
+
+    const companyData = {
+      firmName: data.firmName ? data.firmName.trim().toUpperCase() : "",
+      firmCode: data.firmCode ? data.firmCode.trim().toUpperCase() : "",
+      sellerRegisterAddress: data.sellerRegisterAddress ? data.sellerRegisterAddress.trim() : "",
+      updatedAt: new Date()
+    };
+
+    if (data._id) {
+      let query: any = { _id: data._id };
+      if (typeof data._id === "string" && ObjectId.isValid(data._id)) {
+        query = { $or: [{ _id: data._id }, { _id: new ObjectId(data._id) }] };
+      }
+
+      const res = await db.collection("companies").updateOne(query, { $set: companyData });
+      const updatedDoc = await db.collection("companies").findOne(query);
+      return NextResponse.json(updatedDoc || { _id: data._id, ...companyData }, { status: 200 });
+    }
+
+    // Create new company
+    const newCompany = {
+      ...companyData,
+      createdAt: new Date()
+    };
+    const result = await db.collection("companies").insertOne(newCompany);
+    return NextResponse.json({ _id: result.insertedId, ...newCompany }, { status: 201 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to save company" }, { status: 500 });
   }
 }

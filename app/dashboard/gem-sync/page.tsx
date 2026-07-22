@@ -19,7 +19,10 @@ import {
   FiDatabase,
   FiList,
   FiCopy,
-  FiInfo
+  FiInfo,
+  FiChevronDown,
+  FiCheck,
+  FiX
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -36,6 +39,7 @@ interface SavedSheet {
   uploadedRows: UploadedRow[];
   originalExcelData: any[];
   selectedBuyerId: string;
+  isCompleted?: boolean;
   updatedAt: string;
 }
 
@@ -83,6 +87,7 @@ export default function GeMSyncPage() {
   // Database state (fetched from real API)
   const [companies, setCompanies] = useState<any[]>([]);
   const [stockItems, setStockItems] = useState<any[]>([]);
+  const [sellers, setSellers] = useState<any[]>([]);
 
   // Local state (persisted in localStorage)
   const [buyers, setBuyers] = useState<Buyer[]>([]);
@@ -147,7 +152,13 @@ export default function GeMSyncPage() {
       .then(data => setStockItems(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching stock", err));
 
-    // 3. Fetch Shared GeM Sync State from MongoDB
+    // 3. Fetch Sellers (Deliver / Buyer Directory)
+    fetch("/api/sellers")
+      .then(res => res.json())
+      .then(data => setSellers(Array.isArray(data) ? data : []))
+      .catch(err => console.error("Error fetching sellers", err));
+
+    // 4. Fetch Shared GeM Sync State from MongoDB
     fetch("/api/gem-sync")
       .then(res => res.json())
       .then(state => {
@@ -173,6 +184,108 @@ export default function GeMSyncPage() {
       })
       .catch(err => console.error("Error loading shared MongoDB state:", err));
   }, []);
+
+  // Combined options list of buyers from Sellers API and GeM Buyers
+  const allBuyerOptions = useMemo(() => {
+    const list: { id: string; name: string }[] = [];
+
+    // 1. Add from sellers directory (/api/sellers)
+    sellers.forEach((s: any) => {
+      const name = s.instituteName || s.buyerName;
+      if (name && !list.some(l => l.name.toLowerCase() === name.toLowerCase())) {
+        list.push({ id: s._id || name, name });
+      }
+    });
+
+    // 2. Add from gem-sync buyers state
+    buyers.forEach(b => {
+      if (b.name && !list.some(l => l.name.toLowerCase() === b.name.toLowerCase())) {
+        list.push({ id: b.id || b.name, name: b.name });
+      }
+    });
+
+    return list;
+  }, [sellers, buyers]);
+
+  // Search filter state for the buyer selector popover
+  const [openBuyerSelectSheetId, setOpenBuyerSelectSheetId] = useState<string | null>(null);
+  const [buyerSearchFilter, setBuyerSearchFilter] = useState<string>("");
+
+  const filteredBuyerOptions = useMemo(() => {
+    if (!buyerSearchFilter.trim()) return allBuyerOptions;
+    const q = buyerSearchFilter.toLowerCase().trim();
+    return allBuyerOptions.filter(b => b.name.toLowerCase().includes(q));
+  }, [allBuyerOptions, buyerSearchFilter]);
+
+  // Handler to change and auto-save buyer associated with a sheet
+  const handleChangeSheetBuyer = async (sheetId: string, newBuyerId: string) => {
+    const updatedSheets = sheets.map(s =>
+      s.id === sheetId ? { ...s, selectedBuyerId: newBuyerId, updatedAt: new Date().toISOString() } : s
+    );
+    setSheets(updatedSheets);
+
+    if (activeSheetId === sheetId) {
+      setSelectedBuyerId(newBuyerId);
+    }
+
+    const targetSheet = updatedSheets.find(s => s.id === sheetId);
+    if (targetSheet) {
+      try {
+        await fetch("/api/gem-sync?action=save_sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: targetSheet.id,
+            fileName: targetSheet.fileName,
+            uploadedRows: targetSheet.uploadedRows,
+            originalExcelData: targetSheet.originalExcelData,
+            selectedBuyerId: newBuyerId
+          })
+        });
+
+        // Ensure newly selected buyer exists in local buyers list for historical tracking
+        const matchedOpt = allBuyerOptions.find(b => b.id === newBuyerId);
+        if (matchedOpt && !buyers.some(b => b.name.toLowerCase() === matchedOpt.name.toLowerCase())) {
+          const newBuyerObj = { id: matchedOpt.id, name: matchedOpt.name, createdAt: new Date().toISOString() };
+          saveBuyers([...buyers, newBuyerObj]);
+        }
+      } catch (err) {
+        console.error("Failed to auto-save sheet buyer", err);
+      }
+    }
+  };
+
+  // Status filter for Sheet Library: current (incomplete), completed, or all
+  const [sheetStatusFilter, setSheetStatusFilter] = useState<"current" | "completed" | "all">("current");
+
+  // Handler to toggle completed status for a sheet and auto-save
+  const handleToggleSheetCompleted = async (sheetId: string, currentCompleted: boolean) => {
+    const newCompletedState = !currentCompleted;
+    const updatedSheets = sheets.map(s =>
+      s.id === sheetId ? { ...s, isCompleted: newCompletedState, updatedAt: new Date().toISOString() } : s
+    );
+    setSheets(updatedSheets);
+
+    const targetSheet = updatedSheets.find(s => s.id === sheetId);
+    if (targetSheet) {
+      try {
+        await fetch("/api/gem-sync?action=save_sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: targetSheet.id,
+            fileName: targetSheet.fileName,
+            uploadedRows: targetSheet.uploadedRows,
+            originalExcelData: targetSheet.originalExcelData,
+            selectedBuyerId: targetSheet.selectedBuyerId,
+            isCompleted: newCompletedState
+          })
+        });
+      } catch (err) {
+        console.error("Failed to auto-save sheet completion status", err);
+      }
+    }
+  };
 
   // Debounced auto-save active sheet state to MongoDB
   useEffect(() => {
@@ -466,18 +579,25 @@ export default function GeMSyncPage() {
     return spans;
   }, [filteredMasterListings]);
 
-  // Filtered Sheets for Sheet Library
+  // Filtered Sheets for Sheet Library (Search query + Current/Completed filter)
   const filteredSheets = useMemo(() => {
-    if (!librarySearchQuery.trim()) return sheets;
-    const query = librarySearchQuery.toLowerCase();
     return sheets.filter(sheet => {
-      const buyerName = buyers.find(b => b.id === sheet.selectedBuyerId)?.name || "";
-      return (
-        sheet.fileName.toLowerCase().includes(query) ||
-        buyerName.toLowerCase().includes(query)
-      );
+      const q = librarySearchQuery.toLowerCase().trim();
+      const matchedOpt = allBuyerOptions.find(b => b.id === sheet.selectedBuyerId || b.name === sheet.selectedBuyerId);
+      const buyerName = matchedOpt?.name || sheet.selectedBuyerId || "";
+
+      const matchesQuery = !q ||
+        sheet.fileName.toLowerCase().includes(q) ||
+        buyerName.toLowerCase().includes(q);
+
+      const matchesStatus =
+        sheetStatusFilter === "all" ? true :
+        sheetStatusFilter === "completed" ? !!sheet.isCompleted :
+        !sheet.isCompleted;
+
+      return matchesQuery && matchesStatus;
     });
-  }, [sheets, librarySearchQuery, buyers]);
+  }, [sheets, librarySearchQuery, sheetStatusFilter, allBuyerOptions]);
 
   // Check Duplicate Rate Warnings
   const checkDuplicateRateWarning = (itemId: string, currentRate: number, currentFirmCode: string) => {
@@ -791,13 +911,18 @@ export default function GeMSyncPage() {
         lst.buyerId === selectedBuyerId &&
         lst.itemId === mappedRow?.mappedItemId
       );
+      
+      const firmCode = matchedListing?.firmCode || mappedRow?.firmCode || "";
+      const company = companies.find(c => c.firmCode?.toUpperCase() === firmCode.toUpperCase());
+      const sellerRegisterAddress = company?.sellerRegisterAddress || "";
 
       return {
         ...row,
         "Quoted Rate (₹)": matchedListing?.rate || mappedRow?.rate || "",
         "Avail gem stock": matchedListing?.availGemStock || mappedRow?.availGemStock || 0,
         "Min Qty": matchedListing?.minQty || mappedRow?.minQty || "",
-        "Mapped Firm": matchedListing?.firmCode || mappedRow?.firmCode || "",
+        "Seller Register Address": sellerRegisterAddress,
+        "Mapped Firm": firmCode,
         "GeM Link": matchedListing?.gemLink || mappedRow?.gemLink || ""
       };
     });
@@ -1100,7 +1225,7 @@ export default function GeMSyncPage() {
                           <th className="py-4 px-4 text-center w-12 min-w-[48px]">#</th>
                           <th className="py-4 px-4 min-w-[200px]">Uploaded Requirement</th>
                           <th className="py-4 px-4 text-center w-24 min-w-[96px]">Req. Qty</th>
-                          <th className="py-4 px-4 min-w-[240px]">Inventory Mapping</th>
+                          <th className="py-4 px-4 w-[360px] min-w-[360px]">Inventory Mapping</th>
                           <th className="py-4 px-4 w-[180px] min-w-[180px]">Firm Selection</th>
                           <th className="py-4 px-4 w-[120px] min-w-[120px]">Rate (₹)</th>
                           <th className="py-4 px-4 w-[120px] min-w-[120px]">Avail gem stock</th>
@@ -1143,7 +1268,7 @@ export default function GeMSyncPage() {
                                 {unit && <div className="text-[10px] text-slate-500 font-sans mt-0.5">{unit}</div>}
                               </td>
 
-                              <td className="py-4 px-4 min-w-[240px]">
+                              <td className="py-4 px-4 w-[360px] min-w-[360px]">
                                 <div className="space-y-1.5">
                                   {!isMatched && (
                                     <span className="text-[10px] font-black tracking-wider uppercase text-amber-500 bg-amber-500/10 py-1 px-2.5 rounded-md border border-amber-500/20 inline-flex items-center gap-1">
@@ -1193,8 +1318,8 @@ export default function GeMSyncPage() {
                                       }}
                                     />
                                     <datalist id={`stock-options-${row.index}`}>
-                                      {allItemsList.map(item => (
-                                        <option key={item._id} value={`${item.sku} - ${item.itemName}`} />
+                                      {allItemsList.map((item, idx) => (
+                                        <option key={item._id || idx} value={`${item.sku} - ${item.itemName}`} />
                                       ))}
                                     </datalist>
 
@@ -1284,8 +1409,8 @@ export default function GeMSyncPage() {
                                         className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-300"
                                       >
                                         <option value="">Select Firm...</option>
-                                        {companies.map(c => (
-                                          <option key={c._id} value={c.firmCode}>{c.firmCode} - {c.firmName}</option>
+                                        {companies.map((c, idx) => (
+                                          <option key={c._id || idx} value={c.firmCode}>{c.firmCode} - {c.firmName}</option>
                                         ))}
                                       </select>
 
@@ -1340,8 +1465,8 @@ export default function GeMSyncPage() {
                                   className="bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500 w-full"
                                 >
                                   <option value="">Select Firm...</option>
-                                  {companies.map(c => (
-                                    <option key={c._id} value={c.firmCode}>{c.firmCode} - {c.firmName}</option>
+                                  {companies.map((c, idx) => (
+                                    <option key={c._id || idx} value={c.firmCode}>{c.firmCode} - {c.firmName}</option>
                                   ))}
                                 </select>
                               </td>
@@ -1698,23 +1823,63 @@ export default function GeMSyncPage() {
                   <p className="text-xs text-slate-400 mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
                 </div>
 
-                {/* Search bar inside Sheet Library */}
-                <div className="relative w-full sm:w-72">
-                  <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-sm" />
-                  <input 
-                    type="text"
-                    placeholder="Search sheets library..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
-                    value={librarySearchQuery}
-                    onChange={(e) => setLibrarySearchQuery(e.target.value)}
-                  />
+                {/* Filter Tabs & Search Bar inside Sheet Library */}
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                  {/* Status Filter Tabs */}
+                  <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setSheetStatusFilter("current")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                        sheetStatusFilter === "current"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Current ({sheets.filter(s => !s.isCompleted).length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSheetStatusFilter("completed")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                        sheetStatusFilter === "completed"
+                          ? "bg-emerald-600 text-white shadow-md"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Completed ({sheets.filter(s => !!s.isCompleted).length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSheetStatusFilter("all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                        sheetStatusFilter === "all"
+                          ? "bg-slate-800 text-white shadow-md"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      All ({sheets.length})
+                    </button>
+                  </div>
+
+                  {/* Search bar inside Sheet Library */}
+                  <div className="relative w-full sm:w-64">
+                    <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-sm" />
+                    <input 
+                      type="text"
+                      placeholder="Search sheets library..."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500 font-semibold"
+                      value={librarySearchQuery}
+                      onChange={(e) => setLibrarySearchQuery(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
               {filteredSheets.length === 0 ? (
                 <div className="p-12 text-center text-slate-500 space-y-2">
                   <FiDatabase size={32} className="mx-auto text-slate-600" />
-                  <p className="text-xs">No saved sheets match your search query.</p>
+                  <p className="text-xs">No {sheetStatusFilter !== "all" ? sheetStatusFilter : ""} sheets match your criteria.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1730,14 +1895,125 @@ export default function GeMSyncPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/40">
                       {filteredSheets.map(sheet => {
-                        const buyerName = buyers.find(b => b.id === sheet.selectedBuyerId)?.name || "Unassigned";
+                        const matchedOpt = allBuyerOptions.find(b => b.id === sheet.selectedBuyerId || b.name === sheet.selectedBuyerId);
+                        const displayBuyerName = matchedOpt?.name || sheet.selectedBuyerId || "Select Associated Buyer...";
+                        const isSelected = !!matchedOpt || !!sheet.selectedBuyerId;
+                        const isPopoverOpen = openBuyerSelectSheetId === sheet.id;
+
                         return (
                           <tr key={sheet.id} className="hover:bg-slate-900/10 transition-colors">
-                            <td className="py-4 px-6 font-bold text-slate-200">{sheet.fileName}</td>
-                            <td className="py-4 px-6">
-                              <span className="bg-slate-900 py-1 px-2.5 rounded-lg border border-slate-800 text-[11px] font-semibold text-slate-300">
-                                {buyerName}
-                              </span>
+                            <td className="py-4 px-6 font-bold text-slate-200">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSheetCompleted(sheet.id, !!sheet.isCompleted)}
+                                  title={sheet.isCompleted ? "Mark as Current / Incomplete" : "Mark as Completed"}
+                                  className={`p-1 rounded-lg transition-all border cursor-pointer ${
+                                    sheet.isCompleted
+                                      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30"
+                                      : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300 hover:border-slate-700"
+                                  }`}
+                                >
+                                  <FiCheckCircle size={17} className={sheet.isCompleted ? "text-emerald-400" : "text-slate-600"} />
+                                </button>
+
+                                <span className={sheet.isCompleted ? "line-through text-slate-500" : "text-slate-200"}>
+                                  {sheet.fileName}
+                                </span>
+
+                                {sheet.isCompleted && (
+                                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                    Completed
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-4 px-6 relative">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isPopoverOpen) {
+                                    setOpenBuyerSelectSheetId(null);
+                                  } else {
+                                    setOpenBuyerSelectSheetId(sheet.id);
+                                    setBuyerSearchFilter("");
+                                  }
+                                }}
+                                className={`w-full max-w-[260px] text-left font-bold text-xs py-2 px-3.5 rounded-xl border transition-all flex items-center justify-between gap-2 shadow-sm ${
+                                  isSelected
+                                    ? "bg-slate-900/90 text-blue-400 border-slate-700 hover:border-blue-500"
+                                    : "bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700"
+                                }`}
+                              >
+                                <span className="truncate">{displayBuyerName}</span>
+                                <FiChevronDown size={14} className={`shrink-0 transition-transform ${isPopoverOpen ? "rotate-180 text-blue-400" : "text-slate-400"}`} />
+                              </button>
+
+                              {/* Searchable Buyer Popover Dropdown */}
+                              {isPopoverOpen && (
+                                <>
+                                  {/* Backdrop to close on click outside */}
+                                  <div
+                                    className="fixed inset-0 z-[90]"
+                                    onClick={() => setOpenBuyerSelectSheetId(null)}
+                                  />
+
+                                  <div className="absolute left-6 top-14 z-[100] w-80 bg-[#0f172a] border border-slate-700 rounded-2xl shadow-2xl p-3 space-y-2.5 animate-in fade-in">
+                                    <div className="relative">
+                                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs" />
+                                      <input
+                                        type="text"
+                                        autoFocus
+                                        placeholder="Search buyer name..."
+                                        value={buyerSearchFilter}
+                                        onChange={(e) => setBuyerSearchFilter(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-8 pr-8 text-xs text-white outline-none focus:border-blue-500 font-semibold"
+                                      />
+                                      {buyerSearchFilter && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setBuyerSearchFilter("")}
+                                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5"
+                                        >
+                                          <FiX size={12} />
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div className="max-h-60 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                                      {filteredBuyerOptions.length === 0 ? (
+                                        <div className="p-4 text-center text-xs text-slate-400 italic">
+                                          No buyer matching "{buyerSearchFilter}"
+                                        </div>
+                                      ) : (
+                                        filteredBuyerOptions.map(b => {
+                                          const isItemActive = b.id === sheet.selectedBuyerId || b.name === displayBuyerName;
+                                          return (
+                                            <button
+                                              key={b.id}
+                                              type="button"
+                                              onClick={() => {
+                                                handleChangeSheetBuyer(sheet.id, b.id);
+                                                setOpenBuyerSelectSheetId(null);
+                                              }}
+                                              className={`w-full text-left py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2 ${
+                                                isItemActive
+                                                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                                                  : "text-slate-300 hover:bg-slate-850 hover:text-white"
+                                              }`}
+                                            >
+                                              <span className="truncate">{b.name}</span>
+                                              {isItemActive && (
+                                                <FiCheck size={14} className="text-blue-400 shrink-0" />
+                                              )}
+                                            </button>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
                             </td>
                             <td className="py-4 px-6 text-center font-mono font-bold text-slate-300">{sheet.uploadedRows?.length || 0}</td>
                             <td className="py-4 px-6 text-center font-mono text-slate-400">

@@ -4,7 +4,8 @@ import SellerOrderForm from "@/components/SellerOrderForm";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX } from "react-icons/fi";
+import { useRouter } from "next/navigation";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft } from "react-icons/fi";
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
@@ -15,6 +16,7 @@ const TABS = [
 ];
 
 export default function OrdersListPage() {
+  const router = useRouter();
   const [orders, setOrders] = useState<any[]>([]);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -88,7 +90,9 @@ export default function OrdersListPage() {
       // 1. YOUR ORIGINAL STOCK LOGIC (Kept exactly the same)
       const stockRes = await fetch(`/api/stock?t=${Date.now()}`);
       const stockData = await stockRes.json();
-      setStock(Array.isArray(stockData) ? stockData : stockData.items || []);
+      const loadedStock = Array.isArray(stockData) ? stockData : stockData.items || [];
+      setStock(loadedStock);
+      setStocks(loadedStock);
 
       // 2. YOUR ORIGINAL SELLERS LOGIC (Kept exactly the same)
       const sellerRes = await fetch(`/api/sellers?t=${Date.now()}`);
@@ -459,8 +463,12 @@ const shippingLock = useRef(false);
       return;
     }
 
-    const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
-    const avStock = stockData?.totalQty ?? 0;
+    const stockList = stocks.length > 0 ? stocks : stock;
+    const stockData = stockList.find(s =>
+      (orderToUpdate.itemId && String(s._id) === String(orderToUpdate.itemId)) ||
+      (orderToUpdate.sku && s.sku && s.sku.trim().toLowerCase() === orderToUpdate.sku.trim().toLowerCase())
+    );
+    const avStock = stockData?.totalQty ?? (stockData as any)?.quantity ?? 0;
 
     if (shipQty > orderToUpdate.reQty) {
       alert("Quantity exceeds order limit");
@@ -882,9 +890,18 @@ const shippingLock = useRef(false);
       <div className="flex flex-col gap-6 mb-6">
         {/* Row 1: Title and Add Button */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
-            <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.back()}
+              title="Go Back"
+              className="p-3 text-slate-500 hover:text-blue-600 transition-all bg-slate-100 hover:bg-blue-50 rounded-xl border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center"
+            >
+              <FiArrowLeft size={18} />
+            </button>
+            <div>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
+              <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
+            </div>
           </div>
           <div>
             <button
@@ -1520,7 +1537,12 @@ const shippingLock = useRef(false);
                   {(() => {
                     const currentOrder = orders.find(o => o._id === selectedOrderId);
                     if (currentOrder) {
-                      return stocks.find(s => s._id === currentOrder.itemId)?.totalQty ?? 0;
+                      const stockList = stocks.length > 0 ? stocks : stock;
+                      const sDoc = stockList.find(s =>
+                        (currentOrder.itemId && String(s._id) === String(currentOrder.itemId)) ||
+                        (currentOrder.sku && s.sku && s.sku.trim().toLowerCase() === currentOrder.sku.trim().toLowerCase())
+                      );
+                      return sDoc?.totalQty ?? (sDoc as any)?.quantity ?? 0;
                     }
                     return 0;
                   })()}

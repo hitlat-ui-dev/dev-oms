@@ -1,3 +1,7 @@
+import { NextResponse } from "next/server";
+import clientPromise from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -59,7 +63,7 @@ export async function POST(req: Request) {
       };
 
       await db.collection("sellerorders").insertOne(newOrderDoc);
-      return NextResponse.json({ success: true, orderNo: newOrderNo, ...newOrderDoc }, { status: 201, headers: corsHeaders });
+      return NextResponse.json({ success: true, ...newOrderDoc }, { status: 201, headers: corsHeaders });
     }
 
     const { 

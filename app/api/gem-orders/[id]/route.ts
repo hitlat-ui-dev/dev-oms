@@ -15,12 +15,12 @@ export async function OPTIONS() {
 // DELETE: Reject/Delete a raw fetched GeM order
 export async function DELETE(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
-    const { id } = params;
+    const { id } = await params;
 
     const result = await db.collection("raw_gem_orders").deleteOne({ _id: new ObjectId(id) });
     if (result.deletedCount === 0) {
@@ -37,12 +37,12 @@ export async function DELETE(
 // POST: Verify and move raw GeM order to main sellerorders collection
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
-    const { id } = params;
+    const { id } = await params;
 
     const body = await req.json();
 

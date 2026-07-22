@@ -2,7 +2,18 @@
 
 All notable changes to the **Dev OMS** project will be documented in this file.
 
-## [1.3.0] - 2026-07-22
+## [1.3.1] - 2026-07-22
+
+### Added
+- **🏢 Seller Register Address in GeM Sync Excel**:
+  - Added a new column "Seller Register Address" between "Min Qty" and "Mapped Firm" when downloading the filled Excel sheet.
+  - Automatically fetches the address from the MongoDB company collection based on the mapped firm code.
+
+### Fixed
+- **🔑 Unique Key Prop warning**:
+  - Resolved console warnings in the GeM Sync page by providing unique fallback keys (`_id || idx`) for mapping custom options and firm dropdown options.
+
+## [1.3.0] - 2026-07-21
 
 ### Added
 - **☁️ Automated Cloud Backups (R2 & Google Drive)**:

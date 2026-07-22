@@ -25,6 +25,15 @@ const SellerSchema = new Schema({
     required: false, 
     trim: true 
   },
+  sellerBillName: { 
+    type: String, 
+    required: false, 
+    trim: true 
+  },
+  statementDescriptionName: [{ 
+    type: String, 
+    trim: true 
+  }],
 }, { timestamps: true });
 
 export default models.Seller || model("Seller", SellerSchema);

@@ -365,8 +365,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // LOGIC B: STANDARD UPDATE (FULL STATUS CHANGE)
     // ================================================================
 
-    // 1. STOCK CHECK: Only for full transitions to Ready to Ship
-    if (updateData.activeTab === "TO CHECK" && updateData.status === "READY TO SHIP") {
+    // 1. STOCK CHECK: For full transitions to Ready to Ship or Direct Delivery
+    if (updateData.activeTab === "TO CHECK" && (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY")) {
       const orderQty = Number(updateData.shipQty || updateData.reQty || originalOrder.reQty || 0);
 
       const stockItem = await db.collection("stock").findOne(stockFilter);
@@ -449,7 +449,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     if (adjustQty > 0) {
       if (updateData.activeTab === "TO CHECK") {
-        if (updateData.status === "READY TO SHIP") {
+        if (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY") {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: -adjustQty, quantity: -adjustQty }
           });

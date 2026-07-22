@@ -99,6 +99,7 @@ export async function POST(req: Request) {
             uploadedRows: sanitizedRows,
             originalExcelData: body.originalExcelData || [],
             selectedBuyerId: body.selectedBuyerId || "",
+            isCompleted: body.isCompleted !== undefined ? !!body.isCompleted : false,
             updatedAt: new Date().toISOString()
           } 
         },
