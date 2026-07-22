@@ -76,6 +76,16 @@ async function syncPurchaseRequest(
   }
 }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 200, headers: corsHeaders });
+}
+
 export async function POST(req: Request) {
   try {
     const client = await clientPromise;
@@ -84,7 +94,15 @@ export async function POST(req: Request) {
     await connectDB();
     const data = await req.json();
 
-    // --- 1. GENERATE ORDER NO (Your working logic) ---
+    // Check for duplicate contract number
+    if (data.contractNo && data.contractNo.trim() !== "") {
+      const existingContract = await db.collection("sellerorders").findOne({ contractNo: data.contractNo.trim() });
+      if (existingContract) {
+        return NextResponse.json({ error: "Duplicate contract number", duplicate: true }, { status: 409, headers: corsHeaders });
+      }
+    }
+
+    // --- 1. GENERATE ORDER NO ---
     const lastOrder = await SellerOrder.findOne({}, { orderNo: 1 }).sort({ orderNo: -1 });
     let newOrderNo = "OD0001";
     if (lastOrder && lastOrder.orderNo) {
@@ -93,7 +111,7 @@ export async function POST(req: Request) {
       newOrderNo = `OD${(lastNoNumeric + 1).toString().padStart(4, "0")}`;
     }
 
-    // --- 2. DUPLICATE CHECK ---
+    // --- 2. DUPLICATE CHECK FOR ORDER NO ---
     let isDuplicate = await SellerOrder.exists({ orderNo: newOrderNo });
     while (isDuplicate) {
       const lastNoNumeric = parseInt(newOrderNo.replace("OD", ""));
@@ -101,17 +119,51 @@ export async function POST(req: Request) {
       isDuplicate = await SellerOrder.exists({ orderNo: newOrderNo });
     }
 
-    const orderQty = Number(data.orderQty || 0);
-    const totalAmount = orderQty * Number(data.rate || 0);
-    const itemSku = data.sku?.trim();
+    const orderQty = Number(data.orderQty || data.qty || 0);
+    const rate = Number(data.rate || 0);
+    const totalAmount = Number(data.total || data.totalAmount || (orderQty * rate));
+    const itemSku = data.sku?.trim() || "";
 
-    // --- 3. CREATE ORDER ---
+    // If order comes from GeM Chrome Extension or is missing mandatory Mongoose fields (like sellerId/firmCode/itemId), handle insertion safely
+    if (data.source === "GeM Chrome Extension" || !data.sellerId || !data.firmCode || !data.itemId) {
+      const newOrderDoc = {
+        orderNo: newOrderNo,
+        firmCode: data.firmCode || "GeM",
+        sellerId: data.sellerId || null,
+        instituteName: data.instituteName || data.buyerDesignation || "GeM Buyer",
+        itemId: data.itemId || null,
+        itemName: data.itemName || data.itemNameRaw || "GeM Order Item",
+        category: data.category || "General",
+        unit: data.unit || "nos",
+        sku: itemSku,
+        contractDate: data.contractDate || "",
+        contractNo: data.contractNo || "",
+        contractUrl: data.contractUrl || data.pdfLink || "",
+        reQty: orderQty,
+        rate: rate,
+        totalAmount: totalAmount,
+        remark: data.remark || (data.location ? `Location: ${data.location}` : "Imported from GeM"),
+        status: data.status || "TO CHECK",
+        isPaid: false,
+        transportName: "",
+        transportRemark: "",
+        deliveryDate: "",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      await db.collection("sellerorders").insertOne(newOrderDoc);
+
+      return NextResponse.json(newOrderDoc, { status: 201, headers: corsHeaders });
+    }
+
+    // --- 3. STANDARD CREATE ORDER FOR FORM SUBMISSIONS ---
     const newOrder = await SellerOrder.create({
       ...data,
       orderNo: newOrderNo,
       reQty: orderQty,
       totalAmount,
-      sku: itemSku || "",
+      sku: itemSku,
       status: data.status || "TO CHECK",
     });
 
@@ -138,34 +190,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- 4. UPDATE STOCK & ITEMS DB (The Synced SKU Fix) ---
+    // --- 4. UPDATE STOCK & ITEMS DB ---
     if (itemSku && orderQty > 0) {
       const skuFilter = { sku: itemSku };
 
-      // 1. Update reQty in stock collection
-      const stockResult = await db.collection("stock").updateOne(
+      await db.collection("stock").updateOne(
         skuFilter,
         { $inc: { reQty: orderQty } },
         { upsert: false }
       );
 
-      // 2. 🟢 SYNCED: Update reQty in items collection simultaneously
-      const itemsResult = await db.collection("items").updateOne(
+      await db.collection("items").updateOne(
         skuFilter,
         { $inc: { reQty: orderQty } },
         { upsert: false }
       );
-      
-      console.log(
-        `[NEW ORDER STOCK SYNC] SKU: ${itemSku} | Stock Updated: ${stockResult.matchedCount > 0} | Items Updated: ${itemsResult.matchedCount > 0}`
-      );
-    } else {
-      console.log("[NEW ORDER STOCK SYNC] Skipped: Missing SKU or orderQty is 0");
     }
 
-    // --- 5. AUTO PURCHASE REQUEST (Stock Deficit Check) ---
-    // After updating reQty, check if total pending orders exceed available stock.
-    // If so, auto-create or update an existing Purchase Request for the deficit.
+    // --- 5. AUTO PURCHASE REQUEST ---
     if (itemSku && orderQty > 0) {
       try {
         await syncPurchaseRequest(db, itemSku, {
@@ -180,10 +222,10 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json(newOrder, { status: 201 });
+    return NextResponse.json(newOrder, { status: 201, headers: corsHeaders });
   } catch (error: any) {
     console.error("CRITICAL POST ERROR:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }
 

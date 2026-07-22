@@ -2,6 +2,22 @@
 
 All notable changes to the **Dev OMS** project will be documented in this file.
 
+## [1.3.0] - 2026-07-22
+
+### Added
+- **☁️ Automated Cloud Backups (R2 & Google Drive)**:
+  - Integrated dual cloud backup providers: **Cloudflare R2** (`lib/cloudflareR2.ts`) and **Google Drive** (`lib/googleDrive.ts`).
+  - Added background daily automatic backup trigger on initial user access to the app in [layout.tsx](file:///d:/personal/git-projects/dev-oms/app/layout.tsx).
+  - Created MongoDB tracking schema ([BackupLog.ts](file:///d:/personal/git-projects/dev-oms/models/BackupLog.ts)) to log backup attempts.
+  - Enhanced Admin Backup panel ([page.tsx](file:///d:/personal/git-projects/dev-oms/app/dashboard/admin/backup/page.tsx)) with instant cloud sync triggering, local ZIP compilation download, and a detailed backup execution history table.
+- **🔌 GeM Chrome Extension Integration**:
+  - Implemented CORS headers and preflight handling (`OPTIONS` method) in both orders and seller-orders API endpoints ([orders/route.ts](file:///d:/personal/git-projects/dev-oms/app/api/orders/route.ts) and [seller-orders/route.ts](file:///d:/personal/git-projects/dev-oms/app/api/seller-orders/route.ts)).
+  - Supported direct MongoDB raw collection insertions for orders imported from the extension, allowing fallback values for mandatory fields when Mongoose validation is bypassed.
+  - Added duplicate check based on `contractNo` returning conflict status code.
+- **📥 Raw GeM Orders Viewer**:
+  - Created [fetch-gem-orders](file:///d:/personal/git-projects/dev-oms/app/dashboard/orders/fetch-gem-orders/) sub-page and card entry in Orders dashboard to review, fetch, and verify raw orders synchronized via the GeM extension.
+  - Created `gem-orders` API endpoint for syncing raw GeM extension orders database.
+
 ## [1.2.0] - 2026-07-15
 
 ### Added

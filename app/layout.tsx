@@ -27,6 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       router.push("/login");
     } else {
       setIsLoading(false);
+      // Trigger background daily backup on initial site access
+      fetch("/api/backup/auto", { method: "POST" }).catch((err) =>
+        console.error("Auto backup check failed silently:", err)
+      );
     }
   }, [isLoginPage, router]);
 
