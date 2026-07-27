@@ -331,12 +331,33 @@ export default function GeMSyncPage() {
   };
 
   const saveListings = (updatedListings: FirmItemListing[]) => {
-    setListings(updatedListings);
-    localStorage.setItem("oms_firm_listings", JSON.stringify(updatedListings));
+    // Deduplicate listings array by (itemId/itemName + firmCode + buyerId)
+    const seen = new Map<string, FirmItemListing>();
+    for (const lst of updatedListings) {
+      if (!lst) continue;
+      const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
+      const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
+      const buyerKey = (lst.buyerId || "").toString().trim().toLowerCase();
+      const key = `${itemKey}::${firmKey}::${buyerKey}`;
+
+      if (!seen.has(key)) {
+        seen.set(key, lst);
+      } else {
+        const existing = seen.get(key)!;
+        const hasMoreInfo = !existing.gemLink && lst.gemLink;
+        const isNewer = new Date(lst.date || 0).getTime() > new Date(existing.date || 0).getTime();
+        if (hasMoreInfo || isNewer) {
+          seen.set(key, lst);
+        }
+      }
+    }
+    const deduplicated = Array.from(seen.values());
+    setListings(deduplicated);
+    localStorage.setItem("oms_firm_listings", JSON.stringify(deduplicated));
     fetch("/api/gem-sync?action=save_listings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedListings)
+      body: JSON.stringify(deduplicated)
     }).catch(err => console.error("Failed to sync listings to MongoDB", err));
   };
 
@@ -526,16 +547,53 @@ export default function GeMSyncPage() {
     return buyers.filter(b => b.name.toLowerCase().includes(buyerSearchQuery.toLowerCase()));
   }, [buyers, buyerSearchQuery]);
 
+  // Manual Cleanup Duplicates action handler
+  const handleCleanupDuplicates = async () => {
+    try {
+      const res = await fetch("/api/gem-sync?action=cleanup_duplicates", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        if (Array.isArray(data.listings)) {
+          setListings(data.listings);
+        }
+        alert(`✓ Cleaned up MongoDB! Removed ${data.removedCount || 0} duplicate listings.`);
+      }
+    } catch (err) {
+      console.error("Failed to cleanup duplicates:", err);
+      alert("Failed to cleanup duplicates. Check console for details.");
+    }
+  };
+
   // Filtered Listings for Master List (Sorted by item name to group duplicates consecutively)
   const filteredMasterListings = useMemo(() => {
-    let list = listings;
+    // Ensure array is deduplicated by (itemId/itemName + firmCode + buyerId)
+    const seen = new Map<string, FirmItemListing>();
+    for (const lst of listings) {
+      if (!lst) continue;
+      const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
+      const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
+      const buyerKey = (lst.buyerId || "").toString().trim().toLowerCase();
+      const key = `${itemKey}::${firmKey}::${buyerKey}`;
+
+      if (!seen.has(key)) {
+        seen.set(key, lst);
+      } else {
+        const existing = seen.get(key)!;
+        const hasMoreInfo = !existing.gemLink && lst.gemLink;
+        const isNewer = new Date(lst.date || 0).getTime() > new Date(existing.date || 0).getTime();
+        if (hasMoreInfo || isNewer) {
+          seen.set(key, lst);
+        }
+      }
+    }
+    let list = Array.from(seen.values());
     
     const itemQuery = masterItemSearch.trim().toLowerCase();
     const firmQuery = masterFirmSearch.trim().toLowerCase();
     const urlQuery = masterUrlSearch.trim().toLowerCase();
 
     if (itemQuery || firmQuery || urlQuery) {
-      list = listings.filter(lst => {
+      list = list.filter(lst => {
         const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "";
         const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
         const firmName = companies.find(c => c.firmCode === lst.firmCode)?.firmName || "";
@@ -2057,11 +2115,21 @@ export default function GeMSyncPage() {
           {activeTab === "master" && (
             <div className="bg-[var(--gem-card)] rounded-2xl border border-slate-800 shadow-xl overflow-hidden gem-sync-card">
               <div className="p-6 border-b border-slate-800 bg-[var(--gem-table-header)] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
-                    <FiList className="text-blue-500" /> Master Mapped Listings
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1">Consolidated record of all items mapped and linked to firms across all uploaded sheets.</p>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 w-full sm:w-auto mb-3 sm:mb-0">
+                  <div>
+                    <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                      <FiList className="text-blue-500" /> Master Mapped Listings
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">Consolidated record of all items mapped and linked to firms across all uploaded sheets.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCleanupDuplicates}
+                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:border-amber-500/50 py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm"
+                    title="Clean up existing duplicate listings in MongoDB"
+                  >
+                    <FiTrash2 size={13} /> Clean Duplicates
+                  </button>
                 </div>
                 
                 {/* Separate Search Inputs */}
