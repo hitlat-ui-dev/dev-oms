@@ -16,6 +16,10 @@ export default function StockPage() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
+  const [fixingNegative, setFixingNegative] = useState(false);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  const [fixingDuplicates, setFixingDuplicates] = useState(false);
+  const [duplicateResults, setDuplicateResults] = useState<any>(null);
   const [loginUser, setLoginUser] = useState<string>("");
   const [userPermissions, setUserPermissions] = useState<any>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
@@ -55,6 +59,62 @@ export default function StockPage() {
   };
 
   useEffect(() => { fetchStock(); }, []);
+
+  const handleFixNegative = async () => {
+    if (!window.confirm("This will reset ALL negative stock quantities to 0.\nAre you sure?")) return;
+    try {
+      setFixingNegative(true);
+      const res = await fetch("/api/stock/fix-negative", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ Done! ${data.message}`);
+        fetchStock();
+      } else {
+        alert(`❌ Error: ${data.error}`);
+      }
+    } catch (err) {
+      alert("Failed to fix negative stock.");
+    } finally {
+      setFixingNegative(false);
+    }
+  };
+
+  const handleCheckDuplicates = async () => {
+    try {
+      setCheckingDuplicates(true);
+      const res = await fetch("/api/stock/check-duplicates");
+      const data = await res.json();
+      if (res.ok) {
+        setDuplicateResults(data);
+      } else {
+        alert(`❌ Error: ${data.error}`);
+      }
+    } catch (err) {
+      alert("Failed to scan for duplicates.");
+    } finally {
+      setCheckingDuplicates(false);
+    }
+  };
+
+  const handleFixDuplicates = async () => {
+    if (!window.confirm(`This will remove ALL duplicate history entries and restore wrongly deducted stock.\nAre you sure?`)) return;
+    try {
+      setFixingDuplicates(true);
+      const res = await fetch("/api/stock/check-duplicates", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ Done!\n${data.message}`);
+        setDuplicateResults(null);
+        fetchStock();
+      } else {
+        alert(`❌ Error: ${data.error}`);
+      }
+    } catch (err) {
+      alert("Failed to fix duplicates.");
+    } finally {
+      setFixingDuplicates(false);
+    }
+  };
 
   const handleEdit = (item: any) => {
     setEditingItem(item);
@@ -220,6 +280,26 @@ export default function StockPage() {
               <FiDownload size={16} />
               Export Excel
             </button>
+
+            {isSuperAdmin && (
+              <button
+                onClick={handleFixNegative}
+                disabled={fixingNegative}
+                className="flex items-center gap-2 bg-rose-600 text-white px-6 py-4 rounded-2xl font-black uppercase text-xs hover:bg-rose-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-rose-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {fixingNegative ? "Fixing..." : "⚠ Fix Negative Stock"}
+              </button>
+            )}
+
+            {isSuperAdmin && (
+              <button
+                onClick={handleCheckDuplicates}
+                disabled={checkingDuplicates}
+                className="flex items-center gap-2 bg-violet-600 text-white px-6 py-4 rounded-2xl font-black uppercase text-xs hover:bg-violet-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-violet-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {checkingDuplicates ? "Scanning..." : "🔍 Check Duplicates"}
+              </button>
+            )}
 
             {showAddNewItem && (
               <button
@@ -689,6 +769,122 @@ export default function StockPage() {
             sku={selectedSku}
             onClose={() => setSelectedSku(null)}
           />
+        )}
+
+        {/* ── Duplicate Results Modal ── */}
+        {duplicateResults && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+
+              {/* Modal Header */}
+              <div className="p-6 border-b flex justify-between items-center bg-violet-50 rounded-t-2xl">
+                <div>
+                  <h2 className="text-lg font-black uppercase text-violet-900">🔍 Duplicate Entry Scan</h2>
+                  <p className="text-xs text-violet-600 font-bold mt-1">
+                    Scanned <span className="text-violet-900">{duplicateResults.totalNegativeItems}</span> negative-stock items
+                    &nbsp;·&nbsp;
+                    {duplicateResults.totalAffectedItems === 0
+                      ? <span className="text-green-600">✅ No duplicates found — all clean!</span>
+                      : <span className="text-red-600">⚠ {duplicateResults.totalAffectedItems} item(s) have fully-identical duplicate entries</span>}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wider">
+                    Match criteria: Type · Qty · Invoice No · Seller · Details · Date (same day)
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {duplicateResults.totalAffectedItems > 0 && (
+                    <button
+                      onClick={handleFixDuplicates}
+                      disabled={fixingDuplicates}
+                      className="bg-violet-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-violet-700 active:scale-95 transition-all disabled:opacity-60"
+                    >
+                      {fixingDuplicates ? "Fixing..." : `✅ Fix All ${duplicateResults.totalAffectedItems} Items`}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setDuplicateResults(null)}
+                    className="bg-white border w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-red-500 transition-all"
+                  >✕</button>
+                </div>
+              </div>
+
+              {/* Results */}
+              <div className="overflow-y-auto p-6 space-y-6">
+                {duplicateResults.totalAffectedItems === 0 ? (
+                  <div className="py-16 text-center">
+                    <p className="text-5xl mb-3">✅</p>
+                    <p className="text-slate-500 font-black uppercase text-sm">All negative-stock item histories are clean!</p>
+                  </div>
+                ) : (
+                  duplicateResults.items.map((item: any, i: number) => (
+                    <div key={i} className="border border-red-100 rounded-2xl overflow-hidden">
+
+                      {/* Item header */}
+                      <div className="bg-red-50 px-5 py-3 flex flex-wrap items-center gap-4 border-b border-red-100">
+                        <span className="font-mono text-violet-700 font-black text-sm">{item.sku}</span>
+                        <span className="font-black text-slate-800 text-sm">{item.itemName}</span>
+                        <span className="ml-auto flex items-center gap-3 text-xs font-bold">
+                          <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full">
+                            Current: {item.currentStock}
+                          </span>
+                          <span className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full">
+                            Extra Deducted: +{item.totalExtraDeducted}
+                          </span>
+                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full">
+                            Corrected: {item.correctedStock}
+                          </span>
+                        </span>
+                      </div>
+
+                      {/* Duplicate groups */}
+                      <div className="divide-y divide-slate-100">
+                        {item.duplicates.map((d: any, j: number) => (
+                          <div key={j} className="px-5 py-4 bg-white">
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                                ×{d.count} identical entries
+                              </span>
+                              <span className="text-orange-600 font-black text-xs">
+                                {d.extraCount} extra × {Math.abs(d.qty)} qty = {d.extraDeducted} units wrongly deducted
+                              </span>
+                            </div>
+
+                            {/* Full detail grid */}
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Date</p>
+                                <p className="font-bold text-slate-700">{d.date}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Type</p>
+                                <p className="font-bold text-green-700">{d.type}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Invoice / Order No</p>
+                                <p className="font-bold text-violet-700">{d.orderNo || "—"}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Qty (each entry)</p>
+                                <p className="font-bold text-red-600">{d.qty}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Seller</p>
+                                <p className="font-bold text-slate-700">{d.sellerName || "—"}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-lg p-2 border border-slate-100 col-span-2 md:col-span-1">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-0.5">Details</p>
+                                <p className="font-bold text-slate-500 truncate" title={d.otherDetails}>{d.otherDetails || "—"}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </BlockGuard>

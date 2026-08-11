@@ -336,26 +336,39 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         );
       }
 
-      // 3. Deduct ONLY the shipped amount from stock collections via SKU
-      await db.collection("stock").updateOne(stockFilter, {
-        $inc: { quantity: -shipQty, reQty: -shipQty }
-      });
+      // 3. Deduct ONLY the shipped amount from stock — floored at 0 (cannot go negative)
+      await db.collection("stock").updateOne(stockFilter, [
+        {
+          $set: {
+            quantity: { $max: [0, { $add: [{ $ifNull: ["$quantity", 0] }, -shipQty] }] },
+            reQty:    { $max: [0, { $add: [{ $ifNull: ["$reQty",    0] }, -shipQty] }] }
+          }
+        }
+      ]);
 
       await db.collection("items").updateOne(
         { sku: itemSku },
-        {
-          $inc: { currentStock: -shipQty, reQty: -shipQty },
-          $push: {
-            history: {
-              type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
-              qty: -shipQty,
-              date: new Date(),
-              orderNo: newOrderNo,
-              sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
-              otherDetails: `Split Order from To check to Ready to Ship. Order No: ${newOrderNo}`
+        [
+          {
+            $set: {
+              currentStock: { $max: [0, { $add: [{ $ifNull: ["$currentStock", 0] }, -shipQty] }] },
+              reQty:        { $max: [0, { $add: [{ $ifNull: ["$reQty",        0] }, -shipQty] }] },
+              history: {
+                $concatArrays: [
+                  { $ifNull: ["$history", []] },
+                  [{
+                    type: `PARTIAL SHIP by ${updateData.userName || "Admin"}`,
+                    qty: -shipQty,
+                    date: new Date(),
+                    orderNo: newOrderNo,
+                    sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
+                    otherDetails: `Split Order from To Check to Ready to Ship. Order No: ${newOrderNo}`
+                  }]
+                ]
+              }
             }
-          } as any
-        }
+          }
+        ]
       );
 
       return NextResponse.json(updatedOriginal, { status: 200 });
@@ -450,25 +463,39 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (adjustQty > 0) {
       if (updateData.activeTab === "TO CHECK") {
         if (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY") {
-          await db.collection("stock").updateOne(stockFilter, {
-            $inc: { reQty: -adjustQty, quantity: -adjustQty }
-          });
+          // Deduct stock — floored at 0 (cannot go negative)
+          await db.collection("stock").updateOne(stockFilter, [
+            {
+              $set: {
+                quantity: { $max: [0, { $add: [{ $ifNull: ["$quantity", 0] }, -adjustQty] }] },
+                reQty:    { $max: [0, { $add: [{ $ifNull: ["$reQty",    0] }, -adjustQty] }] }
+              }
+            }
+          ]);
 
           await db.collection("items").updateOne(
             { sku: itemSku },
-            {
-              $inc: { currentStock: -adjustQty, reQty: -adjustQty },
-              $push: {
-                history: {
-                  type: `${updateData.status} by ${updateData.userName || "Admin"}`,
-                  qty: -adjustQty,
-                  date: new Date(),
-                  orderNo: updated.orderNo,
-                  sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
-                  otherDetails: `Order confirmed so Stock deducted. It's from To Check to ${updateData.status}. `
+            [
+              {
+                $set: {
+                  currentStock: { $max: [0, { $add: [{ $ifNull: ["$currentStock", 0] }, -adjustQty] }] },
+                  reQty:        { $max: [0, { $add: [{ $ifNull: ["$reQty",        0] }, -adjustQty] }] },
+                  history: {
+                    $concatArrays: [
+                      { $ifNull: ["$history", []] },
+                      [{
+                        type: `${updateData.status} by ${updateData.userName || "Admin"}`,
+                        qty: -adjustQty,
+                        date: new Date(),
+                        orderNo: updated.orderNo,
+                        sellerName: originalOrder.sellerName || originalOrder.instituteName || "N/A",
+                        otherDetails: `Order confirmed so Stock deducted. It's from To Check to ${updateData.status}.`
+                      }]
+                    ]
+                  }
                 }
-              } as any
-            }
+              }
+            ]
           );
         } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER" || updateData.status === "FULFILLED") {
           await db.collection("stock").updateOne(stockFilter, {
