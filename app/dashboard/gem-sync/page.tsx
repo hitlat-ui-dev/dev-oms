@@ -96,7 +96,7 @@ export default function GeMSyncPage() {
   const [customItems, setCustomItems] = useState<any[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"dashboard" | "upload" | "checklist" | "buyers" | "sheets" | "master">("dashboard");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets" | "master">("master");
   const [showAllSynced, setShowAllSynced] = useState<boolean>(false);
 
   // Excel Upload states
@@ -1123,124 +1123,110 @@ export default function GeMSyncPage() {
 
   return (
     <BlockGuard permission="gemLinks">
-      <div className="p-4 md:p-8 bg-slate-50/50 min-h-screen text-[var(--gem-text-primary)] font-sans">
+      <div className="p-4 md:p-8 bg-[#f3f6f9] min-h-screen text-[var(--gem-text-primary)] font-sans">
         <div className="w-full mx-auto">
 
           {/* Header */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-200">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div className="flex items-center gap-4">
-              {activeTab === "dashboard" ? (
-                <Link href="/dashboard" className="text-slate-500 hover:text-blue-600 transition-colors flex items-center justify-center p-2 rounded-xl bg-white border border-slate-200 shadow-sm active:scale-95">
-                  <FiArrowLeft size={18} />
-                </Link>
-              ) : (
-                <button
-                  onClick={() => setActiveTab("dashboard")}
-                  className="text-slate-500 hover:text-blue-600 transition-colors flex items-center justify-center p-2 rounded-xl bg-white border border-slate-200 shadow-sm active:scale-95"
-                >
-                  <FiArrowLeft size={18} />
-                </button>
-              )}
+              <Link href="/dashboard" className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm hover:text-blue-600 transition-all text-slate-500 active:scale-95">
+                <FiArrowLeft size={18} />
+              </Link>
               <div>
-                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">
-                  {activeTab === "dashboard" && "GeM Sync Console"}
-                  {activeTab === "upload" && "Upload Sheet"}
-                  {activeTab === "checklist" && "Sync Checklist"}
-                  {activeTab === "buyers" && "Buyer History"}
-                  {activeTab === "sheets" && "Sheet Library"}
-                  {activeTab === "master" && "Master List"}
-                </h1>
-                <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase mt-1">
-                  {activeTab === "dashboard" && "Portal Synchronization Control"}
-                  {activeTab === "upload" && "Excel Workbook Mapping Panel"}
-                  {activeTab === "checklist" && "Marketplace Sync Log"}
-                  {activeTab === "buyers" && "Audit Log & Quote Timeline"}
-                  {activeTab === "sheets" && "Worksheet Library Directory"}
-                  {activeTab === "master" && "Consolidated directory of all matched and mapped items"}
-                </p>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800 dark:text-[var(--gem-text-primary)]">GeM Sync Console</h1>
+                <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase mt-1">Revised Rates & Client Sync Log</p>
               </div>
             </div>
           </div>
 
-          {/* =================== TAB: DASHBOARD MENU =================== */}
-          {activeTab === "dashboard" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {/* Card 1: Upload Sheet */}
-              <div
-                onClick={() => setActiveTab("upload")}
-                className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md hover:border-slate-300 transition-all cursor-pointer min-h-[160px] relative overflow-hidden group"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 text-xl shadow-md bg-purple-600 shadow-purple-100">
-                  <FiUploadCloud />
+          {/* Action Tabs - Styled exactly like the horizontal tab bar on the Orders page */}
+          <div className="flex overflow-x-auto gap-1 no-scrollbar border-b border-slate-200 w-full mb-6">
+            <button
+              onClick={() => setActiveTab("sheets")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "sheets"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+              }`}
+            >
+              <FiDatabase /> Sheet Library
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  View, resume, or delete previously saved Excel worksheets.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
-                <div>
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Upload Sheet</h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Map Excel Requirements to Inventory</p>
-                </div>
-                <div className="absolute right-0 top-0 w-24 h-24 rounded-full bg-slate-50 -mr-6 -mt-6 group-hover:scale-110 transition-transform"></div>
               </div>
-
-              {/* Card 2: Sync Checklist */}
-              <div
-                onClick={() => setActiveTab("checklist")}
-                className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md hover:border-slate-300 transition-all cursor-pointer min-h-[160px] relative overflow-hidden group"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 text-xl shadow-md bg-pink-600 shadow-pink-100">
-                  <FiCheckCircle />
+            </button>
+            <button
+              onClick={() => setActiveTab("upload")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "upload"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+              }`}
+            >
+              <FiUploadCloud /> Upload Sheet
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  Upload client Excel sheets to map requirements to live stock.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
-                <div>
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Sync Checklist</h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Verify Sync Statuses & Rate Revisions</p>
-                </div>
-                <div className="absolute right-0 top-0 w-24 h-24 rounded-full bg-slate-50 -mr-6 -mt-6 group-hover:scale-110 transition-transform"></div>
               </div>
-
-              {/* Card 3: Buyer History */}
-              <div
-                onClick={() => setActiveTab("buyers")}
-                className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md hover:border-slate-300 transition-all cursor-pointer min-h-[160px] relative overflow-hidden group"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 text-xl shadow-md bg-amber-500 shadow-amber-100">
-                  <FiUsers />
+            </button>
+            <button
+              onClick={() => setActiveTab("checklist")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "checklist"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+              }`}
+            >
+              <FiCheckCircle /> Sync Checklist
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  Track item sync statuses and perform rate revisions for firms.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
-                <div>
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Buyer History</h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Audit Rate Logs & Quote Timelines</p>
-                </div>
-                <div className="absolute right-0 top-0 w-24 h-24 rounded-full bg-slate-50 -mr-6 -mt-6 group-hover:scale-110 transition-transform"></div>
               </div>
-
-              {/* Card 4: Sheet Library */}
-              <div
-                onClick={() => setActiveTab("sheets")}
-                className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md hover:border-slate-300 transition-all cursor-pointer min-h-[160px] relative overflow-hidden group"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 text-xl shadow-md bg-blue-600 shadow-blue-100">
-                  <FiDatabase />
+            </button>
+            <button
+              onClick={() => setActiveTab("buyers")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "buyers"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+              }`}
+            >
+              <FiUsers /> Buyer History
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  View full logs, quotes, and timelines for each specific buyer.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
-                <div>
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Sheet Library</h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Resume Mappings & Manage Worksheets</p>
-                </div>
-                <div className="absolute right-0 top-0 w-24 h-24 rounded-full bg-slate-50 -mr-6 -mt-6 group-hover:scale-110 transition-transform"></div>
               </div>
-
-              {/* Card 5: Master List */}
-              <div
-                onClick={() => setActiveTab("master")}
-                className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md hover:border-slate-300 transition-all cursor-pointer min-h-[160px] relative overflow-hidden group"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white mb-6 text-xl shadow-md bg-emerald-600 shadow-emerald-100">
-                  <FiList />
+            </button>
+            <button
+              onClick={() => setActiveTab("master")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "master"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+              }`}
+            >
+              <FiList /> Master List
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  Consolidated directory of all matched and mapped items.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
-                <div>
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Master List</h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Directory of Mapped Inventory Items</p>
-                </div>
-                <div className="absolute right-0 top-0 w-24 h-24 rounded-full bg-slate-50 -mr-6 -mt-6 group-hover:scale-110 transition-transform"></div>
               </div>
-            </div>
-          )}
+            </button>
+          </div>
 
           {/* =================== TAB 1: UPLOAD & MAP SHEET =================== */}
           {activeTab === "upload" && (
