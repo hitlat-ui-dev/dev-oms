@@ -1127,81 +1127,81 @@ export default function GeMSyncPage() {
         <div className="w-full mx-auto">
 
           {/* Header */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-slate-800">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 pb-6 border-b border-[var(--gem-border)]">
             <div>
-              <Link href="/dashboard" className="flex items-center gap-2 text-slate-400 hover:text-white text-xs mb-2 transition-colors">
+              <Link href="/dashboard" className="flex items-center gap-2 text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] text-xs mb-2 transition-colors">
                 <FiArrowLeft /> Back to Dashboard
               </Link>
-              <h1 className="text-3xl font-black tracking-tight text-white uppercase flex items-center gap-3">
+              <h1 className="text-3xl font-black tracking-tight text-[var(--gem-text-primary)] uppercase flex items-center gap-3">
                 GeM Links Console
               </h1>
-              <p className="text-slate-400 text-xs mt-1">Manage buyer requirements, upload quotes, revise rates, and checklist sync logs.</p>
+              <p className="text-[var(--gem-text-secondary)] text-xs mt-1">Manage buyer requirements, upload quotes, revise rates, and checklist sync logs.</p>
             </div>
 
             {/* Action Tabs */}
-            <div className="flex gap-1 bg-slate-900/60 p-1.5 rounded-xl border border-slate-800 self-stretch md:self-auto">
+            <div className="flex gap-1 bg-[var(--gem-table-header)]/60 p-1.5 rounded-xl border border-[var(--gem-border)] self-stretch md:self-auto">
               <button
                 onClick={() => setActiveTab("sheets")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "sheets" ? "bg-blue-600 text-white shadow-lg" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"}`}
               >
                 <FiDatabase /> Sheet Library
                 <div className="relative group flex items-center ml-1">
-                  <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-slate-950 border border-slate-800 p-2 rounded-lg shadow-2xl text-[9px] font-black text-slate-300 normal-case leading-normal text-center select-none pointer-events-none">
+                  <FiInfo size={12} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                     View, resume, or delete previously saved Excel worksheets.
-                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-slate-950 border-r border-b border-slate-800"></div>
+                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                   </div>
                 </div>
               </button>
               <button
                 onClick={() => setActiveTab("upload")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "upload" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "upload" ? "bg-blue-600 text-white shadow-lg" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"}`}
               >
                 <FiUploadCloud /> Upload Sheet
                 <div className="relative group flex items-center ml-1">
-                  <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-slate-950 border border-slate-800 p-2 rounded-lg shadow-2xl text-[9px] font-black text-slate-300 normal-case leading-normal text-center select-none pointer-events-none">
+                  <FiInfo size={12} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                     Upload client Excel sheets to map requirements to live stock.
-                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-slate-950 border-r border-b border-slate-800"></div>
+                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                   </div>
                 </div>
               </button>
               <button
                 onClick={() => setActiveTab("checklist")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "checklist" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "checklist" ? "bg-blue-600 text-white shadow-lg" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"}`}
               >
                 <FiCheckCircle /> Sync Checklist
                 <div className="relative group flex items-center ml-1">
-                  <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-slate-950 border border-slate-800 p-2 rounded-lg shadow-2xl text-[9px] font-black text-slate-300 normal-case leading-normal text-center select-none pointer-events-none">
+                  <FiInfo size={12} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                     Track item sync statuses and perform rate revisions for firms.
-                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-slate-950 border-r border-b border-slate-800"></div>
+                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                   </div>
                 </div>
               </button>
               <button
                 onClick={() => setActiveTab("buyers")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "buyers" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "buyers" ? "bg-blue-600 text-white shadow-lg" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"}`}
               >
                 <FiUsers /> Buyer History
                 <div className="relative group flex items-center ml-1">
-                  <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-slate-950 border border-slate-800 p-2 rounded-lg shadow-2xl text-[9px] font-black text-slate-300 normal-case leading-normal text-center select-none pointer-events-none">
+                  <FiInfo size={12} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                     View full logs, quotes, and timelines for each specific buyer.
-                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-slate-950 border-r border-b border-slate-800"></div>
+                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                   </div>
                 </div>
               </button>
               <button
                 onClick={() => setActiveTab("master")}
-                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "master" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-200"}`}
+                className={`flex-1 md:flex-initial py-2.5 px-5 text-xs font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === "master" ? "bg-blue-600 text-white shadow-lg" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"}`}
               >
                 <FiList /> Master List
                 <div className="relative group flex items-center ml-1">
-                  <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-slate-950 border border-slate-800 p-2 rounded-lg shadow-2xl text-[9px] font-black text-slate-300 normal-case leading-normal text-center select-none pointer-events-none">
+                  <FiInfo size={12} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                     Consolidated directory of all matched and mapped items.
-                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-slate-950 border-r border-b border-slate-800"></div>
+                    <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                   </div>
                 </div>
               </button>
@@ -1213,12 +1213,12 @@ export default function GeMSyncPage() {
             <div className="space-y-6">
 
               {/* Excel Upload Card (Full width) */}
-              <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between gem-sync-card">
+              <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl flex flex-col justify-between gem-sync-card">
                 <div>
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                  <h3 className="text-xs font-black text-[var(--gem-text-secondary)] uppercase tracking-widest flex items-center gap-2 mb-4">
                     <FiUploadCloud className="text-blue-500" /> Upload Excel File
                   </h3>
-                  <p className="text-slate-400 text-xs mb-4">
+                  <p className="text-[var(--gem-text-secondary)] text-xs mb-4">
                     Upload your client's Excel sheet containing their required items. The sheet should contain columns like <b>item name</b>, <b>specification</b>, <b>quantity</b>, <b>unit</b>, and <b>remark</b>.
                   </p>
                 </div>
@@ -1234,7 +1234,7 @@ export default function GeMSyncPage() {
 
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-slate-950 text-slate-200 border-slate-800 hover:bg-slate-900 cursor-pointer"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
                   >
                     <FiUploadCloud size={16} /> {fileName ? "Change Sheet" : "Choose Excel Sheet"}
                   </button>
@@ -1242,7 +1242,7 @@ export default function GeMSyncPage() {
                   {fileName && (
                     <button
                       onClick={handleClearSheet}
-                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-red-950/40 text-red-400 border-red-900/35 hover:bg-red-950/60 cursor-pointer"
+                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-red-955/40 text-red-400 border-red-900/35 hover:bg-red-955/60 cursor-pointer"
                     >
                       Clear Sheet
                     </button>
@@ -1258,13 +1258,13 @@ export default function GeMSyncPage() {
 
               {/* Uploaded rows matching table */}
               {uploadedRows.length > 0 && (
-                <div className="bg-[var(--gem-card)] rounded-2xl border border-slate-800 shadow-xl overflow-hidden gem-sync-card">
+                <div className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
 
                   {/* Table title bar */}
-                  <div className="p-6 border-b border-slate-800 bg-[var(--gem-table-header)] flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                     <div>
-                      <h3 className="font-black text-sm uppercase tracking-wider text-white">Requirement Mapping Console</h3>
-                      <p className="text-xs text-slate-400 mt-1">Map each uploaded requirement row to your inventory items and select which Firm handles them.</p>
+                      <h3 className="font-black text-sm uppercase tracking-wider text-[var(--gem-text-primary)]">Requirement Mapping Console</h3>
+                      <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Map each uploaded requirement row to your inventory items and select which Firm handles them.</p>
                     </div>
 
                     <button
@@ -1279,7 +1279,7 @@ export default function GeMSyncPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="bg-slate-950 text-slate-400 font-black uppercase tracking-wider border-b border-slate-800">
+                        <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-black uppercase tracking-wider border-b border-[var(--gem-border)]">
                           <th className="py-4 px-4 text-center w-12 min-w-[48px]">#</th>
                           <th className="py-4 px-4 min-w-[200px]">Uploaded Requirement</th>
                           <th className="py-4 px-4 text-center w-24 min-w-[96px]">Req. Qty</th>
@@ -1292,7 +1292,7 @@ export default function GeMSyncPage() {
                           <th className="py-4 px-4 text-center w-[120px] min-w-[120px]">Actions</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60">
+                      <tbody className="divide-y divide-[var(--gem-border)]/60">
                         {uploadedRows.map((row) => {
                           const isMatched = !!row.mappedItemId;
                           const mappedItem = allItemsList.find(i => i._id === row.mappedItemId);
@@ -1312,18 +1312,18 @@ export default function GeMSyncPage() {
                           return (
                             <tr key={row.index} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
 
-                              <td className="py-4 px-4 text-center text-slate-500 font-mono min-w-[48px]">{row.index + 1}</td>
+                              <td className="py-4 px-4 text-center text-[var(--gem-text-secondary)] font-mono min-w-[48px]">{row.index + 1}</td>
 
                               <td className="py-4 px-4 min-w-[200px]">
-                                <span className="font-bold text-slate-200 block">{row.originalName}</span>
-                                {specification && <span className="text-[10px] text-slate-400 mt-1 block"><b>Spec:</b> {specification}</span>}
-                                {remark && <span className="text-[10px] text-slate-400 mt-0.5 block"><b>Remark:</b> {remark}</span>}
-                                {row.rate > 0 && <span className="text-[10px] text-slate-500 mt-0.5 block">Original Rate: ₹{row.rate}</span>}
+                                <span className="font-bold text-[var(--gem-text-primary)] block">{row.originalName}</span>
+                                {specification && <span className="text-[10px] text-[var(--gem-text-secondary)] mt-1 block"><b>Spec:</b> {specification}</span>}
+                                {remark && <span className="text-[10px] text-[var(--gem-text-secondary)] mt-0.5 block"><b>Remark:</b> {remark}</span>}
+                                {row.rate > 0 && <span className="text-[10px] text-[var(--gem-text-secondary)] mt-0.5 block">Original Rate: ₹{row.rate}</span>}
                               </td>
 
-                              <td className="py-4 px-4 text-center font-mono font-bold text-slate-300 w-24 min-w-[96px]">
+                              <td className="py-4 px-4 text-center font-mono font-bold text-[var(--gem-text-primary)] w-24 min-w-[96px]">
                                 <div>{row.qty || "—"}</div>
-                                {unit && <div className="text-[10px] text-slate-500 font-sans mt-0.5">{unit}</div>}
+                                {unit && <div className="text-[10px] text-[var(--gem-text-secondary)] font-sans mt-0.5">{unit}</div>}
                               </td>
 
                               <td className="py-4 px-4 w-[360px] min-w-[360px]">
@@ -1340,7 +1340,7 @@ export default function GeMSyncPage() {
                                       type="text"
                                       list={`stock-options-${row.index}`}
                                       placeholder="Search or select stock..."
-                                      className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 focus:outline-none focus:border-blue-500 flex-1"
+                                      className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg p-2 focus:outline-none focus:border-blue-500 flex-1"
                                       defaultValue={mappedItem ? `${mappedItem.sku} - ${mappedItem.itemName}` : ""}
                                       onChange={(e) => {
                                         const val = e.target.value;
@@ -1407,7 +1407,7 @@ export default function GeMSyncPage() {
                                       const previousListings = listings.filter(l => l.itemId === row.mappedItemId);
                                       if (previousListings.length > 0) {
                                         return (
-                                          <div className="flex flex-wrap gap-1 mt-1.5 p-1.5 bg-slate-950/40 rounded-lg border border-slate-900">
+                                          <div className="flex flex-wrap gap-1 mt-1.5 p-1.5 bg-[var(--gem-table-header)]/40 rounded-lg border border-[var(--gem-border)]">
                                             <span className="text-[9px] font-black text-amber-500/80 uppercase tracking-widest block w-full mb-1">Quick Fill from Master List:</span>
                                             {previousListings.map(prev => (
                                               <button
@@ -1427,7 +1427,7 @@ export default function GeMSyncPage() {
                                                     gemLink: prev.gemLink || ""
                                                   } : r));
                                                 }}
-                                                className="bg-[#1a2333]/70 hover:bg-blue-950/80 text-blue-400 hover:text-blue-300 border border-slate-800/60 hover:border-blue-700/40 text-[9px] py-1 px-2 rounded-md font-bold transition-all gem-sync-inner-card"
+                                                className="bg-[var(--gem-card)]/70 hover:bg-[var(--gem-table-row-hover)] text-blue-400 hover:text-blue-300 border border-[var(--gem-border)]/60 hover:border-blue-700/40 text-[9px] py-1 px-2 rounded-md font-bold transition-all gem-sync-inner-card"
                                               >
                                                 {prev.firmCode}: ₹{prev.rate}
                                               </button>
@@ -1449,7 +1449,7 @@ export default function GeMSyncPage() {
 
                                 {/* Inline resolution Form */}
                                 {unmatchedIndex === row.index && (
-                                  <div className="mt-4 p-4 bg-slate-950 border border-blue-600/30 rounded-xl space-y-3">
+                                  <div className="mt-4 p-4 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl space-y-3">
                                     <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Organically Add New Item</h4>
 
                                     <div className="space-y-2">
@@ -1458,13 +1458,13 @@ export default function GeMSyncPage() {
                                         placeholder="Confirm Item Name..."
                                         value={newUnmatchedItem.name}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, name: e.target.value }))}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                                        className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-lg p-2 text-xs text-[var(--gem-text-primary)]"
                                       />
 
                                       <select
                                         value={newUnmatchedItem.firmCode}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, firmCode: e.target.value }))}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-300"
+                                        className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-lg p-2 text-xs text-[var(--gem-text-primary)]"
                                       >
                                         <option value="">Select Firm...</option>
                                         {companies.map((c, idx) => (
@@ -1477,7 +1477,7 @@ export default function GeMSyncPage() {
                                         placeholder="Paste GeM Listing URL..."
                                         value={newUnmatchedItem.gemLink}
                                         onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, gemLink: e.target.value }))}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white"
+                                        className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-lg p-2 text-xs text-[var(--gem-text-primary)]"
                                       />
 
                                       <div className="grid grid-cols-2 gap-2">
@@ -1486,14 +1486,14 @@ export default function GeMSyncPage() {
                                           placeholder="Quote Rate (₹)"
                                           value={newUnmatchedItem.rate}
                                           onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, rate: e.target.value }))}
-                                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono"
+                                          className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-lg p-2 text-xs text-[var(--gem-text-primary)] font-mono"
                                         />
                                         <input
                                           type="number"
                                           placeholder="Min Qty"
                                           value={newUnmatchedItem.minQty}
                                           onChange={(e) => setNewUnmatchedItem(prev => ({ ...prev, minQty: e.target.value }))}
-                                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-mono"
+                                          className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-lg p-2 text-xs text-[var(--gem-text-primary)] font-mono"
                                         />
                                       </div>
                                     </div>
@@ -1501,7 +1501,7 @@ export default function GeMSyncPage() {
                                     <div className="flex gap-2 justify-end">
                                       <button
                                         onClick={() => setUnmatchedIndex(null)}
-                                        className="px-3 py-1.5 rounded-lg border border-slate-850 hover:bg-slate-900 text-[10px] uppercase font-bold"
+                                        className="px-3 py-1.5 rounded-lg border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] text-[10px] uppercase font-bold"
                                       >
                                         Cancel
                                       </button>
@@ -1520,7 +1520,7 @@ export default function GeMSyncPage() {
                                 <select
                                   value={row.firmCode}
                                   onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, firmCode: e.target.value } : r))}
-                                  className="bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg p-2 focus:outline-none focus:border-blue-500 w-full"
+                                  className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg p-2 focus:outline-none focus:border-blue-500 w-full"
                                 >
                                   <option value="">Select Firm...</option>
                                   {companies.map((c, idx) => (
@@ -1535,7 +1535,7 @@ export default function GeMSyncPage() {
                                     type="number"
                                     value={row.rate || ""}
                                     onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, rate: parseFloat(e.target.value) || 0 } : r))}
-                                    className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
+                                    className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
                                     placeholder="0.00"
                                   />
 
@@ -1556,7 +1556,7 @@ export default function GeMSyncPage() {
                                   type="number"
                                   value={row.availGemStock || ""}
                                   onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, availGemStock: parseInt(e.target.value) || 0 } : r))}
-                                  className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
+                                  className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="0"
                                 />
                               </td>
@@ -1566,7 +1566,7 @@ export default function GeMSyncPage() {
                                   type="number"
                                   value={row.minQty}
                                   onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, minQty: parseInt(e.target.value) || 1 } : r))}
-                                  className="bg-slate-950 border border-slate-800 text-xs font-bold text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
+                                  className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="1"
                                 />
                               </td>
@@ -1576,7 +1576,7 @@ export default function GeMSyncPage() {
                                   type="text"
                                   value={row.gemLink}
                                   onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, gemLink: e.target.value } : r))}
-                                  className="bg-slate-950 border border-slate-800 text-xs text-white rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
+                                  className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs text-[var(--gem-text-primary)] rounded-lg p-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="GeM Link..."
                                 />
                               </td>
@@ -1632,9 +1632,9 @@ export default function GeMSyncPage() {
 
                 if (firmsToShow.length === 0) {
                   return (
-                    <div className="p-12 text-center text-slate-500 bg-[var(--gem-card)] rounded-2xl border border-slate-800 shadow-xl gem-sync-card">
+                    <div className="p-12 text-center text-[var(--gem-text-secondary)] bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl gem-sync-card">
                       <FiCheckCircle size={32} className="mx-auto text-emerald-500 mb-2" />
-                      <p className="text-xs font-bold text-slate-300">✓ All items are fully synced across all firms!</p>
+                      <p className="text-xs font-bold text-[var(--gem-text-primary)]">✓ All items are fully synced across all firms!</p>
                     </div>
                   );
                 }
@@ -1647,21 +1647,21 @@ export default function GeMSyncPage() {
                   const syncedCount = allFirmListings.filter(l => l.status === "Synced").length;
 
                   return (
-                    <div key={firm._id} className="bg-[var(--gem-card)] rounded-2xl border border-slate-800 shadow-xl overflow-hidden gem-sync-card">
+                    <div key={firm._id} className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
 
                       {/* Header */}
-                      <div className="p-6 border-b border-slate-800 bg-[var(--gem-table-header)] flex justify-between items-center">
+                      <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex justify-between items-center">
                         <div>
-                          <h3 className="font-black text-sm text-white uppercase tracking-wider">
+                          <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider">
                             {firm.firmCode} — {firm.firmName}
                           </h3>
-                          <p className="text-xs text-slate-400 mt-1">Checklist of items ready to be synced to GeM Marketplace portal.</p>
+                          <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Checklist of items ready to be synced to GeM Marketplace portal.</p>
                         </div>
 
                         <div className="text-right flex items-center gap-3">
                           <button
                             onClick={() => setShowAllSynced(!showAllSynced)}
-                            className="text-[10px] font-black uppercase tracking-wider bg-slate-900 hover:bg-slate-850 text-slate-200 border border-slate-800 hover:border-slate-700 py-1.5 px-3.5 rounded-lg transition-all cursor-pointer"
+                            className="text-[10px] font-black uppercase tracking-wider bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] hover:border-[var(--gem-border)] py-1.5 px-3.5 rounded-lg transition-all cursor-pointer"
                           >
                             {showAllSynced ? "Hide Synced" : "Show All"}
                           </button>
@@ -1675,7 +1675,7 @@ export default function GeMSyncPage() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="bg-slate-950/40 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                            <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
                               <th className="py-3 px-4 text-center w-12">Sync</th>
                               <th className="py-3 px-4">Item Name</th>
                               <th className="py-3 px-4">GeM Product URL</th>
@@ -1685,7 +1685,7 @@ export default function GeMSyncPage() {
                               <th className="py-3 px-4 text-center w-40">Actions</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-800/40">
+                          <tbody className="divide-y divide-[var(--gem-border)]/40">
                             {displayListings.map(lst => (
                               <tr key={lst.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
                                 <td className="py-3.5 px-4 text-center">
@@ -1693,12 +1693,12 @@ export default function GeMSyncPage() {
                                     type="checkbox"
                                     checked={lst.status === "Synced"}
                                     onChange={() => toggleSyncStatus(lst.id)}
-                                    className="w-4.5 h-4.5 rounded bg-slate-950 border-slate-800 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                    className="w-4.5 h-4.5 rounded bg-[var(--gem-table-header)] border-[var(--gem-border)] text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
                                   />
                                 </td>
 
                                 <td className="py-3.5 px-4">
-                                  <span className="font-bold text-slate-200">{lst.itemName}</span>
+                                  <span className="font-bold text-[var(--gem-text-primary)]">{lst.itemName}</span>
                                 </td>
 
                                 <td className="py-3.5 px-4">
@@ -1717,26 +1717,26 @@ export default function GeMSyncPage() {
                                           navigator.clipboard.writeText(lst.gemLink);
                                           alert("✓ Link copied to clipboard!");
                                         }}
-                                        className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors cursor-pointer"
+                                        className="p-1 rounded bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] border border-[var(--gem-border)] transition-colors cursor-pointer"
                                         title="Copy Link"
                                       >
                                         <FiCopy size={11} />
                                       </button>
                                     </div>
                                   ) : (
-                                    <span className="text-slate-500 italic">No link provided</span>
+                                    <span className="text-[var(--gem-text-secondary)] italic">No link provided</span>
                                   )}
                                 </td>
 
-                                <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-200">
+                                <td className="py-3.5 px-4 text-center font-mono font-bold text-[var(--gem-text-primary)]">
                                   ₹{lst.rate}
                                 </td>
 
-                                <td className="py-3.5 px-4 text-center font-mono text-slate-300">
+                                <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
                                   {lst.availGemStock || 0}
                                 </td>
 
-                                <td className="py-3.5 px-4 text-center font-mono text-slate-300">
+                                <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
                                   {lst.minQty}
                                 </td>
 
@@ -1744,7 +1744,7 @@ export default function GeMSyncPage() {
                                   <div className="flex gap-2 justify-center">
                                     <button
                                       onClick={() => handleOpenRevision(lst)}
-                                      className="bg-slate-900 hover:bg-slate-800 text-amber-500 border border-slate-800 hover:border-amber-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                                      className="bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-amber-500 border border-[var(--gem-border)] hover:border-amber-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5"
                                     >
                                       <FiEdit size={12} /> Revise Rate
                                     </button>
@@ -1775,20 +1775,20 @@ export default function GeMSyncPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
               {/* Buyers list */}
-              <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 gem-sync-card">
-                <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+              <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl space-y-4 gem-sync-card">
+                <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
                   <FiUsers className="text-blue-500" /> Buyers Directories
                 </h3>
 
                 <div className="space-y-2">
                   {buyers.length === 0 ? (
-                    <p className="text-slate-500 text-xs text-center py-4">No buyers stored yet.</p>
+                    <p className="text-[var(--gem-text-secondary)] text-xs text-center py-4">No buyers stored yet.</p>
                   ) : (
                     buyers.map(b => (
                       <button
                         key={b.id}
                         onClick={() => setSelectedHistoryBuyerId(b.id)}
-                        className={`w-full text-left py-3 px-4 rounded-xl text-xs font-bold transition-all border ${selectedHistoryBuyerId === b.id ? "bg-blue-600/10 text-blue-400 border-blue-600/30" : "text-slate-300 hover:bg-slate-900/60 border-slate-850"}`}
+                        className={`w-full text-left py-3 px-4 rounded-xl text-xs font-bold transition-all border ${selectedHistoryBuyerId === b.id ? "bg-blue-600/10 text-blue-400 border-blue-600/30" : "text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)] border-[var(--gem-border)]"}`}
                       >
                         {b.name}
                       </button>
@@ -1798,58 +1798,58 @@ export default function GeMSyncPage() {
               </div>
 
               {/* Selected buyer history timeline */}
-              <div className="lg:col-span-2 bg-[var(--gem-card)] p-6 rounded-2xl border border-slate-800 shadow-xl min-h-[400px] gem-sync-card">
+              <div className="lg:col-span-2 bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl min-h-[400px] gem-sync-card">
                 {selectedHistoryBuyerId ? (
                   <div className="space-y-6">
 
                     {/* Title */}
                     <div>
-                      <h3 className="font-black text-sm text-white uppercase tracking-wider">
+                      <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider">
                         Rate Log & Quote Timeline: {buyers.find(b => b.id === selectedHistoryBuyerId)?.name}
                       </h3>
-                      <p className="text-xs text-slate-400 mt-1">Audit log of all quotes, rate updates, and negotiations for this buyer.</p>
+                      <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Audit log of all quotes, rate updates, and negotiations for this buyer.</p>
                     </div>
 
                     {/* Timeline items */}
                     {rateHistory.filter(hist => hist.buyerId === selectedHistoryBuyerId).length === 0 ? (
-                      <p className="text-slate-500 text-xs py-8 text-center">No quote or rate change history exists for this buyer yet.</p>
+                      <p className="text-[var(--gem-text-secondary)] text-xs py-8 text-center">No quote or rate change history exists for this buyer yet.</p>
                     ) : (
-                      <div className="relative border-l-2 border-slate-800 ml-4 pl-6 space-y-8">
+                      <div className="relative border-l-2 border-[var(--gem-border)] ml-4 pl-6 space-y-8">
                         {rateHistory
                           .filter(hist => hist.buyerId === selectedHistoryBuyerId)
                           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
                           .map(hist => (
                             <div key={hist.id} className="relative">
                               {/* Circle icon marker */}
-                              <div className="absolute -left-10.5 top-0.5 bg-slate-900 border-2 border-blue-500 w-4.5 h-4.5 rounded-full flex items-center justify-center">
+                              <div className="absolute -left-10.5 top-0.5 bg-[var(--gem-table-header)] border-2 border-blue-500 w-4.5 h-4.5 rounded-full flex items-center justify-center">
                                 <div className="bg-blue-500 w-1.5 h-1.5 rounded-full" />
                               </div>
 
-                              <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-855 space-y-2">
+                              <div className="bg-[var(--gem-table-header)]/40 p-4 rounded-xl border border-[var(--gem-border)] space-y-2">
                                 <div className="flex justify-between items-start">
-                                  <h4 className="font-bold text-slate-200">{hist.itemName}</h4>
-                                  <span className="text-[10px] text-slate-500 font-mono">
+                                  <h4 className="font-bold text-[var(--gem-text-primary)]">{hist.itemName}</h4>
+                                  <span className="text-[10px] text-[var(--gem-text-secondary)] font-mono">
                                     {formatDate(hist.timestamp)}
                                   </span>
                                 </div>
 
                                 <div className="flex gap-6 items-baseline mt-2">
                                   {hist.oldRate > 0 ? (
-                                    <div className="text-xs text-slate-500">
+                                    <div className="text-xs text-[var(--gem-text-secondary)]">
                                       Rate: <span className="line-through font-mono">₹{hist.oldRate}</span> → <span className="font-mono text-emerald-400 font-bold">₹{hist.newRate}</span>
                                     </div>
                                   ) : (
-                                    <div className="text-xs text-slate-300">
+                                    <div className="text-xs text-[var(--gem-text-primary)]">
                                       Initial Quote: <span className="font-mono text-emerald-400 font-bold">₹{hist.newRate}</span>
                                     </div>
                                   )}
 
-                                  <div className="text-xs text-slate-400">
+                                  <div className="text-xs text-[var(--gem-text-secondary)]">
                                     Min Qty: <span className="font-mono">{hist.newMinQty}</span>
                                   </div>
                                 </div>
 
-                                <p className="text-slate-400 text-xs italic bg-slate-950 p-2 rounded-lg border border-slate-900 mt-2">
+                                <p className="text-[var(--gem-text-secondary)] text-xs italic bg-[var(--gem-table-header)] p-2 rounded-lg border border-[var(--gem-border)] mt-2">
                                   "{hist.reason}"
                                 </p>
                               </div>
@@ -1860,7 +1860,7 @@ export default function GeMSyncPage() {
 
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-center text-slate-500 space-y-3">
+                  <div className="flex flex-col items-center justify-center h-full text-center text-[var(--gem-text-secondary)] space-y-3">
                     <FiUsers size={32} />
                     <p className="text-xs">Please select a buyer from the left directory to view their history timeline.</p>
                   </div>
@@ -1872,26 +1872,26 @@ export default function GeMSyncPage() {
 
           {/* =================== TAB 4: SHEET LIBRARY =================== */}
           {activeTab === "sheets" && (
-            <div className="bg-[#131a26] rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-slate-800 bg-slate-900/40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden">
+              <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)]/40 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                  <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
                     <FiDatabase className="text-blue-500" /> Uploaded Sheets Library
                   </h3>
-                  <p className="text-xs text-slate-400 mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Select and open any previously uploaded requirement sheet, or delete outdated ones.</p>
                 </div>
 
                 {/* Filter Tabs & Search Bar inside Sheet Library */}
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
                   {/* Status Filter Tabs */}
-                  <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <div className="flex bg-[var(--gem-table-header)] p-1 rounded-xl border border-[var(--gem-border)]">
                     <button
                       type="button"
                       onClick={() => setSheetStatusFilter("current")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
                         sheetStatusFilter === "current"
                           ? "bg-blue-600 text-white shadow-md"
-                          : "text-slate-400 hover:text-white"
+                          : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
                       }`}
                     >
                       Current ({sheets.filter(s => !s.isCompleted).length})
@@ -1902,7 +1902,7 @@ export default function GeMSyncPage() {
                       className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
                         sheetStatusFilter === "completed"
                           ? "bg-emerald-600 text-white shadow-md"
-                          : "text-slate-400 hover:text-white"
+                          : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
                       }`}
                     >
                       Completed ({sheets.filter(s => !!s.isCompleted).length})
@@ -1912,8 +1912,8 @@ export default function GeMSyncPage() {
                       onClick={() => setSheetStatusFilter("all")}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
                         sheetStatusFilter === "all"
-                          ? "bg-slate-800 text-white shadow-md"
-                          : "text-slate-400 hover:text-white"
+                          ? "bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] shadow-md"
+                          : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
                       }`}
                     >
                       All ({sheets.length})
@@ -1922,11 +1922,11 @@ export default function GeMSyncPage() {
 
                   {/* Search bar inside Sheet Library */}
                   <div className="relative w-full sm:w-64">
-                    <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-sm" />
+                    <FiSearch className="absolute left-3.5 top-3 text-[var(--gem-text-secondary)] text-sm" />
                     <input 
                       type="text"
                       placeholder="Search sheets library..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500 font-semibold"
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-4 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500 font-semibold"
                       value={librarySearchQuery}
                       onChange={(e) => setLibrarySearchQuery(e.target.value)}
                     />
@@ -1935,7 +1935,7 @@ export default function GeMSyncPage() {
               </div>
 
               {filteredSheets.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 space-y-2">
+                <div className="p-12 text-center text-[var(--gem-text-secondary)] space-y-2">
                   <FiDatabase size={32} className="mx-auto text-slate-600" />
                   <p className="text-xs">No {sheetStatusFilter !== "all" ? sheetStatusFilter : ""} sheets match your criteria.</p>
                 </div>
@@ -1943,7 +1943,7 @@ export default function GeMSyncPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="bg-slate-950/40 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                      <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
                         <th className="py-3.5 px-6">File Name</th>
                         <th className="py-3.5 px-6">Associated Buyer</th>
                         <th className="py-3.5 px-6 text-center w-36">Total Items</th>
@@ -1951,7 +1951,7 @@ export default function GeMSyncPage() {
                         <th className="py-3.5 px-6 text-center w-64">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/40">
+                    <tbody className="divide-y divide-[var(--gem-border)]/40">
                       {filteredSheets.map(sheet => {
                         const matchedOpt = allBuyerOptions.find(b => b.id === sheet.selectedBuyerId || b.name === sheet.selectedBuyerId);
                         const displayBuyerName = matchedOpt?.name || sheet.selectedBuyerId || "Select Associated Buyer...";
@@ -1959,8 +1959,8 @@ export default function GeMSyncPage() {
                         const isPopoverOpen = openBuyerSelectSheetId === sheet.id;
 
                         return (
-                          <tr key={sheet.id} className="hover:bg-slate-900/10 transition-colors">
-                            <td className="py-4 px-6 font-bold text-slate-200">
+                          <tr key={sheet.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
+                            <td className="py-4 px-6 font-bold text-[var(--gem-text-primary)]">
                               <div className="flex items-center gap-3">
                                 <button
                                   type="button"
@@ -1969,13 +1969,13 @@ export default function GeMSyncPage() {
                                   className={`p-1 rounded-lg transition-all border cursor-pointer ${
                                     sheet.isCompleted
                                       ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30"
-                                      : "bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300 hover:border-slate-700"
+                                      : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] border-[var(--gem-border)] hover:text-[var(--gem-text-primary)] hover:border-[var(--gem-border)]"
                                   }`}
                                 >
                                   <FiCheckCircle size={17} className={sheet.isCompleted ? "text-emerald-400" : "text-slate-600"} />
                                 </button>
 
-                                <span className={sheet.isCompleted ? "line-through text-slate-500" : "text-slate-200"}>
+                                <span className={sheet.isCompleted ? "line-through text-[var(--gem-text-secondary)]" : "text-[var(--gem-text-primary)]"}>
                                   {sheet.fileName}
                                 </span>
 
@@ -1999,8 +1999,8 @@ export default function GeMSyncPage() {
                                 }}
                                 className={`w-full max-w-[260px] text-left font-bold text-xs py-2 px-3.5 rounded-xl border transition-all flex items-center justify-between gap-2 shadow-sm ${
                                   isSelected
-                                    ? "bg-slate-900/90 text-blue-400 border-slate-700 hover:border-blue-500"
-                                    : "bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700"
+                                    ? "bg-[var(--gem-table-header)]/90 text-blue-400 border-[var(--gem-border)] hover:border-blue-500"
+                                    : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] border-[var(--gem-border)] hover:border-[var(--gem-border)]"
                                 }`}
                               >
                                 <span className="truncate">{displayBuyerName}</span>
@@ -2016,22 +2016,22 @@ export default function GeMSyncPage() {
                                     onClick={() => setOpenBuyerSelectSheetId(null)}
                                   />
 
-                                  <div className="absolute left-6 top-14 z-[100] w-80 bg-[#0f172a] border border-slate-700 rounded-2xl shadow-2xl p-3 space-y-2.5 animate-in fade-in">
+                                  <div className="absolute left-6 top-14 z-[100] w-80 bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl shadow-2xl p-3 space-y-2.5 animate-in fade-in">
                                     <div className="relative">
-                                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs" />
+                                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--gem-text-secondary)] text-xs" />
                                       <input
                                         type="text"
                                         autoFocus
                                         placeholder="Search buyer name..."
                                         value={buyerSearchFilter}
                                         onChange={(e) => setBuyerSearchFilter(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-8 pr-8 text-xs text-white outline-none focus:border-blue-500 font-semibold"
+                                        className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-8 text-xs text-[var(--gem-text-primary)] outline-none focus:border-blue-500 font-semibold"
                                       />
                                       {buyerSearchFilter && (
                                         <button
                                           type="button"
                                           onClick={() => setBuyerSearchFilter("")}
-                                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5"
+                                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] p-0.5"
                                         >
                                           <FiX size={12} />
                                         </button>
@@ -2040,7 +2040,7 @@ export default function GeMSyncPage() {
 
                                     <div className="max-h-60 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
                                       {filteredBuyerOptions.length === 0 ? (
-                                        <div className="p-4 text-center text-xs text-slate-400 italic">
+                                        <div className="p-4 text-center text-xs text-[var(--gem-text-secondary)] italic">
                                           No buyer matching "{buyerSearchFilter}"
                                         </div>
                                       ) : (
@@ -2057,7 +2057,7 @@ export default function GeMSyncPage() {
                                               className={`w-full text-left py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2 ${
                                                 isItemActive
                                                   ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
-                                                  : "text-slate-300 hover:bg-slate-850 hover:text-white"
+                                                  : "text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)] hover:text-[var(--gem-text-primary)]"
                                               }`}
                                             >
                                               <span className="truncate">{b.name}</span>
@@ -2073,8 +2073,8 @@ export default function GeMSyncPage() {
                                 </>
                               )}
                             </td>
-                            <td className="py-4 px-6 text-center font-mono font-bold text-slate-300">{sheet.uploadedRows?.length || 0}</td>
-                            <td className="py-4 px-6 text-center font-mono text-slate-400">
+                            <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">{sheet.uploadedRows?.length || 0}</td>
+                            <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-secondary)]">
                               {sheet.updatedAt ? formatDate(sheet.updatedAt) : "—"}
                             </td>
                             <td className="py-4 px-6 text-center">
@@ -2113,14 +2113,14 @@ export default function GeMSyncPage() {
 
           {/* =================== TAB 5: MASTER LIST =================== */}
           {activeTab === "master" && (
-            <div className="bg-[var(--gem-card)] rounded-2xl border border-slate-800 shadow-xl overflow-hidden gem-sync-card">
-              <div className="p-6 border-b border-slate-800 bg-[var(--gem-table-header)] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
+              <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 w-full sm:w-auto mb-3 sm:mb-0">
                   <div>
-                    <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                    <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
                       <FiList className="text-blue-500" /> Master Mapped Listings
                     </h3>
-                    <p className="text-xs text-slate-400 mt-1">Consolidated record of all items mapped and linked to firms across all uploaded sheets.</p>
+                    <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Consolidated record of all items mapped and linked to firms across all uploaded sheets.</p>
                   </div>
                   <button
                     type="button"
@@ -2135,31 +2135,31 @@ export default function GeMSyncPage() {
                 {/* Separate Search Inputs */}
                 <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                   <div className="relative w-full sm:w-48">
-                    <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-xs" />
+                    <FiSearch className="absolute left-3.5 top-3 text-[var(--gem-text-secondary)] text-xs" />
                     <input 
                       type="text"
                       placeholder="Search Item / SKU..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-4 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
                       value={masterItemSearch}
                       onChange={(e) => setMasterItemSearch(e.target.value)}
                     />
                   </div>
                   <div className="relative w-full sm:w-40">
-                    <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-xs" />
+                    <FiSearch className="absolute left-3.5 top-3 text-[var(--gem-text-secondary)] text-xs" />
                     <input 
                       type="text"
                       placeholder="Search Firm..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-4 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
                       value={masterFirmSearch}
                       onChange={(e) => setMasterFirmSearch(e.target.value)}
                     />
                   </div>
                   <div className="relative w-full sm:w-48">
-                    <FiSearch className="absolute left-3.5 top-3 text-slate-400 text-xs" />
+                    <FiSearch className="absolute left-3.5 top-3 text-[var(--gem-text-secondary)] text-xs" />
                     <input 
                       type="text"
                       placeholder="Search GeM URL..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-4 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
                       value={masterUrlSearch}
                       onChange={(e) => setMasterUrlSearch(e.target.value)}
                     />
@@ -2168,7 +2168,7 @@ export default function GeMSyncPage() {
               </div>
 
               {filteredMasterListings.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 space-y-2">
+                <div className="p-12 text-center text-[var(--gem-text-secondary)] space-y-2">
                   <FiList size={32} className="mx-auto text-slate-600" />
                   <p className="text-xs">No mapped listings found in the master list.</p>
                 </div>
@@ -2176,7 +2176,7 @@ export default function GeMSyncPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="bg-slate-950/40 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
+                      <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
                         <th className="py-3.5 px-6">SKU / Item Name</th>
                         <th className="py-3.5 px-6">Firm</th>
                         <th className="py-3.5 px-6 text-center w-32">Rate</th>
@@ -2187,7 +2187,7 @@ export default function GeMSyncPage() {
                         <th className="py-3.5 px-6 text-center w-28">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/40">
+                    <tbody className="divide-y divide-[var(--gem-border)]/40">
                       {filteredMasterListings.map((lst, idx) => {
                         const buyerName = buyers.find(b => b.id === lst.buyerId)?.name || "Unassigned";
                         const inventoryItem = allItemsList.find(i => i._id === lst.itemId);
@@ -2196,20 +2196,20 @@ export default function GeMSyncPage() {
                         return (
                           <tr key={lst.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
                             {rowSpan > 0 && (
-                              <td className="py-4 px-6 border-r border-slate-800/40 bg-slate-900/10 align-middle" rowSpan={rowSpan}>
-                                <span className="text-[10px] font-mono text-slate-500 block mb-0.5">{inventoryItem?.sku || "CUSTOM"}</span>
-                                <span className="font-bold text-slate-200 block">{lst.itemName}</span>
+                              <td className="py-4 px-6 border-r border-[var(--gem-border)]/40 bg-[var(--gem-table-header)]/10 align-middle" rowSpan={rowSpan}>
+                                <span className="text-[10px] font-mono text-[var(--gem-text-secondary)] block mb-0.5">{inventoryItem?.sku || "CUSTOM"}</span>
+                                <span className="font-bold text-[var(--gem-text-primary)] block">{lst.itemName}</span>
                               </td>
                             )}
                             <td className="py-4 px-6">
-                              <span className="bg-slate-900 py-1 px-2.5 rounded-lg border border-slate-800 text-[11px] font-bold text-slate-300">
+                              <span className="bg-[var(--gem-table-header)] py-1 px-2.5 rounded-lg border border-[var(--gem-border)] text-[11px] font-bold text-[var(--gem-text-primary)]">
                                 {lst.firmCode}
                               </span>
                             </td>
-                            <td className="py-4 px-6 text-center font-mono font-bold text-slate-200">₹{lst.rate}</td>
-                            <td className="py-4 px-6 text-center font-mono text-slate-300">{lst.availGemStock || 0}</td>
-                            <td className="py-4 px-6 text-center font-mono text-slate-300">{lst.minQty}</td>
-                            <td className="py-4 px-6 text-slate-400">{buyerName}</td>
+                            <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">₹{lst.rate}</td>
+                            <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-primary)]">{lst.availGemStock || 0}</td>
+                            <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-primary)]">{lst.minQty}</td>
+                            <td className="py-4 px-6 text-[var(--gem-text-secondary)]">{buyerName}</td>
                             <td className="py-4 px-6">
                               {lst.gemLink ? (
                                 <div className="flex items-center gap-2">
@@ -2226,14 +2226,14 @@ export default function GeMSyncPage() {
                                       navigator.clipboard.writeText(lst.gemLink);
                                       alert("✓ Link copied to clipboard!");
                                     }}
-                                    className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors cursor-pointer"
+                                    className="p-1 rounded bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] border border-[var(--gem-border)] transition-colors cursor-pointer"
                                     title="Copy Link"
                                   >
                                     <FiCopy size={11} />
                                   </button>
                                 </div>
                               ) : (
-                                <span className="text-slate-500 italic">No link</span>
+                                <span className="text-[var(--gem-text-secondary)] italic">No link</span>
                               )}
                             </td>
                             <td className="py-4 px-6 text-center">
@@ -2258,34 +2258,34 @@ export default function GeMSyncPage() {
           {/* =================== REVISION DIALOG MODAL =================== */}
           {isRevisionOpen && selectedListingForRevision && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-              <div className="bg-[var(--gem-card)] border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card">
+              <div className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card">
 
                 {/* Header */}
-                <div className="p-6 border-b border-slate-800 bg-[var(--gem-table-header)]">
-                  <h3 className="font-black text-sm text-white uppercase tracking-wider flex items-center gap-2">
+                <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)]">
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
                     <FiClock className="text-amber-500" /> Revise Rate (Buyer Negotiated)
                   </h3>
-                  <p className="text-xs text-slate-400 mt-1">Log negotiation revision details for: {selectedListingForRevision.itemName}</p>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Log negotiation revision details for: {selectedListingForRevision.itemName}</p>
                 </div>
 
                 {/* Form fields */}
                 <div className="p-6 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">New Rate (₹)</label>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">New Rate (₹)</label>
                       <input
                         type="number"
-                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono"
                         value={newRateValue}
                         onChange={(e) => setNewRateValue(e.target.value)}
                         placeholder="0.00"
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">New Min Qty</label>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">New Min Qty</label>
                       <input
                         type="number"
-                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono"
                         value={newMinQtyValue}
                         onChange={(e) => setNewMinQtyValue(e.target.value)}
                         placeholder="1"
@@ -2295,20 +2295,20 @@ export default function GeMSyncPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">GeM Product URL</label>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">GeM Product URL</label>
                       <input
                         type="text"
-                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)]"
                         value={newGemLinkValue}
                         onChange={(e) => setNewGemLinkValue(e.target.value)}
                         placeholder="Paste GeM Listing URL..."
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Avail GeM Stock</label>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Avail GeM Stock</label>
                       <input
                         type="number"
-                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white font-mono"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono"
                         value={newAvailGemStockValue}
                         onChange={(e) => setNewAvailGemStockValue(e.target.value)}
                         placeholder="0"
@@ -2317,10 +2317,10 @@ export default function GeMSyncPage() {
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Reason for Revision</label>
+                    <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Reason for Revision</label>
                     <textarea
                       rows={3}
-                      className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                      className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] focus:outline-none"
                       value={revisionReason}
                       onChange={(e) => setRevisionReason(e.target.value)}
                       placeholder="e.g. buyer requested lower price for bulk order..."
@@ -2329,13 +2329,13 @@ export default function GeMSyncPage() {
                 </div>
 
                 {/* Footer buttons */}
-                <div className="p-6 border-t border-slate-800 bg-slate-900/20 flex justify-end gap-3">
+                <div className="p-6 border-t border-[var(--gem-border)] bg-[var(--gem-table-header)]/20 flex justify-end gap-3">
                   <button
                     onClick={() => {
                       setIsRevisionOpen(false);
                       setSelectedListingForRevision(null);
                     }}
-                    className="px-5 py-2.5 rounded-lg border border-slate-850 hover:bg-slate-900 text-xs uppercase font-bold"
+                    className="px-5 py-2.5 rounded-lg border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] text-xs uppercase font-bold"
                   >
                     Cancel
                   </button>
