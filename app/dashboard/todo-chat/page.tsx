@@ -66,6 +66,17 @@ export default function TodoChatPage() {
   const [loadingChat, setLoadingChat] = useState(true);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+
+  // Track whether the user is scrolled near the bottom of the chat log, so
+  // polling for new messages doesn't yank them back down while reading history.
+  const handleChatScroll = () => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 120;
+  };
 
   // Authenticate & Load initial data
   useEffect(() => {
@@ -97,9 +108,12 @@ export default function TodoChatPage() {
     return () => clearInterval(interval);
   }, [router]);
 
-  // Scroll to bottom of chat
+  // Scroll to bottom of chat — only when the user is already near the bottom,
+  // and only within the chat log itself (never the whole page).
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   }, [chatMessages]);
 
   const fetchTasks = async () => {
@@ -247,6 +261,7 @@ export default function TodoChatPage() {
 
     const msgText = newMessage;
     setNewMessage("");
+    isNearBottomRef.current = true; // always jump to bottom for a message the user just sent
 
     try {
       const res = await fetch("/api/chat", {
@@ -283,59 +298,59 @@ export default function TodoChatPage() {
   };
 
   return (
-    <div className="p-4 md:p-8 bg-[#0f172a] min-h-screen text-slate-100 font-sans todo-chat-container">
+    <div className="p-4 md:p-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
       <div className="max-w-7xl mx-auto flex flex-col gap-6 h-[calc(100vh-140px)]">
-        
+
         {/* Header */}
-        <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+        <div className="flex justify-between items-center pb-4 border-b border-slate-200">
           <div>
-            <Link href="/dashboard" className="flex items-center gap-2 text-slate-400 hover:text-white text-xs mb-1 transition-colors">
+            <Link href="/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-1 transition-colors">
               <FiArrowLeft /> Back to Dashboard
             </Link>
-            <h1 className="text-2xl font-black uppercase tracking-tight text-white flex items-center gap-2">
-              <FiCheckSquare className="text-violet-500" /> Team Workspace
+            <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
+              <FiCheckSquare className="text-blue-600" /> Team Workspace
             </h1>
-            <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mt-0.5">Tasks & Live Discussion Hub</p>
+            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">Tasks & Live Discussion Hub</p>
           </div>
         </div>
 
         {/* Dual-Pane Workspace Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-          
+
           {/* LEFT PANEL: Task management (7 cols) */}
-          <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 flex flex-col min-h-0 backdrop-blur-sm shadow-xl todo-chat-card">
-            
+          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col min-h-0 shadow-sm">
+
             {/* Task Filters */}
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 todo-chat-filter-bg">
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                 <button
                   onClick={() => setTaskFilter("all")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all todo-chat-filter-btn ${
-                    taskFilter === "all" ? "active bg-violet-600 text-white shadow-md shadow-violet-600/20" : "text-slate-400 hover:text-white"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    taskFilter === "all" ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" : "text-slate-500 hover:text-slate-900 hover:bg-white"
                   }`}
                 >
                   All Tasks
                 </button>
                 <button
                   onClick={() => setTaskFilter("my")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all todo-chat-filter-btn ${
-                    taskFilter === "my" ? "active bg-violet-600 text-white shadow-md shadow-violet-600/20" : "text-slate-400 hover:text-white"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    taskFilter === "my" ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" : "text-slate-500 hover:text-slate-900 hover:bg-white"
                   }`}
                 >
                   My Tasks
                 </button>
                 <button
                   onClick={() => setTaskFilter("pending")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all todo-chat-filter-btn ${
-                    taskFilter === "pending" ? "active bg-violet-600 text-white shadow-md shadow-violet-600/20" : "text-slate-400 hover:text-white"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    taskFilter === "pending" ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" : "text-slate-500 hover:text-slate-900 hover:bg-white"
                   }`}
                 >
                   Pending
                 </button>
                 <button
                   onClick={() => setTaskFilter("completed")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all todo-chat-filter-btn ${
-                    taskFilter === "completed" ? "active bg-violet-600 text-white shadow-md shadow-violet-600/20" : "text-slate-400 hover:text-white"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    taskFilter === "completed" ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" : "text-slate-500 hover:text-slate-900 hover:bg-white"
                   }`}
                 >
                   Completed
@@ -344,9 +359,9 @@ export default function TodoChatPage() {
             </div>
 
             {/* Microsoft To-Do style Task Input */}
-            <form onSubmit={handleCreateTask} className="mb-4 bg-slate-950/80 border border-slate-800 rounded-xl overflow-hidden p-3 transition-all duration-200 todo-chat-input-wrapper">
+            <form onSubmit={handleCreateTask} className="mb-4 bg-slate-50 border border-slate-200 rounded-xl overflow-hidden p-3 transition-all duration-200">
               <div className="flex items-center gap-2">
-                <button type="submit" className="p-1.5 text-slate-400 hover:text-violet-500 transition-colors">
+                <button type="submit" className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors">
                   <FiPlus size={18} />
                 </button>
                 <input
@@ -355,20 +370,20 @@ export default function TodoChatPage() {
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
                   onFocus={() => setIsAddingTaskExpanded(true)}
-                  className="bg-transparent border-none text-xs text-white focus:outline-none flex-1 font-bold"
+                  className="bg-transparent border-none text-xs text-slate-900 focus:outline-none flex-1 font-bold placeholder-slate-400"
                 />
               </div>
 
               {/* Collapsible Details Pane */}
               {isAddingTaskExpanded && (
-                <div className="mt-3 pt-3 border-t border-slate-800/60 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="mt-3 pt-3 border-t border-slate-200 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
                   <textarea
                     placeholder="Add description or notes..."
                     value={taskDesc}
                     onChange={(e) => setTaskDesc(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-300 focus:outline-none focus:border-violet-500 h-16 resize-none"
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-blue-500 h-16 resize-none"
                   />
-                  
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {/* Assigned To selection */}
                     <div className="flex flex-col gap-1">
@@ -376,7 +391,7 @@ export default function TodoChatPage() {
                       <select
                         value={assignedTo}
                         onChange={(e) => setAssignedTo(e.target.value)}
-                        className="bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none"
+                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-blue-500"
                       >
                         <option value="">Unassigned</option>
                         {users.map(u => (
@@ -392,7 +407,7 @@ export default function TodoChatPage() {
                         type="date"
                         value={dueDate}
                         onChange={(e) => setDueDate(e.target.value)}
-                        className="bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none"
+                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-blue-500"
                       />
                     </div>
 
@@ -403,7 +418,7 @@ export default function TodoChatPage() {
                         type="datetime-local"
                         value={reminder}
                         onChange={(e) => setReminder(e.target.value)}
-                        className="bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none"
+                        className="bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-blue-500"
                       />
                     </div>
                   </div>
@@ -412,13 +427,13 @@ export default function TodoChatPage() {
                     <button
                       type="button"
                       onClick={() => setIsAddingTaskExpanded(false)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider text-slate-400 hover:bg-slate-900"
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider text-slate-500 hover:bg-slate-100"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="bg-violet-600 hover:bg-violet-500 px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider text-white shadow-md shadow-violet-600/20"
+                      className="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider text-white shadow-md shadow-blue-600/20"
                     >
                       Add Task
                     </button>
@@ -431,11 +446,11 @@ export default function TodoChatPage() {
             <div className="flex-1 overflow-y-auto space-y-2 pr-1.5 custom-scrollbar">
               {loadingTasks ? (
                 <div className="flex justify-center items-center py-10">
-                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-violet-500"></div>
+                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
                 </div>
               ) : filteredTasks.length === 0 ? (
-                <div className="text-center py-12 text-slate-500 space-y-2">
-                  <FiList className="mx-auto text-2xl text-slate-600 animate-pulse" />
+                <div className="text-center py-12 text-slate-400 space-y-2">
+                  <FiList className="mx-auto text-2xl text-slate-300" />
                   <p className="text-xs uppercase font-black tracking-widest">No tasks found</p>
                 </div>
               ) : (
@@ -444,10 +459,10 @@ export default function TodoChatPage() {
                   return (
                     <div
                       key={task._id}
-                      className={`group flex items-start justify-between p-3.5 rounded-xl border transition-all duration-200 todo-chat-task-item ${
-                        isCompleted 
-                          ? "completed bg-slate-950/20 border-slate-900/60 opacity-60" 
-                          : "bg-slate-950/60 hover:bg-slate-950/80 border-slate-800/80 hover:border-violet-500/20"
+                      className={`group flex items-start justify-between p-3.5 rounded-xl border transition-all duration-200 ${
+                        isCompleted
+                          ? "bg-slate-50/60 border-slate-200 opacity-60"
+                          : "bg-white hover:bg-blue-50/40 border-slate-200 hover:border-blue-300"
                       }`}
                     >
                       <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -455,7 +470,7 @@ export default function TodoChatPage() {
                         <button
                           type="button"
                           onClick={() => handleToggleStatus(task)}
-                          className="mt-0.5 text-slate-400 hover:text-violet-500 transition-colors flex-shrink-0"
+                          className="mt-0.5 text-slate-300 hover:text-blue-600 transition-colors flex-shrink-0"
                         >
                           {isCompleted ? (
                             <FiCheckSquare className="text-emerald-500" size={17} />
@@ -463,37 +478,37 @@ export default function TodoChatPage() {
                             <FiSquare size={17} />
                           )}
                         </button>
-                        
+
                         <div className="flex-1 min-w-0">
-                          <span className={`text-xs font-bold block todo-chat-task-title ${isCompleted ? "line-through text-slate-500" : "text-slate-100"}`}>
+                          <span className={`text-xs font-bold block ${isCompleted ? "line-through text-slate-400" : "text-slate-800"}`}>
                             {task.title}
                           </span>
-                          
+
                           {task.description && (
-                            <p className="text-[11px] text-slate-400 mt-1 leading-relaxed max-w-lg whitespace-pre-wrap">{task.description}</p>
+                            <p className="text-[11px] text-slate-500 mt-1 leading-relaxed max-w-lg whitespace-pre-wrap">{task.description}</p>
                           )}
 
                           {/* Task details bar */}
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2">
                             {task.assignedTo && (
-                              <span className="inline-flex items-center gap-1.5 bg-violet-600/10 border border-violet-500/20 text-violet-400 text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
+                              <span className="inline-flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-700 text-[10px] font-black tracking-wide uppercase px-2 py-0.5 rounded-md">
                                 <FiUser size={10} /> {task.assignedTo}
                               </span>
                             )}
-                            
+
                             {task.dueDate && (
-                              <span className="inline-flex items-center gap-1.5 bg-amber-600/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                              <span className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-md">
                                 <FiCalendar size={10} /> {task.dueDate}
                               </span>
                             )}
 
                             {task.reminder && (
-                              <span className="inline-flex items-center gap-1.5 bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                              <span className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-md">
                                 <FiClock size={10} /> {new Date(task.reminder).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                               </span>
                             )}
 
-                            <span className="text-[9px] font-bold text-slate-500">
+                            <span className="text-[9px] font-bold text-slate-400">
                               By {task.createdBy}
                             </span>
                           </div>
@@ -503,7 +518,7 @@ export default function TodoChatPage() {
                       {/* Delete Action button */}
                       <button
                         onClick={() => handleDeleteTask(task._id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-500 transition-all rounded hover:bg-slate-900/60 ml-2"
+                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-600 transition-all rounded hover:bg-red-50 ml-2"
                         title="Delete Task"
                       >
                         <FiTrash2 size={13} />
@@ -516,55 +531,60 @@ export default function TodoChatPage() {
           </div>
 
           {/* RIGHT PANEL: Live Group Chat (5 cols) */}
-          <div className="lg:col-span-5 bg-slate-900/60 border border-slate-800 rounded-2xl flex flex-col min-h-0 backdrop-blur-sm shadow-xl overflow-hidden todo-chat-card">
-            
+          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl flex flex-col min-h-0 shadow-sm overflow-hidden">
+
             {/* Chat header */}
-            <div className="p-4 border-b border-slate-800 bg-slate-950/40 flex items-center justify-between">
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <FiMessageSquare className="text-violet-500" />
-                <h2 className="text-xs font-black uppercase tracking-wider text-slate-200">Team Discussion</h2>
+                <FiMessageSquare className="text-blue-600" />
+                <h2 className="text-xs font-black uppercase tracking-wider text-slate-800">Team Discussion</h2>
               </div>
-              <span className="bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full animate-pulse">
+              <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full animate-pulse">
                 Live Channel
               </span>
             </div>
 
             {/* Chat Messages Log */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950/20">
+            <div
+              ref={chatContainerRef}
+              onScroll={handleChatScroll}
+              className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-50/50"
+            >
+
               {loadingChat ? (
                 <div className="flex justify-center items-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-violet-500"></div>
+                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
                 </div>
               ) : chatMessages.length === 0 ? (
-                <div className="flex flex-col justify-center items-center h-full text-slate-600 space-y-1">
-                  <FiMessageSquare size={32} className="text-slate-700" />
+                <div className="flex flex-col justify-center items-center h-full text-slate-400 space-y-1">
+                  <FiMessageSquare size={32} className="text-slate-300" />
                   <p className="text-xs uppercase font-black tracking-widest text-slate-500">No messages yet</p>
-                  <p className="text-[10px] text-slate-600">Start the conversation below!</p>
+                  <p className="text-[10px] text-slate-400">Start the conversation below!</p>
                 </div>
               ) : (
                 chatMessages.map((msg, index) => {
                   const isMe = msg.sender.toLowerCase() === currentUser.toLowerCase();
-                  
+
                   return (
                     <div key={msg._id || index} className={`flex items-start gap-2.5 ${isMe ? "flex-row-reverse" : ""}`}>
                       {/* Avatar */}
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black border text-white select-none todo-chat-avatar ${
-                        isMe ? "todo-chat-avatar-me bg-violet-600 border-violet-500" : "bg-slate-800 border-slate-700"
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black border select-none ${
+                        isMe ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-100 border-slate-200 text-slate-600"
                       }`}>
                         {getUserInitials(msg.sender)}
                       </div>
 
                       {/* Bubble */}
                       <div className="max-w-[75%] space-y-0.5">
-                        <div className={`flex items-center gap-1.5 text-[9px] text-slate-500 font-bold ${isMe ? "justify-end" : ""}`}>
-                          <span className="capitalize text-slate-400">{msg.sender}</span>
+                        <div className={`flex items-center gap-1.5 text-[9px] text-slate-400 font-bold ${isMe ? "justify-end" : ""}`}>
+                          <span className="capitalize text-slate-500">{msg.sender}</span>
                           <span>•</span>
                           <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
-                        <div className={`p-3 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap todo-chat-chat-bubble ${
-                          isMe 
-                            ? "todo-chat-chat-bubble-me bg-violet-600 text-white rounded-tr-none shadow-md shadow-violet-600/10" 
-                            : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none"
+                        <div className={`p-3 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap ${
+                          isMe
+                            ? "bg-blue-600 text-white rounded-tr-none shadow-md shadow-blue-600/10"
+                            : "bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm"
                         }`}>
                           {msg.message}
                         </div>
@@ -577,17 +597,17 @@ export default function TodoChatPage() {
             </div>
 
             {/* Input area */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-800 bg-slate-950/40 flex items-center gap-2">
+            <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-2">
               <input
                 type="text"
                 placeholder="Type your message..."
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl py-2 px-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
+                className="flex-1 bg-white border border-slate-200 rounded-xl py-2 px-3.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500"
               />
               <button
                 type="submit"
-                className="bg-violet-600 hover:bg-violet-500 p-2 rounded-xl text-white transition-all shadow-md shadow-violet-600/20"
+                className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20"
                 title="Send Message"
               >
                 <FiSend size={14} />

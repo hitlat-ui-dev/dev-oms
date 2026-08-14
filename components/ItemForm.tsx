@@ -22,6 +22,19 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showUnitModal, setShowUnitModal] = useState(false);
   const [newName, setNewName] = useState("");
+  const [currentUsername, setCurrentUsername] = useState("");
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("oms_user");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.username) setCurrentUsername(parsed.username);
+      }
+    } catch (err) {
+      console.error("Failed to read logged-in user", err);
+    }
+  }, []);
 
   const [formData, setFormData] = useState({
     itemName: "",
@@ -120,7 +133,8 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
       console.log("Step 1: Sending data to server...", formData);
       const res = await fetch(url, {
         method: method,
-        body: JSON.stringify(formData), // Just send the whole formData
+        // createdBy is only sent on create — an edit shouldn't reassign authorship
+        body: JSON.stringify(isEditing ? formData : { ...formData, createdBy: currentUsername }),
         headers: { "Content-Type": "application/json" }
       });
 const result = await res.json();

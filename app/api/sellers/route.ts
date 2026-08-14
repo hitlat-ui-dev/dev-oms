@@ -62,6 +62,7 @@ export async function POST(req: Request) {
       address: data.address?.trim() || "",
       place: data.place?.trim() || "",
       sellerBillName: data.sellerBillName?.trim() || "",
+      gemLocationText: data.gemLocationText?.trim() || "",
       statementDescriptionName: descNames
     };
 

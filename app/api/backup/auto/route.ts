@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 import JSZip from "jszip";
 import BackupLog from "@/models/BackupLog";
 import { uploadFileToGoogleDrive } from "@/lib/googleDrive";
+import { isEmailBackupConfigured, sendBackupEmail } from "@/lib/email";
+
+const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // stay under Gmail's ~25MB message ceiling
 
 export async function GET() {
   try {
@@ -24,6 +27,7 @@ export async function GET() {
       todayLog: existingLog || null,
       history: recentLogs,
       driveConfigured: !!(process.env.GOOGLE_DRIVE_CLIENT_EMAIL && process.env.GOOGLE_DRIVE_PRIVATE_KEY),
+      emailConfigured: isEmailBackupConfigured(),
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -101,36 +105,64 @@ export async function POST(req: Request) {
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
     const fileName = `${folderName}.zip`;
 
-    // 3. Upload to Google Drive if credentials exist
+    // 3. Deliver the backup via every configured channel (Gmail email / Cloudflare R2 / Google Drive)
     let driveFileId = "";
-    let uploadStatus: "SUCCESS" | "FAILED" = "SUCCESS";
-    let errorMessage = "";
+    const channelMessages: string[] = [];
+    let anyChannelConfigured = false;
+    let anyChannelSucceeded = false;
 
-    // 3. Upload to Cloudflare R2 or Google Drive
+    if (isEmailBackupConfigured()) {
+      anyChannelConfigured = true;
+      if (zipBuffer.length > MAX_EMAIL_ATTACHMENT_BYTES) {
+        channelMessages.push(
+          `Email skipped — backup is ${(zipBuffer.length / (1024 * 1024)).toFixed(1)}MB, over Gmail's attachment limit.`
+        );
+      } else {
+        try {
+          await sendBackupEmail(zipBuffer, fileName, {
+            collectionsCount,
+            recordsCount: totalRecordsCount,
+            dateLabel: todayDate,
+          });
+          channelMessages.push("Emailed to Gmail successfully.");
+          anyChannelSucceeded = true;
+        } catch (emailError: any) {
+          console.error("❌ Backup Email Error:", emailError);
+          channelMessages.push(`Email failed: ${emailError.message}`);
+        }
+      }
+    }
+
     if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
+      anyChannelConfigured = true;
       try {
         const { uploadFileToR2 } = await import("@/lib/cloudflareR2");
         await uploadFileToR2(zipBuffer, fileName);
-        uploadStatus = "SUCCESS";
-        errorMessage = "";
+        channelMessages.push("Uploaded to Cloudflare R2.");
+        anyChannelSucceeded = true;
       } catch (r2Error: any) {
         console.error("❌ Cloudflare R2 Upload Error:", r2Error);
-        uploadStatus = "FAILED";
-        errorMessage = `Cloudflare R2 upload failed: ${r2Error.message}`;
+        channelMessages.push(`Cloudflare R2 upload failed: ${r2Error.message}`);
       }
     } else if (process.env.GOOGLE_DRIVE_CLIENT_EMAIL && process.env.GOOGLE_DRIVE_PRIVATE_KEY) {
+      anyChannelConfigured = true;
       try {
         const driveResponse = await uploadFileToGoogleDrive(zipBuffer, fileName);
         driveFileId = driveResponse.id || "";
+        channelMessages.push("Uploaded to Google Drive.");
+        anyChannelSucceeded = true;
       } catch (uploadError: any) {
         console.error("❌ Google Drive Upload Error:", uploadError);
-        uploadStatus = "FAILED";
-        errorMessage = `Google Drive upload failed: ${uploadError.message}`;
+        channelMessages.push(`Google Drive upload failed: ${uploadError.message}`);
       }
-    } else {
-      errorMessage = "Backup compiled locally but cloud credentials (R2 or Google Drive) are missing in .env.local.";
-      uploadStatus = "SUCCESS";
     }
+
+    if (!anyChannelConfigured) {
+      channelMessages.push("Backup compiled locally but no delivery channel (Gmail/R2/Drive) is configured in .env.local.");
+    }
+
+    const uploadStatus: "SUCCESS" | "FAILED" = anyChannelConfigured && !anyChannelSucceeded ? "FAILED" : "SUCCESS";
+    const errorMessage = channelMessages.join(" ");
 
     // 4. Update BackupLog record
     const updatedLog = await BackupLog.findOneAndUpdate(

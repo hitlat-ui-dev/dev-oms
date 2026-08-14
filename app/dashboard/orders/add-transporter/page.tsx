@@ -2,7 +2,7 @@
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
-import { FiPlus, FiSave, FiTruck, FiPhone, FiUser, FiMapPin, FiList } from "react-icons/fi";
+import { FiPlus, FiSave, FiTruck, FiPhone, FiUser, FiMapPin, FiList, FiArrowLeft } from "react-icons/fi";
 
 export default function AddTransporterPage() {
     const [list, setList] = useState<any[]>([]);
@@ -115,6 +115,13 @@ fallback={
             }
 >
         <div className="p-4 md:p-12 max-w-7xl mx-auto space-y-10 bg-slate-50 min-h-screen">
+
+            <Link
+                href="/dashboard/orders"
+                className="flex items-center gap-2 text-slate-500 hover:text-blue-600 font-bold text-xs uppercase tracking-widest transition-colors w-fit"
+            >
+                <FiArrowLeft size={16} /> Back to Orders Dashboard
+            </Link>
 
             {/* 1. ENTRY FORM */}
             <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">

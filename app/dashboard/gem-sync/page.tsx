@@ -10,7 +10,6 @@ import {
   FiSearch,
   FiEdit,
   FiClock,
-  FiUsers,
   FiCheckCircle,
   FiAlertTriangle,
   FiExternalLink,
@@ -18,13 +17,16 @@ import {
   FiTrash2,
   FiDatabase,
   FiList,
+  FiLink,
   FiCopy,
   FiInfo,
   FiChevronDown,
   FiCheck,
-  FiX
+  FiX,
+  FiUser
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
+import AddItemModal from "@/components/AddItemModal";
 
 // Types definition
 interface Buyer {
@@ -40,6 +42,9 @@ interface SavedSheet {
   originalExcelData: any[];
   selectedBuyerId: string;
   isCompleted?: boolean;
+  lastEditedBy?: string;
+  uploadedBy?: string;
+  uploadedAt?: string;
   updatedAt: string;
 }
 
@@ -81,13 +86,23 @@ interface UploadedRow {
   gemLink: string;
   availGemStock: number;
   minQty: number;
+  isCompleted?: boolean;
+  completedBy?: string;
+  completedAt?: string;
 }
 
 export default function GeMSyncPage() {
   // Database state (fetched from real API)
   const [companies, setCompanies] = useState<any[]>([]);
   const [stockItems, setStockItems] = useState<any[]>([]);
+  const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [sellers, setSellers] = useState<any[]>([]);
+  const [catalogueLinks, setCatalogueLinks] = useState<any[]>([]);
+  const [catalogueSearchFirm, setCatalogueSearchFirm] = useState<string>("");
+  const [catalogueSearchName, setCatalogueSearchName] = useState<string>("");
+  const [catalogueSearchCatalogueId, setCatalogueSearchCatalogueId] = useState<string>("");
+  const [catalogueSearchBrand, setCatalogueSearchBrand] = useState<string>("");
+  const [catalogueSearchModel, setCatalogueSearchModel] = useState<string>("");
 
   // Local state (persisted in localStorage)
   const [buyers, setBuyers] = useState<Buyer[]>([]);
@@ -96,7 +111,7 @@ export default function GeMSyncPage() {
   const [customItems, setCustomItems] = useState<any[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "buyers" | "sheets" | "master">("master");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "sheets" | "master" | "catalogue">("master");
   const [showAllSynced, setShowAllSynced] = useState<boolean>(false);
 
   // Excel Upload states
@@ -108,10 +123,10 @@ export default function GeMSyncPage() {
   const [uploadedRows, setUploadedRows] = useState<UploadedRow[]>([]);
   const [originalExcelData, setOriginalExcelData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("");
+  const [mappingStatusFilter, setMappingStatusFilter] = useState<"uncompleted" | "completed" | "all">("uncompleted");
 
   // Search/Filters states
   const [buyerSearchQuery, setBuyerSearchQuery] = useState<string>("");
-  const [selectedHistoryBuyerId, setSelectedHistoryBuyerId] = useState<string>("");
   const [masterItemSearch, setMasterItemSearch] = useState<string>("");
   const [masterFirmSearch, setMasterFirmSearch] = useState<string>("");
   const [masterUrlSearch, setMasterUrlSearch] = useState<string>("");
@@ -137,6 +152,20 @@ export default function GeMSyncPage() {
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Current logged-in user (used to record who is working on each sheet)
+  const [currentUsername, setCurrentUsername] = useState<string>("");
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("oms_user");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.username) setCurrentUsername(parsed.username);
+      }
+    } catch (err) {
+      console.error("Failed to read logged-in user", err);
+    }
+  }, []);
 
   // Load backend and MongoDB shared data
   useEffect(() => {
@@ -167,6 +196,7 @@ export default function GeMSyncPage() {
           if (Array.isArray(state.listings)) setListings(state.listings);
           if (Array.isArray(state.rateHistory)) setRateHistory(state.rateHistory);
           if (Array.isArray(state.customItems)) setCustomItems(state.customItems);
+          if (Array.isArray(state.catalogueLinks)) setCatalogueLinks(state.catalogueLinks);
           if (Array.isArray(state.sheets)) {
             setSheets(state.sheets);
             // Default load the latest active sheet
@@ -220,7 +250,7 @@ export default function GeMSyncPage() {
   // Handler to change and auto-save buyer associated with a sheet
   const handleChangeSheetBuyer = async (sheetId: string, newBuyerId: string) => {
     const updatedSheets = sheets.map(s =>
-      s.id === sheetId ? { ...s, selectedBuyerId: newBuyerId, updatedAt: new Date().toISOString() } : s
+      s.id === sheetId ? { ...s, selectedBuyerId: newBuyerId, lastEditedBy: currentUsername || s.lastEditedBy, updatedAt: new Date().toISOString() } : s
     );
     setSheets(updatedSheets);
 
@@ -239,7 +269,10 @@ export default function GeMSyncPage() {
             fileName: targetSheet.fileName,
             uploadedRows: targetSheet.uploadedRows,
             originalExcelData: targetSheet.originalExcelData,
-            selectedBuyerId: newBuyerId
+            selectedBuyerId: newBuyerId,
+            isCompleted: targetSheet.isCompleted,
+            lastEditedBy: targetSheet.lastEditedBy,
+            uploadedBy: currentUsername
           })
         });
 
@@ -262,7 +295,7 @@ export default function GeMSyncPage() {
   const handleToggleSheetCompleted = async (sheetId: string, currentCompleted: boolean) => {
     const newCompletedState = !currentCompleted;
     const updatedSheets = sheets.map(s =>
-      s.id === sheetId ? { ...s, isCompleted: newCompletedState, updatedAt: new Date().toISOString() } : s
+      s.id === sheetId ? { ...s, isCompleted: newCompletedState, lastEditedBy: currentUsername || s.lastEditedBy, updatedAt: new Date().toISOString() } : s
     );
     setSheets(updatedSheets);
 
@@ -278,7 +311,9 @@ export default function GeMSyncPage() {
             uploadedRows: targetSheet.uploadedRows,
             originalExcelData: targetSheet.originalExcelData,
             selectedBuyerId: targetSheet.selectedBuyerId,
-            isCompleted: newCompletedState
+            isCompleted: newCompletedState,
+            lastEditedBy: targetSheet.lastEditedBy,
+            uploadedBy: currentUsername
           })
         });
       } catch (err) {
@@ -292,6 +327,7 @@ export default function GeMSyncPage() {
     if (!activeSheetId || !fileName) return;
 
     const delayDebounceFn = setTimeout(() => {
+      const activeSheet = sheets.find(s => s.id === activeSheetId);
       fetch("/api/gem-sync?action=save_sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -300,7 +336,10 @@ export default function GeMSyncPage() {
           fileName,
           uploadedRows,
           originalExcelData,
-          selectedBuyerId
+          selectedBuyerId,
+          isCompleted: activeSheet?.isCompleted,
+          lastEditedBy: currentUsername || activeSheet?.lastEditedBy || "",
+          uploadedBy: currentUsername
         })
       })
         .then(() => {
@@ -317,7 +356,7 @@ export default function GeMSyncPage() {
     }, 1000);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [activeSheetId, fileName, uploadedRows, originalExcelData, selectedBuyerId]);
+  }, [activeSheetId, fileName, uploadedRows, originalExcelData, selectedBuyerId, currentUsername]);
 
   // Sync state helpers (updates both LocalState, LocalStorage fallback, and MongoDB)
   const saveBuyers = (updatedBuyers: Buyer[]) => {
@@ -406,6 +445,98 @@ export default function GeMSyncPage() {
     return "";
   };
 
+  // ---- History-based smart matching ----
+  // Learns from every requirement row we've ever mapped across all past uploaded sheets,
+  // so the same/similar item wording auto-matches to the item it was mapped to before.
+  const normalizeMatchText = (s: string) => s.toString().trim().toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, " ");
+
+  const tokenizeMatchText = (s: string) => normalizeMatchText(s).split(/[^a-z0-9]+/).filter(Boolean);
+
+  // Similarity of two token sets: word overlap (Jaccard), heavily penalized if numeric
+  // tokens (sizes like 40, 38, 6) don't agree — a "40 MM" item must not match a "38 MM" one.
+  const scoreTokenSimilarity = (tokensA: string[], tokensB: string[]) => {
+    if (tokensA.length === 0 || tokensB.length === 0) return { score: 0, overlap: 0 };
+    const setA = new Set(tokensA);
+    const setB = new Set(tokensB);
+    let overlap = 0;
+    setA.forEach(t => { if (setB.has(t)) overlap++; });
+    const union = new Set([...tokensA, ...tokensB]).size;
+    const jaccard = overlap / union;
+
+    const numsA = tokensA.filter(t => /\d/.test(t));
+    const numsB = tokensB.filter(t => /\d/.test(t));
+    let numericPenalty = 0;
+    if (numsA.length > 0 || numsB.length > 0) {
+      const numSetA = new Set(numsA);
+      const numSetB = new Set(numsB);
+      const numOverlap = numsA.filter(n => numSetB.has(n)).length;
+      const numUnion = new Set([...numsA, ...numsB]).size;
+      const numericMatch = numUnion > 0 ? numOverlap / numUnion : 1;
+      numericPenalty = (1 - numericMatch) * 0.5;
+    }
+
+    return { score: Math.max(0, jaccard - numericPenalty), overlap };
+  };
+
+  // Build the historical match index from every past sheet's mapped rows (all 80+ sheets, not just the current one)
+  const matchHistory = useMemo(() => {
+    const exactMap = new Map<string, Map<string, number>>(); // normalized item text -> itemId -> times chosen
+    const fuzzyEntries: { tokens: string[]; mappedItemId: string }[] = [];
+    const seenPairs = new Set<string>();
+
+    sheets.forEach(sheet => {
+      (sheet.uploadedRows || []).forEach(row => {
+        if (!row?.originalName || !row?.mappedItemId) return;
+        const norm = normalizeMatchText(row.originalName);
+        if (!norm) return;
+
+        if (!exactMap.has(norm)) exactMap.set(norm, new Map());
+        const itemCounts = exactMap.get(norm)!;
+        itemCounts.set(row.mappedItemId, (itemCounts.get(row.mappedItemId) || 0) + 1);
+
+        const pairKey = `${norm}::${row.mappedItemId}`;
+        if (!seenPairs.has(pairKey)) {
+          seenPairs.add(pairKey);
+          fuzzyEntries.push({ tokens: tokenizeMatchText(row.originalName), mappedItemId: row.mappedItemId });
+        }
+      });
+    });
+
+    return { exactMap, fuzzyEntries };
+  }, [sheets]);
+
+  // Smart match: exact historical match > closest fuzzy historical match > direct stock-item name match
+  const findSmartMatch = (name: string): string => {
+    if (!name) return "";
+    const norm = normalizeMatchText(name);
+    if (!norm) return "";
+
+    // 1. Exact text seen before — use whichever item was chosen most often for it
+    const exactCounts = matchHistory.exactMap.get(norm);
+    if (exactCounts && exactCounts.size > 0) {
+      let bestItemId = "";
+      let bestCount = 0;
+      exactCounts.forEach((count, itemId) => {
+        if (count > bestCount) { bestCount = count; bestItemId = itemId; }
+      });
+      if (bestItemId) return bestItemId;
+    }
+
+    // 2. Closest similarly-worded historical match (needs decent word overlap, not just one shared word)
+    const queryTokens = tokenizeMatchText(name);
+    let bestScore = 0;
+    let bestOverlap = 0;
+    let bestHistItemId = "";
+    matchHistory.fuzzyEntries.forEach(entry => {
+      const { score, overlap } = scoreTokenSimilarity(queryTokens, entry.tokens);
+      if (score > bestScore) { bestScore = score; bestOverlap = overlap; bestHistItemId = entry.mappedItemId; }
+    });
+    if (bestHistItemId && bestScore >= 0.6 && bestOverlap >= 2) return bestHistItemId;
+
+    // 3. Never seen before — fall back to direct stock item name match
+    return findFuzzyMatch(name);
+  };
+
   // Excel parsing
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -451,7 +582,7 @@ export default function GeMSyncPage() {
           // Find rate/price case-insensitively
           const rate = Number(row["Rate"] || row["rate"] || row["Price"] || row["price"] || row["Quote Rate"] || 0);
 
-          const mappedItemId = findFuzzyMatch(String(originalName));
+          const mappedItemId = findSmartMatch(String(originalName));
 
           let firmCode = "";
           let gemLink = "";
@@ -656,6 +787,54 @@ export default function GeMSyncPage() {
       return matchesQuery && matchesStatus;
     });
   }, [sheets, librarySearchQuery, sheetStatusFilter, allBuyerOptions]);
+
+  // Filtered GeM Catalogue links (fetched via the browser extension) - each
+  // field below filters independently (AND'd together), so you can e.g. search
+  // one firm's "spring file" brand without it matching other firms' products.
+  const filteredCatalogueLinks = useMemo(() => {
+    const firmQ = catalogueSearchFirm.toLowerCase().trim();
+    const nameQ = catalogueSearchName.toLowerCase().trim();
+    const catalogueIdQ = catalogueSearchCatalogueId.toLowerCase().trim();
+    const brandQ = catalogueSearchBrand.toLowerCase().trim();
+    const modelQ = catalogueSearchModel.toLowerCase().trim();
+
+    return catalogueLinks.filter(row => {
+      if (firmQ && !(row.firmCode || "").toLowerCase().includes(firmQ)) return false;
+      if (nameQ && !(row["Name"]?.text || "").toLowerCase().includes(nameQ)) return false;
+      if (catalogueIdQ && !(row["Gem Catalogue Id"]?.text || "").toLowerCase().includes(catalogueIdQ)) return false;
+      if (brandQ && !(row["Brand"]?.text || "").toLowerCase().includes(brandQ)) return false;
+      if (modelQ && !(row["Model"]?.text || "").toLowerCase().includes(modelQ)) return false;
+      return true;
+    });
+  }, [catalogueLinks, catalogueSearchFirm, catalogueSearchName, catalogueSearchCatalogueId, catalogueSearchBrand, catalogueSearchModel]);
+
+  // For each GeM Catalogue row, find the closest-matching item already in the Master List for
+  // that same firm (by name similarity), so we can show whether it's already mapped/in use.
+  const catalogueMasterListMatches = useMemo(() => {
+    const map = new Map<number, { lst: FirmItemListing; score: number } | null>();
+    filteredCatalogueLinks.forEach((row, idx) => {
+      const name = row["Name"]?.text || "";
+      if (!name) { map.set(idx, null); return; }
+      const queryTokens = tokenizeMatchText(name);
+      let best: FirmItemListing | null = null;
+      let bestScore = 0;
+      listings.forEach(lst => {
+        if (!lst?.itemName) return;
+        if ((lst.firmCode || "").toLowerCase().trim() !== (row.firmCode || "").toLowerCase().trim()) return;
+        const { score, overlap } = scoreTokenSimilarity(queryTokens, tokenizeMatchText(lst.itemName));
+        if (score > bestScore && overlap >= 1) { bestScore = score; best = lst; }
+      });
+      map.set(idx, best && bestScore >= 0.5 ? { lst: best, score: bestScore } : null);
+    });
+    return map;
+  }, [filteredCatalogueLinks, listings]);
+
+  // Most recent sync timestamp across all firms' fetched catalogue links
+  const lastCatalogueSyncAt = useMemo(() => {
+    if (catalogueLinks.length === 0) return null;
+    return catalogueLinks.reduce((latest: string, row: any) =>
+      row.fetchedAt && (!latest || row.fetchedAt > latest) ? row.fetchedAt : latest, "");
+  }, [catalogueLinks]);
 
   // Check Duplicate Rate Warnings
   const checkDuplicateRateWarning = (itemId: string, currentRate: number, currentFirmCode: string) => {
@@ -969,18 +1148,17 @@ export default function GeMSyncPage() {
         lst.buyerId === selectedBuyerId &&
         lst.itemId === mappedRow?.mappedItemId
       );
-      
+
       const firmCode = matchedListing?.firmCode || mappedRow?.firmCode || "";
       const company = companies.find(c => c.firmCode?.toUpperCase() === firmCode.toUpperCase());
       const sellerRegisterAddress = company?.sellerRegisterAddress || "";
+      const mappedFirmName = company?.firmName || firmCode;
 
       return {
         ...row,
         "Quoted Rate (₹)": matchedListing?.rate || mappedRow?.rate || "",
-        "Avail gem stock": matchedListing?.availGemStock || mappedRow?.availGemStock || 0,
-        "Min Qty": matchedListing?.minQty || mappedRow?.minQty || "",
         "Seller Register Address": sellerRegisterAddress,
-        "Mapped Firm": firmCode,
+        "Mapped Firm": mappedFirmName,
         "GeM Link": matchedListing?.gemLink || mappedRow?.gemLink || ""
       };
     });
@@ -1121,6 +1299,36 @@ export default function GeMSyncPage() {
     saveListings(updatedListings);
   };
 
+  // Whether an uploaded row has already been linked into the Master List
+  const isRowLinked = (row: UploadedRow) => listings.some(lst =>
+    lst.buyerId === selectedBuyerId &&
+    lst.itemId === row.mappedItemId &&
+    lst.firmCode === row.firmCode &&
+    !!row.mappedItemId &&
+    !!row.firmCode
+  );
+
+  const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted).length, [uploadedRows]);
+  const completedRowsCount = useMemo(() => uploadedRows.filter(r => r.isCompleted).length, [uploadedRows]);
+
+  const toggleRowCompleted = (rowIndex: number) => {
+    setUploadedRows(prev => prev.map(r => {
+      if (r.index !== rowIndex) return r;
+      const nowCompleted = !r.isCompleted;
+      return {
+        ...r,
+        isCompleted: nowCompleted,
+        completedBy: nowCompleted ? (currentUsername || "Unknown") : undefined,
+        completedAt: nowCompleted ? new Date().toISOString() : undefined,
+      };
+    }));
+  };
+
+  const filteredUploadedRows = useMemo(() => {
+    if (mappingStatusFilter === "all") return uploadedRows;
+    return uploadedRows.filter(row => mappingStatusFilter === "completed" ? !!row.isCompleted : !row.isCompleted);
+  }, [uploadedRows, mappingStatusFilter]);
+
   return (
     <BlockGuard permission="gemLinks">
       <div className="p-4 md:p-8 bg-[#f3f6f9] min-h-screen text-[var(--gem-text-primary)] font-sans">
@@ -1133,10 +1341,16 @@ export default function GeMSyncPage() {
                 <FiArrowLeft size={18} />
               </Link>
               <div>
-                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800 dark:text-[var(--gem-text-primary)]">GeM Sync Console</h1>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">GeM Sync Console</h1>
                 <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase mt-1">Revised Rates & Client Sync Log</p>
               </div>
             </div>
+            <button
+              onClick={() => setIsAddItemModalOpen(true)}
+              className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-blue-100"
+            >
+              <FiPlus size={14} /> Add New Item
+            </button>
           </div>
 
           {/* Action Tabs - Styled exactly like the horizontal tab bar on the Orders page */}
@@ -1146,12 +1360,12 @@ export default function GeMSyncPage() {
               className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
                 activeTab === "sheets"
                   ? "bg-slate-900 text-white shadow-md"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200"
               }`}
             >
               <FiDatabase /> Sheet Library
               <div className="relative group flex items-center ml-1">
-                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <FiInfo size={12} className="text-slate-400 hover:text-slate-700 transition-colors cursor-help" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                   View, resume, or delete previously saved Excel worksheets.
                   <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
@@ -1163,12 +1377,12 @@ export default function GeMSyncPage() {
               className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
                 activeTab === "upload"
                   ? "bg-slate-900 text-white shadow-md"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200"
               }`}
             >
               <FiUploadCloud /> Upload Sheet
               <div className="relative group flex items-center ml-1">
-                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <FiInfo size={12} className="text-slate-400 hover:text-slate-700 transition-colors cursor-help" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                   Upload client Excel sheets to map requirements to live stock.
                   <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
@@ -1180,31 +1394,14 @@ export default function GeMSyncPage() {
               className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
                 activeTab === "checklist"
                   ? "bg-slate-900 text-white shadow-md"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200"
               }`}
             >
               <FiCheckCircle /> Sync Checklist
               <div className="relative group flex items-center ml-1">
-                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <FiInfo size={12} className="text-slate-400 hover:text-slate-700 transition-colors cursor-help" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                   Track item sync statuses and perform rate revisions for firms.
-                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
-                </div>
-              </div>
-            </button>
-            <button
-              onClick={() => setActiveTab("buyers")}
-              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
-                activeTab === "buyers"
-                  ? "bg-slate-900 text-white shadow-md"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
-              }`}
-            >
-              <FiUsers /> Buyer History
-              <div className="relative group flex items-center ml-1">
-                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
-                  View full logs, quotes, and timelines for each specific buyer.
                   <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
               </div>
@@ -1214,14 +1411,31 @@ export default function GeMSyncPage() {
               className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
                 activeTab === "master"
                   ? "bg-slate-900 text-white shadow-md"
-                  : "bg-slate-50 text-slate-500 hover:bg-slate-200 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-900"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200"
               }`}
             >
               <FiList /> Master List
               <div className="relative group flex items-center ml-1">
-                <FiInfo size={12} className="text-slate-400 hover:text-white transition-colors cursor-help" />
+                <FiInfo size={12} className="text-slate-400 hover:text-slate-700 transition-colors cursor-help" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
                   Consolidated directory of all matched and mapped items.
+                  <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
+                </div>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab("catalogue")}
+              className={`px-5 py-3 rounded-t-xl text-[12px] font-black tracking-wide transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === "catalogue"
+                  ? "bg-slate-900 text-white shadow-md"
+                  : "bg-slate-50 text-slate-500 hover:bg-slate-200"
+              }`}
+            >
+              <FiLink /> GeM Catalogue
+              <div className="relative group flex items-center ml-1">
+                <FiInfo size={12} className="text-slate-400 hover:text-slate-700 transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-44 bg-[var(--gem-card)] border border-[var(--gem-border)] p-2 rounded-lg shadow-2xl text-[9px] font-black text-[var(--gem-text-primary)] normal-case leading-normal text-center select-none pointer-events-none">
+                  Catalogue product links fetched from GeM via the browser extension.
                   <div className="w-1.5 h-1.5 absolute top-full left-1/2 -translate-x-1/2 -mt-1 rotate-45 bg-[var(--gem-card)] border-r border-b border-[var(--gem-border)]"></div>
                 </div>
               </div>
@@ -1234,13 +1448,53 @@ export default function GeMSyncPage() {
 
               {/* Excel Upload Card (Full width) */}
               <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl flex flex-col justify-between gem-sync-card">
-                <div>
-                  <h3 className="text-xs font-black text-[var(--gem-text-secondary)] uppercase tracking-widest flex items-center gap-2 mb-4">
-                    <FiUploadCloud className="text-blue-500" /> Upload Excel File
-                  </h3>
-                  <p className="text-[var(--gem-text-secondary)] text-xs mb-4">
-                    Upload your client's Excel sheet containing their required items. The sheet should contain columns like <b>item name</b>, <b>specification</b>, <b>quantity</b>, <b>unit</b>, and <b>remark</b>.
-                  </p>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
+                  <div>
+                    <h3 className="text-xs font-black text-[var(--gem-text-secondary)] uppercase tracking-widest flex items-center gap-2 mb-4">
+                      <FiUploadCloud className="text-blue-500" /> Upload Excel File
+                    </h3>
+                    <p className="text-[var(--gem-text-secondary)] text-xs mb-4">
+                      Upload your client's Excel sheet containing their required items. The sheet should contain columns like <b>item name</b>, <b>specification</b>, <b>quantity</b>, <b>unit</b>, and <b>remark</b>.
+                    </p>
+                  </div>
+
+                  {uploadedRows.length > 0 && (
+                    <div className="flex bg-[var(--gem-table-header)] p-1 rounded-xl border border-[var(--gem-border)] shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setMappingStatusFilter("uncompleted")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                          mappingStatusFilter === "uncompleted"
+                            ? "bg-blue-600 text-white shadow-md"
+                            : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                        }`}
+                      >
+                        Uncompleted ({uncompletedRowsCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMappingStatusFilter("completed")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                          mappingStatusFilter === "completed"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                        }`}
+                      >
+                        Completed ({completedRowsCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMappingStatusFilter("all")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                          mappingStatusFilter === "all"
+                            ? "bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] shadow-md"
+                            : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                        }`}
+                      >
+                        All ({uploadedRows.length})
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 items-center">
@@ -1262,14 +1516,14 @@ export default function GeMSyncPage() {
                   {fileName && (
                     <button
                       onClick={handleClearSheet}
-                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-red-955/40 text-red-400 border-red-900/35 hover:bg-red-955/60 cursor-pointer"
+                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-red-50 text-red-600 border-red-200 hover:bg-red-100 cursor-pointer"
                     >
                       Clear Sheet
                     </button>
                   )}
 
                   {fileName && (
-                    <span className="text-xs text-emerald-400 font-bold bg-emerald-500/10 py-1.5 px-3 rounded-lg border border-emerald-500/20 truncate max-w-xs">
+                    <span className="text-xs text-emerald-700 font-bold bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-200 truncate max-w-xs">
                       ✓ Loaded: {fileName}
                     </span>
                   )}
@@ -1287,12 +1541,14 @@ export default function GeMSyncPage() {
                       <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Map each uploaded requirement row to your inventory items and select which Firm handles them.</p>
                     </div>
 
-                    <button
-                      onClick={handleDownloadFilledExcel}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg"
-                    >
-                      <FiDownload /> Download Filled Excel
-                    </button>
+                    {mappingStatusFilter === "all" && (
+                      <button
+                        onClick={handleDownloadFilledExcel}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg"
+                      >
+                        <FiDownload /> Download Filled Excel
+                      </button>
+                    )}
                   </div>
 
                   {/* Excel Sheet Table */}
@@ -1309,11 +1565,18 @@ export default function GeMSyncPage() {
                           <th className="py-4 px-4 w-[120px] min-w-[120px]">Avail gem stock</th>
                           <th className="py-4 px-4 w-[100px] min-w-[100px]">Min Qty</th>
                           <th className="py-4 px-4 w-[200px] min-w-[200px]">GeM Link</th>
-                          <th className="py-4 px-4 text-center w-[120px] min-w-[120px]">Actions</th>
+                          <th className="py-4 px-4 text-center w-[140px] min-w-[140px]">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--gem-border)]/60">
-                        {uploadedRows.map((row) => {
+                        {filteredUploadedRows.length === 0 && (
+                          <tr>
+                            <td colSpan={10} className="py-10 text-center text-[var(--gem-text-secondary)] text-xs">
+                              {mappingStatusFilter === "completed" ? "No rows linked yet." : "🎉 All rows are linked — nothing uncompleted left."}
+                            </td>
+                          </tr>
+                        )}
+                        {filteredUploadedRows.map((row) => {
                           const isMatched = !!row.mappedItemId;
                           const mappedItem = allItemsList.find(i => i._id === row.mappedItemId);
 
@@ -1413,7 +1676,7 @@ export default function GeMSyncPage() {
                                             minQty: "1"
                                           });
                                         }}
-                                        className="bg-blue-600/20 text-blue-400 border border-blue-600/30 hover:bg-blue-600/30 font-black p-2 rounded-lg transition-colors flex items-center justify-center"
+                                        className="bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 font-black p-2 rounded-lg transition-colors flex items-center justify-center"
                                         title="Create item organically"
                                       >
                                         <FiPlus />
@@ -1428,7 +1691,7 @@ export default function GeMSyncPage() {
                                       if (previousListings.length > 0) {
                                         return (
                                           <div className="flex flex-wrap gap-1 mt-1.5 p-1.5 bg-[var(--gem-table-header)]/40 rounded-lg border border-[var(--gem-border)]">
-                                            <span className="text-[9px] font-black text-amber-500/80 uppercase tracking-widest block w-full mb-1">Quick Fill from Master List:</span>
+                                            <span className="text-[9px] font-black text-amber-700 uppercase tracking-widest block w-full mb-1">Quick Fill from Master List:</span>
                                             {previousListings.map(prev => (
                                               <button
                                                 key={prev.id}
@@ -1447,7 +1710,7 @@ export default function GeMSyncPage() {
                                                     gemLink: prev.gemLink || ""
                                                   } : r));
                                                 }}
-                                                className="bg-[var(--gem-card)]/70 hover:bg-[var(--gem-table-row-hover)] text-blue-400 hover:text-blue-300 border border-[var(--gem-border)]/60 hover:border-blue-700/40 text-[9px] py-1 px-2 rounded-md font-bold transition-all gem-sync-inner-card"
+                                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 hover:border-blue-300 text-[9px] py-1 px-2 rounded-md font-bold transition-all gem-sync-inner-card"
                                               >
                                                 {prev.firmCode}: ₹{prev.rate}
                                               </button>
@@ -1461,7 +1724,7 @@ export default function GeMSyncPage() {
 
                                   {/* Last Quoted Hint */}
                                   {isMatched && lastQuoted && (
-                                    <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/10 display inline-block">
+                                    <span className="text-[10px] text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 display inline-block">
                                       Last Quote: ₹{lastQuoted.rate} (Min {lastQuoted.minQty}) on {lastQuoted.date}
                                     </span>
                                   )}
@@ -1470,7 +1733,7 @@ export default function GeMSyncPage() {
                                 {/* Inline resolution Form */}
                                 {unmatchedIndex === row.index && (
                                   <div className="mt-4 p-4 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl space-y-3">
-                                    <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Organically Add New Item</h4>
+                                    <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Organically Add New Item</h4>
 
                                     <div className="space-y-2">
                                       <input
@@ -1601,28 +1864,49 @@ export default function GeMSyncPage() {
                                 />
                               </td>
 
-                              <td className="py-4 px-4 text-center w-[120px] min-w-[120px]">
-                                {listings.some(lst =>
-                                  lst.buyerId === selectedBuyerId &&
-                                  lst.itemId === row.mappedItemId &&
-                                  lst.firmCode === row.firmCode &&
-                                  row.mappedItemId &&
-                                  row.firmCode
-                                ) ? (
+                              <td className="py-4 px-4 text-center w-[140px] min-w-[140px]">
+                                <div className="flex items-center gap-1.5">
+                                  {row.gemLink && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(row.gemLink);
+                                        alert("✓ Link copied to clipboard!");
+                                      }}
+                                      className="p-2 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-600 border border-sky-200 hover:border-sky-300 transition-colors shrink-0"
+                                      title="Copy GeM Link"
+                                    >
+                                      <FiCopy size={12} />
+                                    </button>
+                                  )}
+                                  {isRowLinked(row) ? (
+                                    <button
+                                      onClick={() => handleConfirmMapping(row)}
+                                      className="bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg flex-1 transition-colors"
+                                    >
+                                      ✓ Linked
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleConfirmMapping(row)}
+                                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors flex-1"
+                                    >
+                                      Link Row
+                                    </button>
+                                  )}
                                   <button
-                                    onClick={() => handleConfirmMapping(row)}
-                                    className="bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30 font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg w-full transition-colors"
+                                    type="button"
+                                    onClick={() => toggleRowCompleted(row.index)}
+                                    title={row.isCompleted ? "Marked Completed — click to undo" : "Mark this row as completed"}
+                                    className={`p-2 rounded-lg transition-colors shrink-0 border ${
+                                      row.isCompleted
+                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                                        : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] border-[var(--gem-border)] hover:text-[var(--gem-text-primary)]"
+                                    }`}
                                   >
-                                    ✓ Linked
+                                    <FiCheck size={12} />
                                   </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleConfirmMapping(row)}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors w-full"
-                                  >
-                                    Link Row
-                                  </button>
-                                )}
+                                </div>
                               </td>
 
                             </tr>
@@ -1685,7 +1969,7 @@ export default function GeMSyncPage() {
                           >
                             {showAllSynced ? "Hide Synced" : "Show All"}
                           </button>
-                          <span className="text-xs font-mono font-bold bg-blue-500/10 text-blue-400 py-1.5 px-3 rounded-lg border border-blue-500/20">
+                          <span className="text-xs font-mono font-bold bg-blue-50 text-blue-700 py-1.5 px-3 rounded-lg border border-blue-200">
                             {syncedCount} / {allFirmListings.length} Synced
                           </span>
                         </div>
@@ -1728,7 +2012,7 @@ export default function GeMSyncPage() {
                                         href={lst.gemLink}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="text-blue-400 hover:underline flex items-center gap-1"
+                                        className="text-blue-600 hover:underline flex items-center gap-1"
                                       >
                                         GeM Listing <FiExternalLink size={12} />
                                       </a>
@@ -1770,7 +2054,7 @@ export default function GeMSyncPage() {
                                     </button>
                                     <button
                                       onClick={() => handleDeleteListing(lst.id)}
-                                      className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center"
+                                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center"
                                       title="Delete Listing"
                                     >
                                       <FiTrash2 size={12} />
@@ -1787,106 +2071,6 @@ export default function GeMSyncPage() {
                   );
                 });
               })()}
-            </div>
-          )}
-
-          {/* =================== TAB 3: BUYER HISTORY =================== */}
-          {activeTab === "buyers" && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-              {/* Buyers list */}
-              <div className="bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl space-y-4 gem-sync-card">
-                <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
-                  <FiUsers className="text-blue-500" /> Buyers Directories
-                </h3>
-
-                <div className="space-y-2">
-                  {buyers.length === 0 ? (
-                    <p className="text-[var(--gem-text-secondary)] text-xs text-center py-4">No buyers stored yet.</p>
-                  ) : (
-                    buyers.map(b => (
-                      <button
-                        key={b.id}
-                        onClick={() => setSelectedHistoryBuyerId(b.id)}
-                        className={`w-full text-left py-3 px-4 rounded-xl text-xs font-bold transition-all border ${selectedHistoryBuyerId === b.id ? "bg-blue-600/10 text-blue-400 border-blue-600/30" : "text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)] border-[var(--gem-border)]"}`}
-                      >
-                        {b.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Selected buyer history timeline */}
-              <div className="lg:col-span-2 bg-[var(--gem-card)] p-6 rounded-2xl border border-[var(--gem-border)] shadow-xl min-h-[400px] gem-sync-card">
-                {selectedHistoryBuyerId ? (
-                  <div className="space-y-6">
-
-                    {/* Title */}
-                    <div>
-                      <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider">
-                        Rate Log & Quote Timeline: {buyers.find(b => b.id === selectedHistoryBuyerId)?.name}
-                      </h3>
-                      <p className="text-xs text-[var(--gem-text-secondary)] mt-1">Audit log of all quotes, rate updates, and negotiations for this buyer.</p>
-                    </div>
-
-                    {/* Timeline items */}
-                    {rateHistory.filter(hist => hist.buyerId === selectedHistoryBuyerId).length === 0 ? (
-                      <p className="text-[var(--gem-text-secondary)] text-xs py-8 text-center">No quote or rate change history exists for this buyer yet.</p>
-                    ) : (
-                      <div className="relative border-l-2 border-[var(--gem-border)] ml-4 pl-6 space-y-8">
-                        {rateHistory
-                          .filter(hist => hist.buyerId === selectedHistoryBuyerId)
-                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                          .map(hist => (
-                            <div key={hist.id} className="relative">
-                              {/* Circle icon marker */}
-                              <div className="absolute -left-10.5 top-0.5 bg-[var(--gem-table-header)] border-2 border-blue-500 w-4.5 h-4.5 rounded-full flex items-center justify-center">
-                                <div className="bg-blue-500 w-1.5 h-1.5 rounded-full" />
-                              </div>
-
-                              <div className="bg-[var(--gem-table-header)]/40 p-4 rounded-xl border border-[var(--gem-border)] space-y-2">
-                                <div className="flex justify-between items-start">
-                                  <h4 className="font-bold text-[var(--gem-text-primary)]">{hist.itemName}</h4>
-                                  <span className="text-[10px] text-[var(--gem-text-secondary)] font-mono">
-                                    {formatDate(hist.timestamp)}
-                                  </span>
-                                </div>
-
-                                <div className="flex gap-6 items-baseline mt-2">
-                                  {hist.oldRate > 0 ? (
-                                    <div className="text-xs text-[var(--gem-text-secondary)]">
-                                      Rate: <span className="line-through font-mono">₹{hist.oldRate}</span> → <span className="font-mono text-emerald-400 font-bold">₹{hist.newRate}</span>
-                                    </div>
-                                  ) : (
-                                    <div className="text-xs text-[var(--gem-text-primary)]">
-                                      Initial Quote: <span className="font-mono text-emerald-400 font-bold">₹{hist.newRate}</span>
-                                    </div>
-                                  )}
-
-                                  <div className="text-xs text-[var(--gem-text-secondary)]">
-                                    Min Qty: <span className="font-mono">{hist.newMinQty}</span>
-                                  </div>
-                                </div>
-
-                                <p className="text-[var(--gem-text-secondary)] text-xs italic bg-[var(--gem-table-header)] p-2 rounded-lg border border-[var(--gem-border)] mt-2">
-                                  "{hist.reason}"
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-center text-[var(--gem-text-secondary)] space-y-3">
-                    <FiUsers size={32} />
-                    <p className="text-xs">Please select a buyer from the left directory to view their history timeline.</p>
-                  </div>
-                )}
-              </div>
-
             </div>
           )}
 
@@ -1966,8 +2150,10 @@ export default function GeMSyncPage() {
                       <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
                         <th className="py-3.5 px-6">File Name</th>
                         <th className="py-3.5 px-6">Associated Buyer</th>
+                        <th className="py-3.5 px-6 text-center w-40">Progress</th>
                         <th className="py-3.5 px-6 text-center w-36">Total Items</th>
                         <th className="py-3.5 px-6 text-center w-48">Last Saved</th>
+                        <th className="py-3.5 px-6 text-center w-40">Team Member</th>
                         <th className="py-3.5 px-6 text-center w-64">Actions</th>
                       </tr>
                     </thead>
@@ -1977,6 +2163,9 @@ export default function GeMSyncPage() {
                         const displayBuyerName = matchedOpt?.name || sheet.selectedBuyerId || "Select Associated Buyer...";
                         const isSelected = !!matchedOpt || !!sheet.selectedBuyerId;
                         const isPopoverOpen = openBuyerSelectSheetId === sheet.id;
+                        const totalRowsCount = sheet.uploadedRows?.length || 0;
+                        const completedRowsCountForSheet = sheet.uploadedRows?.filter(r => r.isCompleted).length || 0;
+                        const progressPct = totalRowsCount > 0 ? Math.round((completedRowsCountForSheet / totalRowsCount) * 100) : 0;
 
                         return (
                           <tr key={sheet.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
@@ -1988,11 +2177,11 @@ export default function GeMSyncPage() {
                                   title={sheet.isCompleted ? "Mark as Current / Incomplete" : "Mark as Completed"}
                                   className={`p-1 rounded-lg transition-all border cursor-pointer ${
                                     sheet.isCompleted
-                                      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30"
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                                       : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] border-[var(--gem-border)] hover:text-[var(--gem-text-primary)] hover:border-[var(--gem-border)]"
                                   }`}
                                 >
-                                  <FiCheckCircle size={17} className={sheet.isCompleted ? "text-emerald-400" : "text-slate-600"} />
+                                  <FiCheckCircle size={17} className={sheet.isCompleted ? "text-emerald-600" : "text-slate-400"} />
                                 </button>
 
                                 <span className={sheet.isCompleted ? "line-through text-[var(--gem-text-secondary)]" : "text-[var(--gem-text-primary)]"}>
@@ -2000,7 +2189,7 @@ export default function GeMSyncPage() {
                                 </span>
 
                                 {sheet.isCompleted && (
-                                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                                     Completed
                                   </span>
                                 )}
@@ -2019,12 +2208,12 @@ export default function GeMSyncPage() {
                                 }}
                                 className={`w-full max-w-[260px] text-left font-bold text-xs py-2 px-3.5 rounded-xl border transition-all flex items-center justify-between gap-2 shadow-sm ${
                                   isSelected
-                                    ? "bg-[var(--gem-table-header)]/90 text-blue-400 border-[var(--gem-border)] hover:border-blue-500"
+                                    ? "bg-[var(--gem-table-header)]/90 text-blue-600 border-[var(--gem-border)] hover:border-blue-400"
                                     : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] border-[var(--gem-border)] hover:border-[var(--gem-border)]"
                                 }`}
                               >
                                 <span className="truncate">{displayBuyerName}</span>
-                                <FiChevronDown size={14} className={`shrink-0 transition-transform ${isPopoverOpen ? "rotate-180 text-blue-400" : "text-slate-400"}`} />
+                                <FiChevronDown size={14} className={`shrink-0 transition-transform ${isPopoverOpen ? "rotate-180 text-blue-600" : "text-slate-400"}`} />
                               </button>
 
                               {/* Searchable Buyer Popover Dropdown */}
@@ -2076,13 +2265,13 @@ export default function GeMSyncPage() {
                                               }}
                                               className={`w-full text-left py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2 ${
                                                 isItemActive
-                                                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                                                  ? "bg-blue-50 text-blue-700 border border-blue-300"
                                                   : "text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)] hover:text-[var(--gem-text-primary)]"
                                               }`}
                                             >
                                               <span className="truncate">{b.name}</span>
                                               {isItemActive && (
-                                                <FiCheck size={14} className="text-blue-400 shrink-0" />
+                                                <FiCheck size={14} className="text-blue-600 shrink-0" />
                                               )}
                                             </button>
                                           );
@@ -2093,9 +2282,46 @@ export default function GeMSyncPage() {
                                 </>
                               )}
                             </td>
+                            <td className="py-4 px-6">
+                              <div className="flex flex-col items-center gap-1.5 w-32 mx-auto">
+                                <div className="w-full h-1.5 rounded-full bg-[var(--gem-table-header)] overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      progressPct === 100
+                                        ? "bg-emerald-500"
+                                        : progressPct > 0
+                                        ? "bg-blue-500"
+                                        : "bg-slate-300"
+                                    }`}
+                                    style={{ width: `${progressPct}%` }}
+                                  />
+                                </div>
+                                <span
+                                  className={`text-[10px] font-black tabular-nums ${
+                                    progressPct === 100
+                                      ? "text-emerald-600"
+                                      : progressPct > 0
+                                      ? "text-blue-600"
+                                      : "text-[var(--gem-text-secondary)]"
+                                  }`}
+                                >
+                                  {completedRowsCountForSheet}/{totalRowsCount} ({progressPct}%)
+                                </span>
+                              </div>
+                            </td>
                             <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">{sheet.uploadedRows?.length || 0}</td>
                             <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-secondary)]">
                               {sheet.updatedAt ? formatDate(sheet.updatedAt) : "—"}
+                            </td>
+                            <td className="py-4 px-6 text-center">
+                              {sheet.lastEditedBy ? (
+                                <span className="inline-flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black uppercase tracking-wider">
+                                  <FiUser size={11} />
+                                  {sheet.lastEditedBy}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[var(--gem-text-secondary)] italic">—</span>
+                              )}
                             </td>
                             <td className="py-4 px-6 text-center">
                               <div className="flex gap-2 justify-center">
@@ -2114,7 +2340,7 @@ export default function GeMSyncPage() {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteSheet(sheet.id)}
-                                  className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-2 px-3 rounded-lg transition-all flex items-center justify-center"
+                                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-2 px-3 rounded-lg transition-all flex items-center justify-center"
                                   title="Delete Sheet"
                                 >
                                   <FiTrash2 size={12} />
@@ -2145,7 +2371,7 @@ export default function GeMSyncPage() {
                   <button
                     type="button"
                     onClick={handleCleanupDuplicates}
-                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:border-amber-500/50 py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm"
+                    className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 hover:border-amber-300 py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm"
                     title="Clean up existing duplicate listings in MongoDB"
                   >
                     <FiTrash2 size={13} /> Clean Duplicates
@@ -2237,7 +2463,7 @@ export default function GeMSyncPage() {
                                     href={lst.gemLink}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="text-blue-400 hover:underline flex items-center gap-1"
+                                    className="text-blue-600 hover:underline flex items-center gap-1"
                                   >
                                     GeM Listing <FiExternalLink size={12} />
                                   </a>
@@ -2259,11 +2485,189 @@ export default function GeMSyncPage() {
                             <td className="py-4 px-6 text-center">
                               <button
                                 onClick={() => handleDeleteListing(lst.id)}
-                                className="bg-red-955/20 hover:bg-red-950/40 text-red-400 border border-red-900/30 hover:border-red-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center mx-auto"
+                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center mx-auto"
                                 title="Unlink / Delete Listing"
                               >
                                 <FiTrash2 size={12} />
                               </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =================== TAB 6: GEM CATALOGUE (from browser extension) =================== */}
+          {activeTab === "catalogue" && (
+            <div className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
+              <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
+                    <FiLink className="text-blue-500" /> GeM Catalogue Links
+                  </h3>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
+                    Fetched via the GEM-LINK-FETCH browser extension on your GeM catalogue page.
+                    {lastCatalogueSyncAt && (
+                      <> Last synced: {formatDate(lastCatalogueSyncAt)}</>
+                    )}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 w-full sm:w-auto">
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-2.5 text-[var(--gem-text-secondary)] text-xs" />
+                    <input
+                      type="text"
+                      placeholder="Firm..."
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-3 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                      value={catalogueSearchFirm}
+                      onChange={(e) => setCatalogueSearchFirm(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-2.5 text-[var(--gem-text-secondary)] text-xs" />
+                    <input
+                      type="text"
+                      placeholder="Product name..."
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-3 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                      value={catalogueSearchName}
+                      onChange={(e) => setCatalogueSearchName(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-2.5 text-[var(--gem-text-secondary)] text-xs" />
+                    <input
+                      type="text"
+                      placeholder="Gem Catalogue Id..."
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-3 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                      value={catalogueSearchCatalogueId}
+                      onChange={(e) => setCatalogueSearchCatalogueId(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-2.5 text-[var(--gem-text-secondary)] text-xs" />
+                    <input
+                      type="text"
+                      placeholder="Brand..."
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-3 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                      value={catalogueSearchBrand}
+                      onChange={(e) => setCatalogueSearchBrand(e.target.value)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <FiSearch className="absolute left-3 top-2.5 text-[var(--gem-text-secondary)] text-xs" />
+                    <input
+                      type="text"
+                      placeholder="Model..."
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-3 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                      value={catalogueSearchModel}
+                      onChange={(e) => setCatalogueSearchModel(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {filteredCatalogueLinks.length === 0 ? (
+                <div className="p-12 text-center text-[var(--gem-text-secondary)] space-y-2">
+                  <FiLink size={32} className="mx-auto text-slate-400" />
+                  <p className="text-xs">
+                    {catalogueLinks.length === 0
+                      ? "No catalogue links synced yet. Run the browser extension on your GeM catalogue page to fetch them here."
+                      : "No items match your search."}
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
+                        <th className="py-3.5 px-6">Firm</th>
+                        <th className="py-3.5 px-6">Name</th>
+                        <th className="py-3.5 px-6">Gem Catalogue Id</th>
+                        <th className="py-3.5 px-6">Category</th>
+                        <th className="py-3.5 px-6">Brand</th>
+                        <th className="py-3.5 px-6 text-right">Offer Price</th>
+                        <th className="py-3.5 px-6 text-center">Status</th>
+                        <th className="py-3.5 px-6 text-right">Current Stock</th>
+                        <th className="py-3.5 px-6 text-right">Min Qty/Consignee</th>
+                        <th className="py-3.5 px-6">GeM Link</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--gem-border)]/40">
+                      {filteredCatalogueLinks.map((row, idx) => {
+                        // Prefer the Action column's link (this seller's own offering page) - the
+                        // Name / Gem Catalogue Id links open a shared multi-seller listing page instead.
+                        const gemCell = row["Action"]?.href ? row["Action"] : (row["Name"]?.href ? row["Name"] : row["Gem Catalogue Id"]);
+                        return (
+                          <tr key={idx} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
+                            <td className="py-4 px-6">
+                              <span className="bg-[var(--gem-table-header)] py-1 px-2.5 rounded-lg border border-[var(--gem-border)] text-[11px] font-bold text-[var(--gem-text-primary)]">
+                                {row.firmCode || "—"}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 font-bold text-[var(--gem-text-primary)]">
+                              <div className="flex items-center gap-1.5">
+                                <span>{row["Name"]?.text || "—"}</span>
+                                {(() => {
+                                  const masterMatch = catalogueMasterListMatches.get(idx);
+                                  return masterMatch ? (
+                                    <span
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0"
+                                      title={`In Master List as "${masterMatch.lst.itemName}" (${Math.round(masterMatch.score * 100)}% match)`}
+                                    >
+                                      <FiCheckCircle size={11} />
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0"
+                                      title="Not found in Master List yet — not mapped to any requirement"
+                                    >
+                                      <FiAlertTriangle size={11} />
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            </td>
+                            <td className="py-4 px-6 font-mono text-[var(--gem-text-secondary)]">{row["Gem Catalogue Id"]?.text || "—"}</td>
+                            <td className="py-4 px-6 text-[var(--gem-text-secondary)]">{row["Category"]?.text || "—"}</td>
+                            <td className="py-4 px-6 text-[var(--gem-text-secondary)]">{row["Brand"]?.text || "—"}</td>
+                            <td className="py-4 px-6 text-right font-mono font-bold text-[var(--gem-text-primary)]">{row["Offer Price"]?.text || "—"}</td>
+                            <td className="py-4 px-6 text-center">
+                              <span className="bg-[var(--gem-table-header)] py-1 px-2.5 rounded-lg border border-[var(--gem-border)] text-[10px] font-bold text-[var(--gem-text-primary)]">
+                                {row["Product Status"]?.text || "—"}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 text-right font-mono text-[var(--gem-text-primary)]">{row.currentStock ?? "—"}</td>
+                            <td className="py-4 px-6 text-right font-mono text-[var(--gem-text-primary)]">{row.minQtyPerConsignee ?? "—"}</td>
+                            <td className="py-4 px-6">
+                              {gemCell?.href ? (
+                                <div className="flex items-center gap-2">
+                                  <a
+                                    href={gemCell.href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:underline flex items-center gap-1"
+                                  >
+                                    Open <FiExternalLink size={12} />
+                                  </a>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(gemCell.href);
+                                      alert("✓ Link copied to clipboard!");
+                                    }}
+                                    className="p-1 rounded bg-sky-50 hover:bg-sky-100 text-sky-600 border border-sky-200 hover:border-sky-300 transition-colors cursor-pointer"
+                                    title="Copy Link"
+                                  >
+                                    <FiCopy size={11} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[var(--gem-text-secondary)] italic">No link</span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -2373,6 +2777,16 @@ export default function GeMSyncPage() {
 
         </div>
       </div>
+      <AddItemModal
+        isOpen={isAddItemModalOpen}
+        onClose={() => {
+          setIsAddItemModalOpen(false);
+          fetch("/api/stock")
+            .then((res) => res.json())
+            .then((data) => setStockItems(Array.isArray(data) ? data : []))
+            .catch((err) => console.error("Error refreshing stock", err));
+        }}
+      />
     </BlockGuard>
   );
 }

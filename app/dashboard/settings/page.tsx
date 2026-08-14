@@ -27,6 +27,11 @@ const initialState = {
         printLabels: false,
         hideStockItem: false,
         gemLinks: false,
+        accountStatements: false,
+        bankReconciliation: false,
+        dashboardSummary: false,
+        gemBids: false,
+        advanceOrderTracker: false,
     },
 };
 
@@ -66,7 +71,12 @@ const MODULE_GROUPS = [
             { key: "backup", label: "Database JSON Zip Backup" },
             { key: "printLabels", label: "Print Labels Page" },
             { key: "manageStock", label: "Manage Stock Page" },
-            { key: "gemLinks", label: "GeM Links / Mapping Page" }
+            { key: "gemLinks", label: "GeM Links / Mapping Page" },
+            { key: "accountStatements", label: "Account / Bank Statement Page" },
+            { key: "bankReconciliation", label: "Bank Reconciliation / Learning Page" },
+            { key: "dashboardSummary", label: "Summary Dashboard Page" },
+            { key: "gemBids", label: "GeM Bids Page" },
+            { key: "advanceOrderTracker", label: "Advance Order Tracker Page" }
         ]
     }
 ];
@@ -193,6 +203,11 @@ export default function ManageUsers() {
                 printLabels: user.permissions?.printLabels || false,
                 hideStockItem: user.permissions?.hideStockItem || false,
                 gemLinks: user.permissions?.gemLinks || false,
+                accountStatements: user.permissions?.accountStatements || false,
+                bankReconciliation: user.permissions?.bankReconciliation || false,
+                dashboardSummary: user.permissions?.dashboardSummary || false,
+                gemBids: user.permissions?.gemBids || false,
+                advanceOrderTracker: user.permissions?.advanceOrderTracker || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });

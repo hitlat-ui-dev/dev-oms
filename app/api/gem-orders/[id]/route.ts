@@ -73,12 +73,22 @@ export async function POST(
     const rate = Number(body.rate || rawOrder.rate || 0);
     const totalAmount = Number(body.totalAmount || rawOrder.totalAmount || (orderQty * rate));
 
+    // A linked seller's registered instituteName is the source of truth — prefer it over
+    // whatever raw text was typed/scraped, so this order's name can't drift from the
+    // institute it's actually linked to (see the same guard in app/api/seller-orders/route.ts).
+    const rawInstituteName = body.instituteName || rawOrder.instituteName || "GeM Buyer";
+    let canonicalInstituteName = rawInstituteName;
+    if (body.sellerId && ObjectId.isValid(body.sellerId)) {
+      const sellerDoc = await db.collection("sellers").findOne({ _id: new ObjectId(body.sellerId) });
+      canonicalInstituteName = sellerDoc?.instituteName || rawInstituteName;
+    }
+
     // 3. Construct verified main order document
     const verifiedOrder = {
       orderNo: newOrderNo,
       firmCode: body.firmCode || "GeM",
       sellerId: body.sellerId ? new ObjectId(body.sellerId) : null,
-      instituteName: body.instituteName || rawOrder.instituteName || "GeM Buyer",
+      instituteName: canonicalInstituteName,
       itemId: body.itemId ? new ObjectId(body.itemId) : null,
       itemName: body.itemName || rawOrder.itemName || "GeM Order Item",
       category: body.category || "General",
@@ -90,12 +100,13 @@ export async function POST(
       reQty: orderQty,
       rate,
       totalAmount,
-      remark: body.remark || `Verified GeM Order (${rawOrder.location || ""})`.trim(),
+      remark: body.remark || "",
       status: "TO CHECK",
       isPaid: false,
       transportName: "",
       transportRemark: "",
       deliveryDate: "",
+      createdBy: body.createdBy || "",
       createdAt: new Date(),
       updatedAt: new Date()
     };

@@ -1145,6 +1145,11 @@ const shippingLock = useRef(false);
                 )}
 
                 <td className="px-3 py-2 font-black text-blue-600 max-w-20">{order.orderNo}
+                  {order.isAdvanceOrder && (
+                    <span className="text-[8px] font-black uppercase bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded-full block w-fit mt-0.5">
+                      Advance
+                    </span>
+                  )}
                   <span className="text-[9px] font-bold text-slate-800 block">
                     {order.createdAt
                       ? new Date(order.createdAt).toLocaleDateString('en-GB', {

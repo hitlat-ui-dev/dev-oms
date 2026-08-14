@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiLink } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
@@ -72,6 +72,15 @@ export default function OrdersDashboard() {
       color: "bg-slate-800",
       shadow: "shadow-slate-200",
       permissionKey: "addMyCompanies"
+    },
+    {
+      title: "Advance Order Tracker",
+      desc: "Track GeM orders covering advance deliveries",
+      icon: <FiLink size={24} />,
+      path: "/dashboard/orders/advance-tracker",
+      color: "bg-amber-600",
+      shadow: "shadow-amber-200",
+      permissionKey: "advanceOrderTracker"
     }
   ];
 

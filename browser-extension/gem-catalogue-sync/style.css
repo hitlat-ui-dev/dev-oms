@@ -1,0 +1,79 @@
+#gem-autofill-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999999;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+
+#gem-autofill-btn:hover {
+  background: #1558b0;
+}
+
+#gem-fetch-stock-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 190px;
+  z-index: 999999;
+  background: #188038;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#gem-fetch-stock-btn:hover {
+  background: #12692c;
+}
+
+#gem-debug-btn {
+  position: fixed;
+  bottom: 74px;
+  right: 24px;
+  z-index: 999999;
+  background: #5f6368;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#gem-debug-btn:hover {
+  background: #3c4043;
+}
+
+#gem-autofill-toast {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 999999;
+  background: #202124;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  max-width: 320px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}

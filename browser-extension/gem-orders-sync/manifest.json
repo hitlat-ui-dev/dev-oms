@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "GeM Orders → OMS Sync",
+  "version": "1.4",
+  "description": "GeM ke Orders tab se contracts fetch karke seedha Dev OMS ke GeM Orders staging console me bhejta hai.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://dev-oms-blush.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fulfilment.gem.gov.in/*"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

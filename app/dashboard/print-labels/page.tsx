@@ -5,16 +5,12 @@ import jsPDF from 'jspdf';
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 
-// These details remain fixed based on the firmCode
-const FIXED_CONTACTS: Record<string, { address: string; mobile: string }> = {
-    "ELIP": {
-        address: "TARU ADDRESS LAKHAVU, MALGODAWN ROAD, MEHSANA-2 384002",
-        mobile: "+91 82000 93336"
-    },
-    "SHREEJI": {
-        address: "G-45, INDUSTRIAL ESTATE, MEHSANA, GUJARAT - 384001",
-        mobile: "+91 00000 00000"
-    },
+// Used only if a company has neither dispatchAddress nor mobile set (e.g. an
+// older record created before those fields existed) - keeps label generation
+// from crashing rather than pretending to be a real address.
+const FALLBACK_CONTACT = {
+    address: "ADDRESS NOT SET - please add it on the Companies page",
+    mobile: "MOBILE NOT SET"
 };
 
 export default function PrintLabelsPage() {
@@ -48,8 +44,15 @@ export default function PrintLabelsPage() {
             format: is35x6 ? [3.5, 6] : [4, 4]
         });
 
-        // Get the fixed contact info for the selected firm
-        const fromExtra = FIXED_CONTACTS[selectedFrom.firmCode] || { address: "4/22/76,Old malgodawn,near D bhikhabhai office,Mehsana,Gujarat-384002.", mobile: "760 001 6442" };
+        // Pull the sender's address/mobile from the selected company itself
+        // (set on the Companies page) so it changes along with the Sender
+        // dropdown, instead of a fixed lookup that only covered 2 firms.
+        // dispatchAddress is deliberately separate from sellerRegisterAddress,
+        // which is used for a different purpose elsewhere.
+        const fromExtra = {
+            address: selectedFrom.dispatchAddress || FALLBACK_CONTACT.address,
+            mobile: selectedFrom.mobile || FALLBACK_CONTACT.mobile
+        };
         const options = { angle: -90 };
 
         if (is35x6) {

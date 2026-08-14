@@ -13,6 +13,7 @@ interface Seller {
   address?: string;
   place?: string;
   sellerBillName?: string;
+  gemLocationText?: string;
   statementDescriptionName?: string[];
   createdAt: string;
 }
@@ -33,6 +34,7 @@ export default function AddSellerPage() {
     address: "",
     place: "",
     sellerBillName: "",
+    gemLocationText: "",
     statementDescriptionName: [] as string[]
   });
   const [descInput, setDescInput] = useState("");
@@ -83,6 +85,7 @@ export default function AddSellerPage() {
       address: "",
       place: "",
       sellerBillName: "",
+      gemLocationText: "",
       statementDescriptionName: []
     });
     setDescInput("");
@@ -137,6 +140,7 @@ export default function AddSellerPage() {
       address: seller.address || "",
       place: seller.place || "",
       sellerBillName: seller.sellerBillName || "",
+      gemLocationText: seller.gemLocationText || "",
       statementDescriptionName: descNames
     });
     setDescInput("");
@@ -239,6 +243,23 @@ export default function AddSellerPage() {
                 </div>
               </div>
 
+              <div className="space-y-2 md:col-span-3">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+                  <span>GeM Location (for auto-match)</span>
+                  <span className="text-slate-400 font-normal lowercase">(paste the exact "Location" text GeM shows on this institute's orders)</span>
+                </label>
+                <div className="relative">
+                  <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={formData.gemLocationText}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all"
+                    placeholder='e.g. "Govt. industrial training institute, deodar, opp. mamlatdar office, ta - deodar, di - banaskantha"'
+                    onChange={(e) => setFormData({ ...formData, gemLocationText: e.target.value })}
+                  />
+                </div>
+              </div>
+
               {/* Statement Description Name - Multi-input */}
               <div className="space-y-2 md:col-span-3">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
@@ -324,6 +345,7 @@ export default function AddSellerPage() {
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Address</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">GeM Location</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
                 </tr>
               </thead>
@@ -354,6 +376,12 @@ export default function AddSellerPage() {
                       {seller.address || "---"}
                     </td>
                     <td className="p-5 font-bold text-slate-400 text-[10px]">{seller.place || "---"}</td>
+                    <td
+                      className="p-5 font-medium text-slate-500 text-[11px] max-w-52 truncate cursor-help"
+                      title={seller.gemLocationText}
+                    >
+                      {seller.gemLocationText || "---"}
+                    </td>
                     <td className="p-5 text-right">
                       <button onClick={() => handleEdit(seller)} className="p-2 bg-slate-100 text-slate-400 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm">
                         <FiEdit3 size={16} />

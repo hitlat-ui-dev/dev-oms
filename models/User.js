@@ -18,5 +18,10 @@ const userSchema = new mongoose.Schema({
         receivePurchaseRate: { type: Boolean, default: false },
         stockLastRate: { type: Boolean, default: false },
         printLabels: { type: Boolean, default: false },
+        accountStatements: { type: Boolean, default: false },
+        bankReconciliation: { type: Boolean, default: false },
+        dashboardSummary: { type: Boolean, default: false },
+        gemBids: { type: Boolean, default: false },
+        advanceOrderTracker: { type: Boolean, default: false },
     }
 });

@@ -31,11 +31,13 @@ export default function BackupPage() {
     todayLog: BackupHistoryLog | null;
     history: BackupHistoryLog[];
     driveConfigured: boolean;
+    emailConfigured: boolean;
   }>({
     todayBackupCompleted: false,
     todayLog: null,
     history: [],
     driveConfigured: false,
+    emailConfigured: false,
   });
 
   const fetchAutoBackupStatus = async () => {
@@ -48,6 +50,7 @@ export default function BackupPage() {
           todayLog: data.todayLog,
           history: data.history || [],
           driveConfigured: data.driveConfigured,
+          emailConfigured: data.emailConfigured,
         });
       }
     } catch (e) {
@@ -163,21 +166,31 @@ export default function BackupPage() {
                   System Data Backup & Cloud Sync
                 </h1>
                 <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                  Automated Daily Google Drive Backup Engine
+                  Automated Daily Backup Engine
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
               <span
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
-                  autoStatus.driveConfigured
+                  autoStatus.emailConfigured
                     ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
                     : "bg-amber-100 text-amber-800 border border-amber-300"
                 }`}
               >
                 <FiCloud size={14} />
-                {autoStatus.driveConfigured ? "Google Drive Connected" : "Drive Env Keys Pending"}
+                {autoStatus.emailConfigured ? "Gmail Backup Connected" : "Gmail Env Keys Pending"}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
+                  autoStatus.driveConfigured
+                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                    : "bg-slate-100 text-slate-500 border border-slate-300"
+                }`}
+              >
+                <FiCloud size={14} />
+                {autoStatus.driveConfigured ? "Google Drive Connected" : "Drive Not Configured"}
               </span>
             </div>
           </div>
@@ -212,7 +225,7 @@ export default function BackupPage() {
 
                 <h3 className="text-base font-bold text-slate-900 mb-2">Automated Daily Cloud Sync</h3>
                 <p className="text-slate-600 text-xs leading-relaxed mb-4">
-                  Triggers automatically on the first site access of each calendar day. Backs up database collections and syncs directly to Google Drive.
+                  Triggers automatically on the first site access of each calendar day. Backs up all database collections (including GeM Sync data) and emails the ZIP to your configured Gmail address.
                 </p>
 
                 <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100 mb-6 space-y-2 text-xs">

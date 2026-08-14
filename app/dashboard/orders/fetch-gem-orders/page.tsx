@@ -29,8 +29,39 @@ interface RawGeMOrder {
   qty: number;
   rate: number;
   totalAmount: number;
+  firmCode?: string;
+  gemStatus?: string;
   status: string;
   createdAt: string;
+}
+
+interface BuyerOption {
+  id: string;
+  name: string;
+  gemLocationText?: string;
+}
+
+interface UploadedSheetRow {
+  originalName: string;
+  qty: number;
+  rate: number;
+  gemLink?: string;
+  mappedItemId?: string;
+}
+
+interface SheetRecord {
+  id: string;
+  fileName: string;
+  selectedBuyerId: string;
+  uploadedRows: UploadedSheetRow[];
+}
+
+interface StockItemOption {
+  _id: string;
+  sku: string;
+  itemName: string;
+  category: string;
+  unit: string;
 }
 
 export default function FetchGeMOrdersPage() {
@@ -38,6 +69,9 @@ export default function FetchGeMOrdersPage() {
 
   const [rawOrders, setRawOrders] = useState<RawGeMOrder[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
+  const [buyerOptions, setBuyerOptions] = useState<BuyerOption[]>([]);
+  const [sheets, setSheets] = useState<SheetRecord[]>([]);
+  const [stockItems, setStockItems] = useState<StockItemOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,16 +79,93 @@ export default function FetchGeMOrdersPage() {
   // Verification modal state
   const [selectedOrder, setSelectedOrder] = useState<RawGeMOrder | null>(null);
   const [selectedFirmCode, setSelectedFirmCode] = useState("");
+  const [customInstituteName, setCustomInstituteName] = useState("");
   const [customItemName, setCustomItemName] = useState("");
+  const [itemQuery, setItemQuery] = useState("");
+  const [showItemSuggestions, setShowItemSuggestions] = useState(false);
+  const [selectedStockItem, setSelectedStockItem] = useState<StockItemOption | null>(null);
   const [customQty, setCustomQty] = useState<number>(1);
   const [customRate, setCustomRate] = useState<number>(0);
   const [customRemark, setCustomRemark] = useState("");
+  const [autoFillHint, setAutoFillHint] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [currentUsername, setCurrentUsername] = useState("");
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("oms_user");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.username) setCurrentUsername(parsed.username);
+      }
+    } catch (err) {
+      console.error("Failed to read logged-in user", err);
+    }
+  }, []);
 
   useEffect(() => {
     fetchRawOrders();
     fetchCompanies();
+    fetchSheetsAndBuyers();
+    fetchStockItems();
   }, []);
+
+  // Resolve the Sheet Library file(s) tied to a given buyer (matches by
+  // buyer id or name, same dual-check the GeM Sync Console uses since
+  // selectedBuyerId sometimes holds a name instead of an id).
+  const resolveBuyerSheets = (buyerName: string) => {
+    const buyerQ = buyerName.trim().toLowerCase();
+    if (!buyerQ) return [];
+    const matchedBuyer = buyerOptions.find(b => b.name.trim().toLowerCase() === buyerQ);
+    return sheets.filter(s => {
+      const sel = (s.selectedBuyerId || "").trim().toLowerCase();
+      return sel === buyerQ || (matchedBuyer && sel === matchedBuyer.id.trim().toLowerCase());
+    });
+  };
+
+  // Sheet Library auto-match: once Buyer (Institute) is picked, find the row
+  // in that buyer's uploaded rate sheet whose Rate/Qty matches what the order
+  // actually placed on GeM at (the buyer ordered at the quoted rate/qty), then
+  // pull the real stock item (via that row's mappedItemId) and the item name
+  // as originally written in the buyer's Excel sheet (into Remark) from it.
+  useEffect(() => {
+    if (!customInstituteName.trim() || !selectedOrder) {
+      setAutoFillHint(null);
+      return;
+    }
+
+    const candidateSheets = resolveBuyerSheets(customInstituteName);
+    const orderRate = Number(selectedOrder.rate);
+    const orderQty = Number(selectedOrder.qty);
+
+    let rateOnlyMatch: { row: UploadedSheetRow; sheet: SheetRecord } | null = null;
+
+    outer: for (const sheet of candidateSheets) {
+      for (const row of sheet.uploadedRows || []) {
+        if (Number(row.rate) !== orderRate) continue;
+        if (Number(row.qty) === orderQty) {
+          rateOnlyMatch = { row, sheet };
+          break outer; // exact rate+qty match - best case, stop here
+        }
+        if (!rateOnlyMatch) rateOnlyMatch = { row, sheet };
+      }
+    }
+
+    if (!rateOnlyMatch) {
+      setAutoFillHint(null);
+      return;
+    }
+
+    const { row, sheet } = rateOnlyMatch;
+    const stockItem = row.mappedItemId ? stockItems.find(s => s._id === row.mappedItemId) : null;
+    if (stockItem) {
+      setSelectedStockItem(stockItem);
+      setCustomItemName(stockItem.itemName);
+      setItemQuery(stockItem.itemName);
+    }
+    if (row.originalName) setCustomRemark(row.originalName);
+    setAutoFillHint(`Auto-matched from Sheet Library "${sheet.fileName}" (rate ₹${row.rate}, qty ${row.qty})`);
+  }, [customInstituteName, selectedOrder, sheets, buyerOptions, stockItems]);
 
   const fetchRawOrders = async () => {
     try {
@@ -84,6 +195,57 @@ export default function FetchGeMOrdersPage() {
     }
   };
 
+  // Buyers/ITIs + Sheet Library, for the Buyer field suggestions and the
+  // Rate/Qty auto-fill in the verify modal (same source the GeM Sync Console uses).
+  const fetchSheetsAndBuyers = async () => {
+    try {
+      const [gemSyncRes, sellersRes] = await Promise.all([
+        fetch(`/api/gem-sync?t=${Date.now()}`),
+        fetch(`/api/sellers?t=${Date.now()}`).catch(() => null)
+      ]);
+
+      const merged = new Map<string, BuyerOption>();
+
+      if (gemSyncRes.ok) {
+        const data = await gemSyncRes.json();
+        setSheets(Array.isArray(data.sheets) ? data.sheets : []);
+        (data.buyers || []).forEach((b: any) => {
+          const name = (b.name || "").trim();
+          if (name) merged.set(name.toLowerCase(), { id: b.id, name });
+        });
+      }
+
+      if (sellersRes && sellersRes.ok) {
+        const sellers = await sellersRes.json();
+        (Array.isArray(sellers) ? sellers : []).forEach((s: any) => {
+          const name = (s.instituteName || s.buyerName || s.name || "").trim();
+          const gemLocationText = (s.gemLocationText || "").trim();
+          if (name) {
+            // Sellers take priority over gem_buyers for the same name, since
+            // only sellers carry gemLocationText (used to auto-match below).
+            merged.set(name.toLowerCase(), { id: s._id || name, name, gemLocationText });
+          }
+        });
+      }
+
+      setBuyerOptions(Array.from(merged.values()));
+    } catch (err) {
+      console.error("Error fetching buyers/sheets:", err);
+    }
+  };
+
+  const fetchStockItems = async () => {
+    try {
+      const res = await fetch(`/api/stock?t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStockItems(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error("Error fetching stock items:", err);
+    }
+  };
+
   const handleDelete = async (id: string, contractNo: string) => {
     if (!confirm(`Are you sure you want to delete/reject order ${contractNo}?`)) return;
 
@@ -102,12 +264,47 @@ export default function FetchGeMOrdersPage() {
 
   const openVerifyModal = (order: RawGeMOrder) => {
     setSelectedOrder(order);
-    setSelectedFirmCode(companies.length > 0 ? companies[0].firmCode : "GeM");
+    const firmMatch = order.firmCode && companies.some(c => c.firmCode === order.firmCode);
+    setSelectedFirmCode(firmMatch ? order.firmCode! : (companies.length > 0 ? companies[0].firmCode : "GeM"));
+    // Try to pre-select a matching Institute from the Seller Directory.
+    // Prefer the dedicated "GeM Location" field (an exact/near-exact copy of
+    // GeM's own Location text, set once per seller in Add Seller) since it's
+    // far more reliable than guessing off the institute name alone - only
+    // fall back to a name-based substring guess if no seller has that set.
+    const rawLoc = (order.instituteName || order.location || "").toLowerCase();
+    const guessedBuyer =
+      buyerOptions.find((b) => {
+        const gemLoc = (b.gemLocationText || "").toLowerCase();
+        return gemLoc && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc));
+      }) ||
+      buyerOptions.find(
+        (b) => b.name && (rawLoc.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(rawLoc))
+      );
+    setCustomInstituteName(guessedBuyer ? guessedBuyer.name : "");
     setCustomItemName(order.itemName);
+    setItemQuery(order.itemName || "");
+    setSelectedStockItem(null);
+    setShowItemSuggestions(false);
     setCustomQty(order.qty || 1);
     setCustomRate(order.rate || 0);
-    setCustomRemark(order.location ? `Location: ${order.location}` : "Fetched from GeM");
+    // Left blank until (if) the Sheet Library auto-match below fills it in
+    // with the item name from the buyer's own Excel sheet - no location text.
+    setCustomRemark("");
+    setAutoFillHint(null);
   };
+
+  const handleSelectStockItem = (item: StockItemOption) => {
+    setSelectedStockItem(item);
+    setCustomItemName(item.itemName);
+    setItemQuery(item.itemName);
+    setShowItemSuggestions(false);
+  };
+
+  const itemSuggestions = useMemo(() => {
+    const q = itemQuery.toLowerCase().trim();
+    const pool = q ? stockItems.filter(s => s.itemName.toLowerCase().includes(q)) : stockItems;
+    return pool.slice(0, 8);
+  }, [itemQuery, stockItems]);
 
   const handleVerifySubmit = async () => {
     if (!selectedOrder) return;
@@ -119,11 +316,17 @@ export default function FetchGeMOrdersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           firmCode: selectedFirmCode,
+          instituteName: customInstituteName,
+          itemId: selectedStockItem?._id,
           itemName: customItemName,
+          category: selectedStockItem?.category,
+          unit: selectedStockItem?.unit,
+          sku: selectedStockItem?.sku,
           qty: customQty,
           rate: customRate,
           totalAmount: customQty * customRate,
           remark: customRemark,
+          createdBy: currentUsername,
         })
       });
 
@@ -216,74 +419,74 @@ export default function FetchGeMOrdersPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4">
-          {filteredOrders.map((order) => (
-            <div
-              key={order._id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 md:p-6 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-6"
-            >
-              {/* Main Content */}
-              <div className="flex-1 space-y-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="bg-amber-100 text-amber-800 text-[11px] font-black tracking-wider px-3 py-1 rounded-full uppercase">
-                    UNVERIFIED
-                  </span>
-                  <a
-                    href={order.contractUrl || "#"}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-black text-sm uppercase tracking-tight group"
-                  >
-                    Contract: {order.contractNo}
-                    {order.contractUrl && <FiExternalLink size={14} className="group-hover:translate-x-0.5 transition-transform" />}
-                  </a>
-                  {order.contractDate && (
-                    <span className="text-slate-400 text-xs font-bold">
-                      • Date: {order.contractDate}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
+                <th className="px-3 py-3">Firm</th>
+                <th className="px-3 py-3">Buyer</th>
+                <th className="px-3 py-3">Cat.</th>
+                <th className="px-3 py-3">Item Details</th>
+                <th className="px-3 py-3">Contract</th>
+                <th className="px-3 py-3 text-center">O-Qty</th>
+                <th className="px-3 py-3 text-right">Rate</th>
+                <th className="px-3 py-3 text-right">Total</th>
+                <th className="px-3 py-3 text-center">Status</th>
+                <th className="px-3 py-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredOrders.map((order) => (
+                <tr key={order._id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
+                  <td className="px-3 py-3 max-w-56">
+                    <div className="font-bold text-slate-800 truncate">{order.instituteName}</div>
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">—</td>
+                  <td className="px-3 py-3 max-w-72">
+                    <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <a
+                      href={order.contractUrl || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold"
+                    >
+                      {order.contractNo}
+                      {order.contractUrl && <FiExternalLink size={11} />}
+                    </a>
+                    {order.contractDate && <div className="text-[10px] text-slate-400 font-semibold">{order.contractDate}</div>}
+                  </td>
+                  <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
+                  <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
+                  <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="bg-amber-100 text-amber-800 text-[10px] font-black tracking-wider px-2.5 py-1 rounded-full uppercase">
+                      UNVERIFIED
                     </span>
-                  )}
-                </div>
-
-                <div>
-                  <div className="text-slate-800 font-black text-base uppercase tracking-tight">
-                    {order.itemName}
-                  </div>
-                  <div className="text-slate-500 text-xs font-medium mt-1">
-                    <strong className="text-slate-700 font-bold">Buyer:</strong> {order.instituteName}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-6 text-xs text-slate-600 font-semibold pt-1">
-                  <div>
-                    Qty: <span className="font-bold text-slate-900">{order.qty} nos</span>
-                  </div>
-                  <div>
-                    Rate: <span className="font-bold text-slate-900">₹{order.rate}</span>
-                  </div>
-                  <div>
-                    Total Value: <span className="font-bold text-emerald-700 text-sm">₹{order.totalAmount}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-3 border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-6">
-                <button
-                  onClick={() => openVerifyModal(order)}
-                  className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider shadow-sm hover:shadow-md transition-all"
-                >
-                  <FiCheckCircle size={16} /> Verify & Move
-                </button>
-                <button
-                  onClick={() => handleDelete(order._id, order.contractNo)}
-                  className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                  title="Reject Order"
-                >
-                  <FiTrash2 size={18} />
-                </button>
-              </div>
-            </div>
-          ))}
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => openVerifyModal(order)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all"
+                      >
+                        <FiCheckCircle size={13} /> Verify
+                      </button>
+                      <button
+                        onClick={() => handleDelete(order._id, order.contractNo)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Reject Order"
+                      >
+                        <FiTrash2 size={15} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -320,14 +523,66 @@ export default function FetchGeMOrdersPage() {
 
               <div>
                 <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                  Item Name
+                  Buyer / Institute
+                </label>
+                <select
+                  value={customInstituteName}
+                  onChange={(e) => setCustomInstituteName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">-- Select Institute --</option>
+                  {buyerOptions.map((b) => (
+                    <option key={b.id} value={b.name}>{b.name}</option>
+                  ))}
+                </select>
+                {!customInstituteName && (
+                  <p className="text-[10px] text-amber-600 font-semibold mt-1">
+                    GeM se aaya raw text: "{selectedOrder?.instituteName}" - upar se sahi institute chuno.
+                  </p>
+                )}
+              </div>
+
+              <div className="relative">
+                <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                  Item Name {selectedStockItem && <span className="text-emerald-600 normal-case font-semibold">(SKU: {selectedStockItem.sku})</span>}
                 </label>
                 <input
                   type="text"
-                  value={customItemName}
-                  onChange={(e) => setCustomItemName(e.target.value)}
+                  value={itemQuery}
+                  onChange={(e) => {
+                    setItemQuery(e.target.value);
+                    setCustomItemName(e.target.value);
+                    setSelectedStockItem(null);
+                    setShowItemSuggestions(true);
+                  }}
+                  onFocus={() => setShowItemSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowItemSuggestions(false), 150)}
+                  placeholder="Search stock item..."
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
                 />
+                {!selectedStockItem && (
+                  <p className="text-[10px] text-amber-600 font-semibold mt-1">
+                    Pick a real stock item below so Stock/Re-Qty shows correctly on the Main Orders page.
+                  </p>
+                )}
+                {autoFillHint && (
+                  <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ {autoFillHint}</p>
+                )}
+                {showItemSuggestions && itemSuggestions.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                    {itemSuggestions.map((item) => (
+                      <button
+                        type="button"
+                        key={item._id}
+                        onMouseDown={() => handleSelectStockItem(item)}
+                        className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
+                      >
+                        <div className="font-bold text-slate-800">{item.itemName}</div>
+                        <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -372,7 +627,7 @@ export default function FetchGeMOrdersPage() {
                   type="text"
                   value={customRemark}
                   onChange={(e) => setCustomRemark(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium focus:outline-none focus:border-blue-500"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-black font-semibold focus:outline-none focus:border-blue-500"
                 />
               </div>
             </div>

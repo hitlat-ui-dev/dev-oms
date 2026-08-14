@@ -1,5 +1,5 @@
 "use client";
-import { FiLogOut, FiSun, FiMoon, FiCheckSquare, FiPlus, FiSquare, FiMessageSquare } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiMessageSquare } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -8,7 +8,6 @@ export default function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<{ username: string, role: string } | null>(null);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [hasNotification, setHasNotification] = useState(false);
   const [showTodoDropdown, setShowTodoDropdown] = useState(false);
   const [todoTasks, setTodoTasks] = useState<any[]>([]);
@@ -29,29 +28,6 @@ export default function Header() {
   const [selectedRecipient, setSelectedRecipient] = useState<string>("");
   const [newDmText, setNewDmText] = useState("");
   const [hasDmNotification, setHasDmNotification] = useState(false);
-
-  useEffect(() => {
-    // Read theme from cookies on mount
-    const match = document.cookie.match(/(^| )oms_theme=([^;]+)/);
-    const savedTheme = match ? (match[2] as "dark" | "light") : "dark";
-    setTheme(savedTheme);
-    if (savedTheme === "light") {
-      document.documentElement.classList.add("theme-light");
-    } else {
-      document.documentElement.classList.remove("theme-light");
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    setTheme(newTheme);
-    document.cookie = `oms_theme=${newTheme}; path=/; max-age=31536000`;
-    if (newTheme === "light") {
-      document.documentElement.classList.add("theme-light");
-    } else {
-      document.documentElement.classList.remove("theme-light");
-    }
-  };
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -399,9 +375,16 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 flex items-center justify-between px-4 md:px-10 py-2 bg-[#0f172a] text-white shadow-lg">
       {/* Clickable Logo - Goes to Dashboard */}
-      <Link href="/dashboard" className="flex items-baseline cursor-pointer group">
-        <span className="text-2xl md:text-3xl font-black tracking-tighter text-white group-hover:text-blue-400 transition-colors">Dev</span>
-        <span className="text-sm md:text-base font-bold tracking-tight text-blue-400 ml-1 uppercase">OMS</span>
+      <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer group">
+        <img
+          src="/logo-icon.png"
+          alt="Dev Enterprise"
+          className="h-8 md:h-9 w-auto object-contain group-hover:opacity-90 transition-opacity"
+        />
+        <span className="flex items-baseline">
+          <span className="text-2xl md:text-3xl font-black tracking-tighter text-white group-hover:text-blue-400 transition-colors">Dev</span>
+          <span className="text-sm md:text-base font-bold tracking-tight text-blue-400 ml-1 uppercase">OMS</span>
+        </span>
       </Link>
 
       <div className="flex items-center gap-4 md:gap-8">
@@ -417,7 +400,7 @@ export default function Header() {
                 setSelectedRecipient("all");
               }
             }}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-violet-600/20 hover:bg-violet-600/30 text-violet-400 border border-violet-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
             title="Direct Messages"
           >
             <FiMessageSquare size={13} /> Chat
@@ -438,10 +421,10 @@ export default function Header() {
               />
               
               {/* DM Card */}
-              <div className="absolute right-0 mt-2.5 w-[420px] sm:w-[480px] bg-[#131a26] border border-slate-800 rounded-2xl shadow-2xl p-4 z-50 text-left todo-chat-card animate-in fade-in slide-in-from-top-2 duration-150 flex gap-4 h-96">
-                
+              <div className="absolute right-0 mt-2.5 w-[420px] sm:w-[480px] bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex gap-4 h-96">
+
                 {/* Users List (Left Column, 35% width) */}
-                <div className="w-1/3 border-r border-slate-800/80 pr-2 flex flex-col min-h-0">
+                <div className="w-1/3 border-r border-slate-100 pr-2 flex flex-col min-h-0">
                   <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Team Members</h4>
                   <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar pr-1">
                     {/* All Members (Group Chat option) */}
@@ -449,9 +432,9 @@ export default function Header() {
                       type="button"
                       onClick={() => setSelectedRecipient("all")}
                       className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                        selectedRecipient === "all" 
-                          ? "bg-violet-600 text-white" 
-                          : "hover:bg-slate-900 text-slate-300"
+                        selectedRecipient === "all"
+                          ? "bg-blue-600 text-white"
+                          : "hover:bg-slate-100 text-slate-600"
                       }`}
                     >
                       <span className="truncate">All Members</span>
@@ -460,21 +443,21 @@ export default function Header() {
                     {users
                       .filter(u => u.username.toLowerCase() !== user?.username.toLowerCase())
                       .map(u => {
-                        const hasUnreadFromThisUser = directMessages.some(dm => 
-                          dm.sender.toLowerCase() === u.username.toLowerCase() && 
-                          dm.recipient.toLowerCase() === user?.username.toLowerCase() && 
+                        const hasUnreadFromThisUser = directMessages.some(dm =>
+                          dm.sender.toLowerCase() === u.username.toLowerCase() &&
+                          dm.recipient.toLowerCase() === user?.username.toLowerCase() &&
                           !dm.read
                         );
-                        
+
                         return (
                           <button
                             key={u._id}
                             type="button"
                             onClick={() => handleSelectRecipient(u.username)}
                             className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                              selectedRecipient === u.username 
-                                ? "bg-violet-600 text-white" 
-                                : "hover:bg-slate-900 text-slate-300"
+                              selectedRecipient === u.username
+                                ? "bg-blue-600 text-white"
+                                : "hover:bg-slate-100 text-slate-600"
                             }`}
                           >
                             <span className="truncate capitalize">{u.username}</span>
@@ -492,17 +475,17 @@ export default function Header() {
                   {selectedRecipient ? (
                     <>
                       {/* Recipient Header */}
-                      <div className="pb-2 border-b border-slate-800/80 mb-2 flex justify-between items-center">
-                        <span className="text-xs font-black uppercase tracking-wider text-slate-100 todo-chat-text-primary capitalize">
+                      <div className="pb-2 border-b border-slate-100 mb-2 flex justify-between items-center">
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-900 capitalize">
                           {selectedRecipient === "all" ? "Group Discussion" : `Chat with ${selectedRecipient}`}
                         </span>
                       </div>
 
                       {/* Message History */}
-                      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar p-2 bg-slate-950/20 rounded-xl mb-2 flex flex-col">
+                      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar p-2 bg-slate-50 rounded-xl mb-2 flex flex-col">
                         {selectedRecipient === "all" ? (
                           chatMessages.length === 0 ? (
-                            <div className="text-center my-auto text-slate-500 uppercase tracking-widest text-[9px] font-bold">
+                            <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[9px] font-bold">
                               Start the group discussion!
                             </div>
                           ) : (
@@ -511,12 +494,12 @@ export default function Header() {
                               return (
                                 <div key={msg._id || index} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
                                   {!isMe && (
-                                    <span className="text-[8px] text-slate-400 font-bold mb-0.5 capitalize">{msg.sender}</span>
+                                    <span className="text-[8px] text-slate-500 font-bold mb-0.5 capitalize">{msg.sender}</span>
                                   )}
                                   <div className={`p-2 rounded-xl text-xs max-w-[85%] break-words whitespace-pre-wrap ${
-                                    isMe 
-                                      ? "bg-violet-600 text-white rounded-tr-none text-right" 
-                                      : "bg-slate-900 border border-slate-850 text-slate-200 rounded-tl-none todo-chat-chat-bubble"
+                                    isMe
+                                      ? "bg-blue-600 text-white rounded-tr-none text-right"
+                                      : "bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm"
                                   }`}>
                                     {msg.message}
                                   </div>
@@ -525,16 +508,16 @@ export default function Header() {
                             })
                           )
                         ) : (
-                          directMessages.filter(dm => 
+                          directMessages.filter(dm =>
                             (dm.sender.toLowerCase() === user?.username.toLowerCase() && dm.recipient.toLowerCase() === selectedRecipient.toLowerCase()) ||
                             (dm.sender.toLowerCase() === selectedRecipient.toLowerCase() && dm.recipient.toLowerCase() === user?.username.toLowerCase())
                           ).length === 0 ? (
-                            <div className="text-center my-auto text-slate-500 uppercase tracking-widest text-[9px] font-bold">
+                            <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[9px] font-bold">
                               Say hello to {selectedRecipient}!
                             </div>
                           ) : (
                             directMessages
-                              .filter(dm => 
+                              .filter(dm =>
                                 (dm.sender.toLowerCase() === user?.username.toLowerCase() && dm.recipient.toLowerCase() === selectedRecipient.toLowerCase()) ||
                                 (dm.sender.toLowerCase() === selectedRecipient.toLowerCase() && dm.recipient.toLowerCase() === user?.username.toLowerCase())
                               )
@@ -543,9 +526,9 @@ export default function Header() {
                                 return (
                                   <div key={dm._id || index} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                                     <div className={`p-2 rounded-xl text-xs max-w-[85%] break-words whitespace-pre-wrap ${
-                                      isMe 
-                                        ? "bg-violet-600 text-white rounded-tr-none text-right" 
-                                        : "bg-slate-900 border border-slate-850 text-slate-200 rounded-tl-none todo-chat-chat-bubble"
+                                      isMe
+                                        ? "bg-blue-600 text-white rounded-tr-none text-right"
+                                        : "bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm"
                                     }`}>
                                       {dm.message}
                                     </div>
@@ -563,18 +546,18 @@ export default function Header() {
                           placeholder={selectedRecipient === "all" ? "Broadcast to group..." : `Message ${selectedRecipient}...`}
                           value={newDmText}
                           onChange={(e) => setNewDmText(e.target.value)}
-                          className="flex-1 bg-slate-950 border border-slate-855 rounded-xl py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 todo-chat-input-wrapper font-bold"
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-bold"
                         />
-                        <button 
+                        <button
                           type="submit"
-                          className="bg-violet-600 hover:bg-violet-500 p-2 rounded-xl text-white transition-all shadow-md shadow-violet-600/20 flex-shrink-0 cursor-pointer"
+                          className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20 flex-shrink-0 cursor-pointer"
                         >
                           <FiPlus size={14} />
                         </button>
                       </form>
                     </>
                   ) : (
-                    <div className="text-center my-auto text-slate-500 uppercase tracking-widest text-[10px] font-bold">
+                    <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[10px] font-bold">
                       Select a recipient
                     </div>
                   )}
@@ -593,7 +576,7 @@ export default function Header() {
               setShowTodoDropdown(prev => !prev);
               setShowChatDropdown(false);
             }}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-violet-600/20 hover:bg-violet-600/30 text-violet-400 border border-violet-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
             title="Workspace To-Do List"
           >
             <FiCheckSquare size={13} /> Workspace
@@ -614,68 +597,72 @@ export default function Header() {
               />
               
               {/* Dropdown Card */}
-              <div className="absolute right-0 mt-2.5 w-80 sm:w-96 bg-[#131a26] border border-slate-800 rounded-2xl shadow-2xl p-4 z-50 text-left todo-chat-card animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
-                <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-800/80">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-100 todo-chat-text-primary flex items-center gap-1.5">
-                    <FiCheckSquare className="text-violet-500" size={14} /> Team Tasks Checklist
+              <div className="absolute right-0 mt-2.5 w-80 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
+                <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiCheckSquare className="text-blue-600" size={14} /> Team Tasks
+                    {todoTasks.filter(t => t.status === "Pending").length > 0 && (
+                      <span className="bg-orange-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
+                        {todoTasks.filter(t => t.status === "Pending").length}
+                      </span>
+                    )}
                   </h3>
-                  <Link 
+                  <Link
                     href="/dashboard/todo-chat"
                     onClick={() => setShowTodoDropdown(false)}
-                    className="text-[10px] font-black uppercase text-violet-400 hover:underline"
+                    className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-700 hover:underline"
                   >
-                    Open Workspace
+                    Open Workspace →
                   </Link>
                 </div>
 
                 {/* Tasks List */}
-                <div className="max-h-64 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
                   {todoTasks.filter(t => t.status === "Pending").length === 0 ? (
-                    <div className="text-center py-6 text-slate-500 uppercase tracking-widest text-[10px] font-bold">
+                    <div className="text-center py-6 text-emerald-600 uppercase tracking-widest text-[10px] font-black">
                       ✓ No pending tasks!
                     </div>
                   ) : (
                     todoTasks.filter(t => t.status === "Pending").map(task => (
-                      <div 
-                        key={task._id} 
-                        className="flex items-start gap-2.5 p-2 bg-slate-950/40 hover:bg-slate-950/80 border border-slate-850 hover:border-violet-500/20 rounded-xl transition-all todo-chat-task-item"
+                      <button
+                        key={task._id}
+                        type="button"
+                        onClick={() => handleToggleTask(task._id, task.status)}
+                        className="w-full flex items-start gap-2.5 p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-200 rounded-xl transition-all text-left cursor-pointer group"
                       >
-                        <button 
-                          type="button"
-                          onClick={() => handleToggleTask(task._id, task.status)}
-                          className="mt-0.5 text-slate-400 hover:text-emerald-500 transition-colors flex-shrink-0"
-                        >
-                          <FiSquare size={14} />
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <span className="text-slate-100 font-bold block leading-snug break-words todo-chat-task-title text-xs">{task.title}</span>
+                        <span className="mt-0.5 text-slate-300 group-hover:text-blue-500 transition-colors flex-shrink-0">
+                          <FiSquare size={15} />
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="text-slate-800 font-bold block leading-snug break-words text-xs">{task.title}</span>
                           {task.description && (
-                            <p className="text-[10px] text-slate-400 mt-0.5 truncate leading-relaxed">{task.description}</p>
+                            <span className="text-[10px] text-slate-500 mt-0.5 truncate block leading-relaxed">{task.description}</span>
                           )}
-                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className="flex flex-wrap items-center gap-2 mt-1">
                             {task.assignedTo && (
-                              <span className="text-[8px] font-black uppercase text-violet-400 bg-violet-500/10 px-1.5 py-0.2 rounded capitalize">
+                              <span className="text-[8px] font-black uppercase text-orange-700 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded capitalize">
                                 {task.assignedTo}
                               </span>
                             )}
-                            <span className="text-[8px] text-slate-500 font-bold">By {task.createdBy}</span>
-                          </div>
-                        </div>
-                      </div>
+                            <span className="text-[8px] text-slate-400 font-bold">By {task.createdBy}</span>
+                          </span>
+                        </span>
+                      </button>
                     ))
                   )}
                 </div>
 
                 {/* Inline Add Task Form */}
-                <form onSubmit={handleAddTask} className="relative mt-3.5 pt-3 border-t border-slate-800/80 flex items-center gap-2">
+                <form onSubmit={handleAddTask} className="relative mt-3.5 pt-3 border-t border-slate-100 flex items-center gap-2">
                   {showSuggestions && (
-                    <div className="absolute bottom-full left-0 mb-1 w-full bg-[#131a26] border border-slate-800 rounded-xl shadow-2xl z-55 p-1 max-h-32 overflow-y-auto">
+                    <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1 max-h-32 overflow-y-auto">
                       {filteredSuggestions.map(u => (
                         <button
                           key={u._id}
                           type="button"
+                          onMouseDown={(e) => e.preventDefault()}
                           onClick={() => handleSelectSuggestion(u.username)}
-                          className="w-full text-left px-2.5 py-1.5 hover:bg-violet-600 hover:text-white rounded-lg text-[11px] font-bold text-slate-200 transition-colors cursor-pointer capitalize"
+                          className="w-full text-left px-2.5 py-1.5 hover:bg-blue-600 hover:text-white rounded-lg text-[11px] font-bold text-slate-700 transition-colors cursor-pointer capitalize"
                         >
                           {u.username}
                         </button>
@@ -687,12 +674,13 @@ export default function Header() {
                     placeholder="Add task... Use @name to assign"
                     value={newTodoTitle}
                     onChange={(e) => handleTaskInputChange(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-855 rounded-xl py-2 px-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 todo-chat-input-wrapper font-bold"
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-bold"
                   />
-                  <button 
+                  <button
                     type="submit"
-                    className="bg-violet-600 hover:bg-violet-500 p-2 rounded-xl text-white transition-all shadow-md shadow-violet-600/20 flex-shrink-0 cursor-pointer"
+                    className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20 flex-shrink-0 cursor-pointer disabled:opacity-40"
                     title="Quick Add Task"
+                    disabled={!newTodoTitle.trim() || isSubmittingTask}
                   >
                     <FiPlus size={14} />
                   </button>
@@ -706,16 +694,7 @@ export default function Header() {
           <h2 className="text-sm md:text-lg font-bold leading-none capitalize">{user.username}</h2>
         </div>
 
-        {/* Theme Switcher Toggle */}
-        <button 
-          onClick={toggleTheme}
-          className="p-2 text-slate-400 hover:text-amber-500 hover:bg-amber-500/10 transition-all rounded-full cursor-pointer flex items-center justify-center"
-          title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
-        >
-          {theme === "dark" ? <FiSun size={20} /> : <FiMoon size={20} />}
-        </button>
-
-        <button 
+        <button
           onClick={handleLogout}
           className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-all rounded-full cursor-pointer flex items-center justify-center"
           title="Logout"

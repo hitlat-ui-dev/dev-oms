@@ -43,6 +43,7 @@ export async function POST(req: Request) {
           type: 'Opening Stock', // Match your model's enum
           qty: Number(data.currentStock) || 0,
           date: new Date(),
+          byWhom: data.createdBy || "",
         }
       ]
     });

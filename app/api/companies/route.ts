@@ -25,6 +25,8 @@ export async function POST(req: Request) {
       firmName: data.firmName ? data.firmName.trim().toUpperCase() : "",
       firmCode: data.firmCode ? data.firmCode.trim().toUpperCase() : "",
       sellerRegisterAddress: data.sellerRegisterAddress ? data.sellerRegisterAddress.trim() : "",
+      dispatchAddress: data.dispatchAddress ? data.dispatchAddress.trim() : "",
+      mobile: data.mobile ? data.mobile.trim() : "",
       updatedAt: new Date()
     };
 

@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
-import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiX } from "react-icons/fi";
+import { useState, useEffect, useMemo } from "react";
+import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiPhone, FiSearch, FiX } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -10,6 +10,8 @@ interface Company {
   firmName: string;
   firmCode: string;
   sellerRegisterAddress?: string;
+  dispatchAddress?: string;
+  mobile?: string;
   createdAt: string;
 }
 
@@ -18,11 +20,14 @@ export default function CompaniesPage() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [search, setSearch] = useState("");
   const [formData, setFormData] = useState({
     _id: "",
     firmName: "",
     firmCode: "",
-    sellerRegisterAddress: ""
+    sellerRegisterAddress: "",
+    dispatchAddress: "",
+    mobile: ""
   });
 
   // 1. Fetch existing companies
@@ -42,12 +47,26 @@ export default function CompaniesPage() {
     fetchCompanies();
   }, []);
 
+  const filteredCompanies = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return companies;
+    return companies.filter((c) =>
+      c.firmName?.toLowerCase().includes(q) ||
+      c.firmCode?.toLowerCase().includes(q) ||
+      c.sellerRegisterAddress?.toLowerCase().includes(q) ||
+      c.dispatchAddress?.toLowerCase().includes(q) ||
+      c.mobile?.toLowerCase().includes(q)
+    );
+  }, [companies, search]);
+
   const resetForm = () => {
     setFormData({
       _id: "",
       firmName: "",
       firmCode: "",
-      sellerRegisterAddress: ""
+      sellerRegisterAddress: "",
+      dispatchAddress: "",
+      mobile: ""
     });
   };
 
@@ -78,7 +97,9 @@ export default function CompaniesPage() {
       _id: company._id,
       firmName: company.firmName,
       firmCode: company.firmCode,
-      sellerRegisterAddress: company.sellerRegisterAddress || ""
+      sellerRegisterAddress: company.sellerRegisterAddress || "",
+      dispatchAddress: company.dispatchAddress || "",
+      mobile: company.mobile || ""
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -98,7 +119,7 @@ export default function CompaniesPage() {
         </div>
       }
     >
-      <div className="p-4 md:p-12 max-w-4xl mx-auto space-y-4">
+      <div className="p-4 md:p-12 max-w-7xl mx-auto space-y-4">
         {/* Back Button */}
         <div className="flex justify-between items-center">
           <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
@@ -177,6 +198,37 @@ export default function CompaniesPage() {
               </div>
             </div>
 
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+                <span>Dispatch Address</span>
+                <span className="text-slate-400 font-normal lowercase">(used on Print Labels, separate from Seller Register Address)</span>
+              </label>
+              <div className="relative">
+                <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.dispatchAddress}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="Warehouse / Dispatch Address for shipping labels"
+                  onChange={(e) => setFormData({ ...formData, dispatchAddress: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mobile No.</label>
+              <div className="relative">
+                <FiPhone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.mobile}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="+91 00000 00000"
+                  onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                />
+              </div>
+            </div>
+
             <button
               type="submit" disabled={loading}
               className={`md:col-span-2 w-full text-white font-black py-5 rounded-2xl shadow-lg flex items-center justify-center gap-3 transition-all uppercase tracking-widest text-sm active:scale-95 ${
@@ -190,23 +242,42 @@ export default function CompaniesPage() {
 
         {/* Data Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
+            <h2 className="font-black text-slate-800 uppercase tracking-tight">Registered Companies</h2>
+            <div className="relative w-full md:w-72">
+              <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search firm name, code, mobile..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/50">
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Registered Companies</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Seller Register Address</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispatch Address</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {companies.map((company) => (
+                {filteredCompanies.map((company) => (
                   <tr key={company._id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-5 font-black text-slate-700 uppercase">{company.firmName}</td>
                     <td className="p-5 font-medium text-slate-600 text-xs max-w-xs truncate" title={company.sellerRegisterAddress}>
                       {company.sellerRegisterAddress || "---"}
                     </td>
+                    <td className="p-5 font-medium text-slate-600 text-xs max-w-xs truncate" title={company.dispatchAddress}>
+                      {company.dispatchAddress || "---"}
+                    </td>
+                    <td className="p-5 font-bold text-slate-600 text-xs">{company.mobile || "---"}</td>
                     <td className="p-5">
                       <span className="bg-orange-50 text-orange-600 px-3 py-1 rounded-lg font-black text-xs tracking-widest border border-orange-100">
                         {company.firmCode}

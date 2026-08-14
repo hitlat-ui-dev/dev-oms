@@ -11,7 +11,9 @@ import {
   FiPrinter,
   FiDatabase,
   FiSliders,
-  FiCheckSquare
+  FiCheckSquare,
+  FiBarChart2,
+  FiLayers
 } from "react-icons/fi";
 
 
@@ -46,6 +48,8 @@ export default function DashboardPage() {
 
 
   const menuItems = [
+    { name: "Summary", path: "/dashboard/summary", sub: "BUSINESS OVERVIEW", icon: <FiBarChart2 />, color: "bg-[#0f172a]", role: ["Owner"], permissionKey: "dashboardSummary" },
+    { name: "GeM Bids", path: "/dashboard/gem-bids", sub: "FETCH, TRACK & WORK BIDS", icon: <FiLayers />, color: "bg-[#be123c]", role: ["Owner", "Manager"], permissionKey: "gemBids" },
     { name: "Purchase", path: "/dashboard/purchase", sub: "MANAGE NOW", icon: <FiPlusCircle />, color: "bg-[#1d63ff]", role: ["Owner", "Manager"] },
     { name: "Stock", path: "/dashboard/stock", sub: "MANAGE NOW", icon: <FiPackage />, color: "bg-[#00a86b]", role: ["Owner", "Manager", "Storekeeper"] },
     { name: "Manage Stock", path: "/dashboard/stock/manage-stock", sub: "MANAGE NOW", icon: <FiSliders />, color: "bg-[#0ea5e9]", role: ["Owner", "Manager", "Storekeeper"] },
@@ -68,7 +72,8 @@ export default function DashboardPage() {
     },
     // { name: "My Companies", path: "/dashboard/companies", sub: "MANAGE NOW", icon: <FiBriefcase />, color: "bg-[#ff5100]", role: ["Owner"] },
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"], permissionKey: "users", },
-    { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" }
+    { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" },
+    { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" }
   ];
 
   const usernameLower = user?.username?.trim().toLowerCase();
@@ -101,6 +106,15 @@ export default function DashboardPage() {
     }
     if (item.name === "GeM Links") {
       return user?.permissions?.gemLinks === true;
+    }
+    if (item.name === "Account") {
+      return user?.permissions?.accountStatements === true;
+    }
+    if (item.name === "Summary") {
+      return user?.permissions?.dashboardSummary === true;
+    }
+    if (item.name === "GeM Bids") {
+      return user?.permissions?.gemBids === true;
     }
     return true; // default fallback
   };

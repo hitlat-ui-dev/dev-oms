@@ -4,13 +4,13 @@
   --background: #ffffff;
   --foreground: #171717;
   
-  --gem-bg: #0b0f19;
-  --gem-card: #131a26;
-  --gem-text-primary: #cbd5e1;
-  --gem-text-secondary: #94a3b8;
-  --gem-border: #1e293b;
-  --gem-table-header: #0f172a;
-  --gem-table-row-hover: rgba(255, 255, 255, 0.05);
+  --gem-bg: #f1f5f9;
+  --gem-card: #ffffff;
+  --gem-text-primary: #0f172a;
+  --gem-text-secondary: #475569;
+  --gem-border: #cbd5e1;
+  --gem-table-header: #f8fafc;
+  --gem-table-row-hover: rgba(0, 0, 0, 0.02);
 }
 
 @theme inline {

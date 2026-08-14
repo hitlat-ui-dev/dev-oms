@@ -70,6 +70,8 @@ export async function POST(req: Request) {
       qty: orderQty,
       rate,
       totalAmount,
+      firmCode: (data.firmCode || "").toString().trim().toUpperCase(),
+      gemStatus: data.gemStatus || "",
       status: "UNVERIFIED",
       source: "GeM Chrome Extension",
       createdAt: new Date(),
