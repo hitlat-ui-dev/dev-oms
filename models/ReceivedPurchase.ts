@@ -16,4 +16,7 @@ const ReceivedPurchaseSchema = new Schema({
   collection: 'Received purchase' 
 });
 
+ReceivedPurchaseSchema.index({ receivedAt: -1 });
+ReceivedPurchaseSchema.index({ status: 1 });
+
 export default models.ReceivedPurchase || model("ReceivedPurchase", ReceivedPurchaseSchema);

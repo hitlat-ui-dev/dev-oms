@@ -35,4 +35,10 @@ const SellerOrderSchema = new Schema({
   createdBy: { type: String, default: "" },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
+SellerOrderSchema.index({ firmCode: 1, createdAt: -1 });
+SellerOrderSchema.index({ sellerId: 1, createdAt: -1 });
+SellerOrderSchema.index({ sku: 1, status: 1 });
+SellerOrderSchema.index({ paymentStatus: 1, firmCode: 1 });
+SellerOrderSchema.index({ createdAt: -1 });
+
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

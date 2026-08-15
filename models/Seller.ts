@@ -86,4 +86,7 @@ const SellerSchema = new Schema({
   },
 }, { timestamps: true });
 
+SellerSchema.index({ instituteName: 1 });
+SellerSchema.index({ createdAt: -1 });
+
 export default models.Seller || model("Seller", SellerSchema);

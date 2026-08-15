@@ -22,9 +22,7 @@ import { recheckInstituteGroup } from "@/lib/reconciliation/correctionEngine";
 
 async function connectMongoose() {
   await clientPromise;
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connect(process.env.MONGODB_URI as string);
-  }
+  await dbConnect();
 }
 
 // Builds (or refreshes, if still pending) a suggested match row for every credited

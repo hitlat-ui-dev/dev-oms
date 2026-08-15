@@ -3,6 +3,7 @@ import clientPromise from "@/lib/mongodb";
 import SellerOrder from "@/models/SellerOrder";
 import mongoose from "mongoose";
 import { ObjectId } from "mongodb";
+import dbConnect from "@/lib/dbConnect";
 
 // A seller's registered instituteName is the single source of truth for how that
 // institute's name should read on an order — instituteName typed/scraped at order-creation
@@ -22,9 +23,7 @@ async function resolveCanonicalInstituteName(db: any, sellerId: any, fallback: s
 
 async function connectDB() {
   await clientPromise;
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connect(process.env.MONGODB_URI as string);
-  }
+  await dbConnect();
 }
 
 async function syncPurchaseRequest(

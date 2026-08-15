@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import Seller from "@/models/Seller";
 import mongoose from "mongoose";
+import dbConnect from "@/lib/dbConnect";
 
 async function connectDB() {
   await clientPromise;
-  if (mongoose.connection.readyState !== 1) {
-    await mongoose.connect(process.env.MONGODB_URI as string);
-  }
+  await dbConnect();
 }
 
 /**
