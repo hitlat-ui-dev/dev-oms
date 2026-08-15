@@ -1,5 +1,5 @@
 "use client";
-import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiMessageSquare } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiMessageSquare, FiBell, FiBellOff } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -28,6 +28,23 @@ export default function Header() {
   const [selectedRecipient, setSelectedRecipient] = useState<string>("");
   const [newDmText, setNewDmText] = useState("");
   const [hasDmNotification, setHasDmNotification] = useState(false);
+
+  // Whether Chat/Workspace auto-check every 8s while sitting on any page —
+  // opt-out preference, persisted per-browser. Off just means no recurring
+  // background poll; a check still runs once per page visit either way, and
+  // opening either dropdown always fetches fresh data on demand.
+  const [autoPollEnabled, setAutoPollEnabled] = useState(true);
+  useEffect(() => {
+    const stored = localStorage.getItem("oms_auto_poll");
+    if (stored !== null) setAutoPollEnabled(stored === "1");
+  }, []);
+  const toggleAutoPoll = () => {
+    setAutoPollEnabled(prev => {
+      const next = !prev;
+      localStorage.setItem("oms_auto_poll", next ? "1" : "0");
+      return next;
+    });
+  };
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -136,12 +153,15 @@ export default function Header() {
       }
     };
 
-    // Run initial check
+    // Always check once per page visit so badges/data are correct on arrival —
+    // only the recurring background poll below is what the toggle controls.
     checkUpdates();
+
+    if (!autoPollEnabled) return;
 
     const interval = setInterval(checkUpdates, 8000);
     return () => clearInterval(interval);
-  }, [pathname, user?.username]);
+  }, [pathname, user?.username, autoPollEnabled]);
 
   const fetchTodoTasks = async () => {
     try {
@@ -160,6 +180,22 @@ export default function Header() {
       fetchTodoTasks();
     }
   }, [showTodoDropdown]);
+
+  // Chat/DMs otherwise only refresh via the background poll (checkUpdates) —
+  // fetch on demand when the dropdown opens too, so turning auto-poll off
+  // doesn't leave this dropdown showing stale messages.
+  useEffect(() => {
+    if (!showChatDropdown || !user?.username) return;
+    Promise.all([
+      fetch("/api/chat?t=" + Date.now()).then(r => (r.ok ? r.json() : null)),
+      fetch(`/api/direct-messages?user=${user.username}&t=${Date.now()}`).then(r => (r.ok ? r.json() : null))
+    ])
+      .then(([chats, dms]) => {
+        if (Array.isArray(chats)) setChatMessages(chats);
+        if (Array.isArray(dms)) setDirectMessages(dms);
+      })
+      .catch(e => console.error("Failed to refresh chat on open", e));
+  }, [showChatDropdown, user?.username]);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -388,7 +424,21 @@ export default function Header() {
       </Link>
 
       <div className="flex items-center gap-4 md:gap-8">
-        
+
+        {/* Auto-refresh toggle — Chat/Workspace otherwise re-check every 8s on
+            every page. Off still checks once per page visit / dropdown open,
+            just skips the recurring background poll. */}
+        <button
+          type="button"
+          onClick={toggleAutoPoll}
+          title={autoPollEnabled ? "Auto-refresh is ON — click to turn off background checking every 8s" : "Auto-refresh is OFF — click to turn back on"}
+          className={`p-2 rounded-full transition-all cursor-pointer flex items-center justify-center ${
+            autoPollEnabled ? "text-slate-400 hover:text-white hover:bg-white/10" : "text-amber-400 bg-amber-500/15 hover:bg-amber-500/25"
+          }`}
+        >
+          {autoPollEnabled ? <FiBell size={16} /> : <FiBellOff size={16} />}
+        </button>
+
         {/* Chat Dropdown Popover */}
         <div className="relative">
           <button 

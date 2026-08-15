@@ -198,27 +198,37 @@ export default function OrdersListPage() {
   };
 
 
+  // Default load only fetches the most recent orders — pulling the entire
+  // order history on every page visit was the main reason this page was slow.
+  // "Load All Orders" (below) explicitly opts into the full fetch.
+  const [ordersLoadedAll, setOrdersLoadedAll] = useState(false);
+  const [loadingAllOrders, setLoadingAllOrders] = useState(false);
+
   // 1. Move fetchOrders outside of useEffect so other functions can call it
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (all: boolean = false) => {
     try {
       setReloading(true);
-      const res = await fetch(`/api/seller-orders?t=${Date.now()}`);
+      if (all) setLoadingAllOrders(true);
+      const url = all ? `/api/seller-orders?all=1&t=${Date.now()}` : `/api/seller-orders?t=${Date.now()}`;
+      const res = await fetch(url);
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
+      setOrdersLoadedAll(all);
     } catch (err) {
       console.error("Fetch error", err);
     } finally {
       setLoading(false);
       setReloading(false);
+      setLoadingAllOrders(false);
     }
   }, []);
 
   const handleRefreshAll = useCallback(async () => {
     await Promise.all([
-      fetchOrders(),
+      fetchOrders(ordersLoadedAll),
       fetchTabData()
     ]);
-  }, [fetchOrders]);
+  }, [fetchOrders, ordersLoadedAll]);
 
   useEffect(() => {
     fetchOrders();
@@ -252,10 +262,9 @@ export default function OrdersListPage() {
     // Use the total field from your DB or calculate: price * quantity
     return sum + (order.totalAmount || 0);
   }, 0);
-  useEffect(() => {
-    fetchOrders();
-    fetchStocks(); // Load stocks so we can look up quantities
-  }, []);
+  // Note: orders and stock are already loaded on mount by the fetchOrders
+  // effect above and fetchTabData's own effect respectively — an extra
+  // duplicate fetch of both used to happen here on every page load.
 
   const handlePaymentToggle = async (orderId: string, currentStatus: boolean) => {
     try {
@@ -916,6 +925,19 @@ const shippingLock = useRef(false);
             </button>
           </div>
         </div>
+
+        {!ordersLoadedAll && (
+          <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[11px] text-amber-800 font-bold">
+            <span>Showing the {orders.length} most recent orders. Search/filters here only look within these — older orders need Load All.</span>
+            <button
+              onClick={() => fetchOrders(true)}
+              disabled={loadingAllOrders}
+              className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black uppercase tracking-widest text-[10px] px-4 py-2 rounded-lg transition-all shrink-0"
+            >
+              {loadingAllOrders ? "Loading..." : "Load All Orders"}
+            </button>
+          </div>
+        )}
 
         {/* Row 2: The New Filter Grid */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">

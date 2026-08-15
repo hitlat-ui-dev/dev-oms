@@ -249,34 +249,47 @@ export async function POST(req: Request) {
   }
 }
 
-export async function GET() {
+// Default page load fetches only the most recent orders — pulling the full
+// history (several thousand documents) on every visit is the main reason this
+// endpoint used to be slow. Pass ?all=1 to bypass this and fetch everything
+// (used by the Orders board's explicit "Load All" action).
+const DEFAULT_ORDER_LIMIT = 500;
+
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const fetchAll = searchParams.get("all") === "1";
+
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
     await connectDB();
 
-    // 1. Fetch Seller Orders
-    const orders = await SellerOrder.find({}).sort({ createdAt: -1 }).lean();
+    // These three queries don't depend on each other — run them concurrently
+    // instead of one after another.
+    const ordersQuery = SellerOrder.find({}).sort({ createdAt: -1 });
+    if (!fetchAll) ordersQuery.limit(DEFAULT_ORDER_LIMIT);
 
-    // 2. Aggregate PR Quantities from 'purchase_requests'
-    const prTotals = await db.collection("purchase_requests").aggregate([
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$itemName" } } },
-          total: { $sum: { $convert: { input: "$prQty", to: "double", onError: 0 } } }
+    const [orders, prTotals, opTotals] = await Promise.all([
+      ordersQuery.lean(),
+      // 2. Aggregate PR Quantities from 'purchase_requests'
+      db.collection("purchase_requests").aggregate([
+        {
+          $group: {
+            _id: { $toUpper: { $trim: { input: "$itemName" } } },
+            total: { $sum: { $convert: { input: "$prQty", to: "double", onError: 0 } } }
+          }
         }
-      }
-    ]).toArray();
-
-    // 3. Aggregate OP Quantities from 'Order place Purchase'
-    const opTotals = await db.collection("Order place Purchase").aggregate([
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$itemName" } } },
-          total: { $sum: { $convert: { input: "$orderQty", to: "double", onError: 0 } } }
+      ]).toArray(),
+      // 3. Aggregate OP Quantities from 'Order place Purchase'
+      db.collection("Order place Purchase").aggregate([
+        {
+          $group: {
+            _id: { $toUpper: { $trim: { input: "$itemName" } } },
+            total: { $sum: { $convert: { input: "$orderQty", to: "double", onError: 0 } } }
+          }
         }
-      }
-    ]).toArray();
+      ]).toArray()
+    ]);
 
     // 4. Create Lookup Maps
     const prMap: Record<string, number> = {};
