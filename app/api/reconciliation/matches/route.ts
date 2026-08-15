@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import mongoose from "mongoose";
+import dbConnect from "@/lib/dbConnect";
 import Seller from "@/models/Seller";
 import { txnKey, Transaction } from "@/app/api/account-statements/route";
 import {
