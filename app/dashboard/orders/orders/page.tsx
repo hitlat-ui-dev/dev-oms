@@ -82,39 +82,9 @@ export default function OrdersListPage() {
   }
 
   useEffect(() => {
-    fetchTabData();
+    fetchOrders();
   }, []);
 
-  const fetchTabData = async () => {
-    try {
-      // 1. YOUR ORIGINAL STOCK LOGIC (Kept exactly the same)
-      const stockRes = await fetch(`/api/stock?t=${Date.now()}`);
-      const stockData = await stockRes.json();
-      const loadedStock = Array.isArray(stockData) ? stockData : stockData.items || [];
-      setStock(loadedStock);
-      setStocks(loadedStock);
-
-      // 2. YOUR ORIGINAL SELLERS LOGIC (Kept exactly the same)
-      const sellerRes = await fetch(`/api/sellers?t=${Date.now()}`);
-      const sellerData = await sellerRes.json();
-      setSellers(Array.isArray(sellerData) ? sellerData : []);
-
-      // 3. NEW COMPANY LOGIC (Added as a separate try-catch so it cannot break the others)
-      try {
-        const companyRes = await fetch(`/api/companies?t=${Date.now()}`);
-        if (companyRes.ok) {
-          const companyData = await companyRes.json();
-          setCompanies(Array.isArray(companyData) ? companyData : []);
-        }
-      } catch (companyError) {
-        console.error("Optional Companies fetch failed, but Stock/Sellers are safe.");
-      }
-
-    } catch (error) {
-      // This maintains your existing error logging
-      console.error("Failed to fetch dashboard data:", error);
-    }
-  };
   const sortedStock = useMemo(() => {
     if (!stock || !Array.isArray(stock)) return [];
     return [...stock].sort((a, b) => {
@@ -124,8 +94,6 @@ export default function OrdersListPage() {
       return dateB - dateA; // Descending order
     });
   }, [stock]);
-
-
 
   const filteredOrders = orders.filter(order => {
     // 1. Tab Status must match
@@ -197,23 +165,47 @@ export default function OrdersListPage() {
     });
   };
 
-
-  // Default load only fetches the most recent orders — pulling the entire
-  // order history on every page visit was the main reason this page was slow.
-  // "Load All Orders" (below) explicitly opts into the full fetch.
   const [ordersLoadedAll, setOrdersLoadedAll] = useState(false);
   const [loadingAllOrders, setLoadingAllOrders] = useState(false);
 
-  // 1. Move fetchOrders outside of useEffect so other functions can call it
   const fetchOrders = useCallback(async (all: boolean = false) => {
     try {
       setReloading(true);
       if (all) setLoadingAllOrders(true);
-      const url = all ? `/api/seller-orders?all=1&t=${Date.now()}` : `/api/seller-orders?t=${Date.now()}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      setOrders(Array.isArray(data) ? data : []);
-      setOrdersLoadedAll(all);
+      const timestamp = Date.now();
+      const ordersUrl = all ? `/api/seller-orders?all=1&t=${timestamp}` : `/api/seller-orders?t=${timestamp}`;
+
+      const [ordersRes, stockRes, sellerRes, companyRes, transporterRes] = await Promise.all([
+        fetch(ordersUrl).catch(() => null),
+        fetch(`/api/stock?t=${timestamp}`).catch(() => null),
+        fetch(`/api/sellers?t=${timestamp}`).catch(() => null),
+        fetch(`/api/companies?t=${timestamp}`).catch(() => null),
+        fetch(`/api/transporters`).catch(() => null),
+      ]);
+
+      if (ordersRes && ordersRes.ok) {
+        const data = await ordersRes.json();
+        setOrders(Array.isArray(data) ? data : []);
+        setOrdersLoadedAll(all);
+      }
+      if (stockRes && stockRes.ok) {
+        const stockData = await stockRes.json();
+        const loadedStock = Array.isArray(stockData) ? stockData : stockData.items || [];
+        setStock(loadedStock);
+        setStocks(loadedStock);
+      }
+      if (sellerRes && sellerRes.ok) {
+        const sellerData = await sellerRes.json();
+        setSellers(Array.isArray(sellerData) ? sellerData : []);
+      }
+      if (companyRes && companyRes.ok) {
+        const companyData = await companyRes.json();
+        setCompanies(Array.isArray(companyData) ? companyData : []);
+      }
+      if (transporterRes && transporterRes.ok) {
+        const transporterData = await transporterRes.json();
+        setTransporters(Array.isArray(transporterData) ? transporterData : []);
+      }
     } catch (err) {
       console.error("Fetch error", err);
     } finally {
@@ -223,40 +215,17 @@ export default function OrdersListPage() {
     }
   }, []);
 
-  const handleRefreshAll = useCallback(async () => {
-    await Promise.all([
-      fetchOrders(ordersLoadedAll),
-      fetchTabData()
-    ]);
+  const fetchTabData = useCallback(async () => {
+    await fetchOrders(ordersLoadedAll);
   }, [fetchOrders, ordersLoadedAll]);
 
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
+  const handleRefreshAll = useCallback(async () => {
+    await fetchOrders(ordersLoadedAll);
+  }, [fetchOrders, ordersLoadedAll]);
 
   useEffect(() => {
     setSelectedOrderIds([]);
   }, [activeTab]);
-
-  // Fetch Transporters
-  useEffect(() => {
-    const loadTransporters = async () => {
-      try {
-        const res = await fetch("/api/transporters");
-        const data = await res.json();
-        setTransporters(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error("Failed to load transporters", err);
-      }
-    };
-    loadTransporters();
-  }, []);
-  // Add this to your existing useEffect that fetches orders
-  const fetchStocks = async () => {
-    const res = await fetch("/api/stock");
-    const data = await res.json();
-    setStocks(Array.isArray(data) ? data : []);
-  };
 
   const grandTotal = orders.reduce((sum, order) => {
     // Use the total field from your DB or calculate: price * quantity

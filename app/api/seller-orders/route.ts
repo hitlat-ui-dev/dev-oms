@@ -252,7 +252,7 @@ export async function POST(req: Request) {
 // history (several thousand documents) on every visit is the main reason this
 // endpoint used to be slow. Pass ?all=1 to bypass this and fetch everything
 // (used by the Orders board's explicit "Load All" action).
-const DEFAULT_ORDER_LIMIT = 500;
+const DEFAULT_ORDER_LIMIT = 200;
 
 export async function GET(req: Request) {
   try {
