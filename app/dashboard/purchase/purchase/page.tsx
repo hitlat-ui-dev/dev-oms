@@ -71,27 +71,29 @@ export default function PurchaseLogisticsPage() {
   const fetchTabData = async () => {
     try {
       setLoading(true);
-      // Always refresh stock to keep quantities accurate
-      const stockRes = await fetch('/api/stock');
-      const stockData = await stockRes.json();
-      setStock(stockData);
 
       let endpoint = "";
       if (activeTab === "Purchase Request") endpoint = "/api/purchase/purchase-request";
       else if (activeTab === "Order Place") endpoint = "/api/purchase/order-place";
       else if (activeTab === "Received Purchase") endpoint = "/api/purchase/purchase-received";
 
+      // Stock (always refreshed to keep quantities accurate) and the active
+      // tab's own data don't depend on each other — fetch them together so
+      // the wait is whichever one is slower, not the sum of both.
+      const [stockData, tabData] = await Promise.all([
+        fetch('/api/stock').then(r => r.json()),
+        endpoint ? fetch(endpoint).then(r => r.json()) : Promise.resolve(null)
+      ]);
+      setStock(stockData);
+
       if (!endpoint) {
         setLoading(false);
         return;
       }
 
-      const res = await fetch(endpoint);
-      const data = await res.json();
-
       // Sort table data by creation date (Newest First)
-      const safeData = Array.isArray(data)
-        ? data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      const safeData = Array.isArray(tabData)
+        ? tabData.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         : [];
 
       if (activeTab === "Purchase Request") setPrRequests(safeData);

@@ -33,9 +33,6 @@ const SellerOrderSchema = new Schema({
   // Username of the team member who created this order (blank for orders created
   // before this field existed, or via flows that don't yet capture it)
   createdBy: { type: String, default: "" },
-  // Marks an order delivered on trust before the buyer's GeM order existed — see
-  // advance_order_links collection for which later GeM order(s) cover it, and how much.
-  isAdvanceOrder: { type: Boolean, default: false },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

@@ -114,6 +114,14 @@ export async function GET(req: Request) {
 
     const openPurchaseRequests = await db.collection("purchase_requests").countDocuments({ status: "Purchase Request" });
 
+    // Dashboard stats strip: bids still sitting untriaged, and items at/under their
+    // reorder threshold — both cheap counts, computed alongside everything else here
+    // so the dashboard has one summary endpoint to call rather than several small ones.
+    const bidsPendingAction = await db.collection("gem_bids").countDocuments({ currentSection: "fetched_bid_data" });
+    const lowStockCount = await db
+      .collection("stock")
+      .countDocuments({ reQty: { $gt: 0 }, $expr: { $lte: ["$quantity", "$reQty"] } });
+
     // Team activity today — merged from every user-attributed signal the app writes:
     // order status/purchase actions (items.history), new orders created (sellerorders.createdBy),
     // and GeM Sync file uploads / product completions (gem_sheets).
@@ -230,6 +238,8 @@ export async function GET(req: Request) {
         openPurchaseRequests,
       },
       teamActivity,
+      bidsPendingAction,
+      lowStockCount,
     });
   } catch (error: any) {
     console.error("Dashboard summary GET error:", error);

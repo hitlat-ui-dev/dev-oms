@@ -11,8 +11,10 @@ import {
   FiRefreshCw,
   FiX,
   FiAlertTriangle,
+  FiLayers,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
+import { buildClusters, OrderCluster } from "@/lib/reconciliation/clusterEngine";
 
 interface Match {
   _id: string;
@@ -36,6 +38,26 @@ interface Match {
   correctedType: string | null;
   confirmedAt?: string;
   confirmedBy?: string;
+  isAmbiguous?: boolean;
+  ambiguousCandidates?: {
+    sellerId: string;
+    instituteName: string;
+    score: number;
+    amountFit: boolean;
+    dateFit: boolean;
+  }[];
+  highConfidence?: boolean;
+}
+
+interface CorrectionAlert {
+  _id: string;
+  firmCode?: string;
+  instituteName: string;
+  sellerId: string;
+  leftoverMatchId: string;
+  suspectMatchId: string;
+  reason: string;
+  status: "pending" | "accepted" | "rejected";
 }
 
 interface AliasMetaRow {
@@ -101,6 +123,10 @@ export default function ReconciliationPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState("");
   const [patternsFor, setPatternsFor] = useState<string | null>(null);
+  const [clusterViewFor, setClusterViewFor] = useState<string | null>(null);
+  const [clusterViewConfirmed, setClusterViewConfirmed] = useState<Match[]>([]);
+  const [correctionAlerts, setCorrectionAlerts] = useState<CorrectionAlert[]>([]);
+  const [correctionBusyId, setCorrectionBusyId] = useState<string | null>(null);
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
@@ -151,9 +177,38 @@ export default function ReconciliationPage() {
       .finally(() => setLoading(false));
   }, [tab, firmFilter]);
 
+  const fetchCorrectionAlerts = useCallback(() => {
+    const params = new URLSearchParams({ status: "pending" });
+    if (firmFilter) params.set("firmCode", firmFilter);
+    fetch(`/api/reconciliation/corrections?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => setCorrectionAlerts(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load correction alerts", err));
+  }, [firmFilter]);
+
   useEffect(() => {
     fetchMatches();
-  }, [fetchMatches]);
+    fetchCorrectionAlerts();
+  }, [fetchMatches, fetchCorrectionAlerts]);
+
+  const resolveCorrectionAlert = async (alertId: string, action: "accept" | "reject") => {
+    setCorrectionBusyId(alertId);
+    try {
+      const res = await fetch(`/api/reconciliation/corrections/${alertId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, userName: currentUsername }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Action failed");
+      fetchCorrectionAlerts();
+      fetchMatches();
+    } catch (err: any) {
+      alert(err.message || "Action failed");
+    } finally {
+      setCorrectionBusyId(null);
+    }
+  };
 
   const sellerById = useMemo(() => {
     const map: Record<string, SellerRecord> = {};
@@ -173,6 +228,41 @@ export default function ReconciliationPage() {
       );
     },
     [orders]
+  );
+
+  // Cluster View — every (non-cancelled/returned) order for an institute, open or
+  // already settled, so the view reads as a full history of its date-bursts.
+  const ordersForCluster = useMemo(() => {
+    if (!clusterViewFor) return [];
+    const instituteName = sellerById[clusterViewFor]?.instituteName;
+    if (!instituteName) return [];
+    return orders.filter((o) => o.instituteName === instituteName && !RETURN_FAMILY.has(o.status));
+  }, [clusterViewFor, sellerById, orders]);
+
+  const clusters: OrderCluster[] = useMemo(
+    () => (ordersForCluster.length > 0 ? buildClusters(ordersForCluster as any) : []),
+    [ordersForCluster]
+  );
+
+  useEffect(() => {
+    if (!clusterViewFor) {
+      setClusterViewConfirmed([]);
+      return;
+    }
+    const instituteName = sellerById[clusterViewFor]?.instituteName;
+    if (!instituteName) return;
+    fetch(`/api/reconciliation/matches?status=confirmed&instituteName=${encodeURIComponent(instituteName)}`)
+      .then((res) => res.json())
+      .then((data) => setClusterViewConfirmed(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load confirmed matches for cluster view", err));
+  }, [clusterViewFor, sellerById]);
+
+  const paymentsForCluster = useCallback(
+    (cluster: OrderCluster) => {
+      const orderIds = new Set(cluster.orders.map((o: any) => String(o._id)));
+      return clusterViewConfirmed.filter((m) => m.billIds.some((id) => orderIds.has(id)));
+    },
+    [clusterViewConfirmed]
   );
 
   const getEdit = (m: Match) =>
@@ -363,6 +453,51 @@ export default function ReconciliationPage() {
             </div>
           ) : tab === "pending" ? (
             <>
+              {/* Correction Alerts — leftover-entry-triggered recheck (Addition 4).
+                  Never auto-reverts anything; always waits for an explicit accept/reject. */}
+              {correctionAlerts.length > 0 && (
+                <div className="bg-white border border-amber-300 rounded-2xl shadow-sm overflow-hidden">
+                  <div className="p-5 border-b border-amber-100 bg-amber-50/50">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                      <FiAlertTriangle className="text-amber-600" size={14} /> Correction Alerts
+                      <span className="bg-amber-100 text-amber-700 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
+                        {correctionAlerts.length}
+                      </span>
+                    </h3>
+                    <p className="text-[10px] text-amber-700/80 mt-1">
+                      A payment was left with nothing to match, which suggests an earlier confirmed match in the same
+                      institute picked the wrong bill. Review the suggested swap below — nothing changes until you decide.
+                    </p>
+                  </div>
+                  <div className="divide-y divide-amber-100">
+                    {correctionAlerts.map((a) => (
+                      <div key={a._id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                        <div className="max-w-xl">
+                          <span className="text-[11px] font-bold text-slate-800">{a.instituteName}</span>
+                          <p className="text-[11px] text-slate-600 mt-0.5">{a.reason}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            disabled={correctionBusyId === a._id}
+                            onClick={() => resolveCorrectionAlert(a._id, "accept")}
+                            className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                          >
+                            <FiCheckCircle size={12} /> Revert & Apply
+                          </button>
+                          <button
+                            disabled={correctionBusyId === a._id}
+                            onClick={() => resolveCorrectionAlert(a._id, "reject")}
+                            className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                          >
+                            <FiXCircle size={12} /> Keep Original
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Pending Review table */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                 <div className="p-5 border-b border-slate-100">
@@ -405,12 +540,21 @@ export default function ReconciliationPage() {
                                 )}
                               </td>
                               <td className="py-2.5 px-3">
-                                <button
-                                  onClick={() => setPatternsFor(m.sellerId)}
-                                  className="text-blue-700 font-bold hover:underline text-left"
-                                >
-                                  {m.instituteName}
-                                </button>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => setPatternsFor(m.sellerId)}
+                                    className="text-blue-700 font-bold hover:underline text-left"
+                                  >
+                                    {m.instituteName}
+                                  </button>
+                                  <button
+                                    onClick={() => setClusterViewFor(m.sellerId)}
+                                    title="View order clusters"
+                                    className="text-slate-400 hover:text-purple-600 transition-colors"
+                                  >
+                                    <FiLayers size={11} />
+                                  </button>
+                                </div>
                                 <div className="text-[9px] text-slate-400 truncate max-w-[180px]" title={m.transactionDescription}>
                                   {m.transactionDescription}
                                 </div>
@@ -450,6 +594,14 @@ export default function ReconciliationPage() {
                                 <span className={`inline-block border text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${confidencePill(m.confidenceLabel)}`}>
                                   {m.confidenceLabel}
                                 </span>
+                                {m.highConfidence && (
+                                  <span
+                                    title="Amount, date and keyword all match this institute's learned pattern — still needs your Confirm click."
+                                    className="ml-1 inline-block border border-purple-200 bg-purple-50 text-purple-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full"
+                                  >
+                                    ⚡ fast-track
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2.5 px-3">
                                 <div className="flex items-center justify-center gap-1.5">
@@ -523,6 +675,30 @@ export default function ReconciliationPage() {
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono text-emerald-700">₹{formatMoney(m.creditedAmount)}</td>
                               <td className="py-2.5 px-3">
+                                {m.isAmbiguous && (m.ambiguousCandidates || []).length > 0 && (
+                                  <div className="flex flex-col gap-1 mb-1.5 max-w-[190px]">
+                                    <span className="text-[9px] font-black uppercase text-amber-600 flex items-center gap-1">
+                                      <FiAlertTriangle size={10} /> Ambiguous — pick one
+                                    </span>
+                                    {(m.ambiguousCandidates || []).map((c) => (
+                                      <button
+                                        key={c.sellerId}
+                                        type="button"
+                                        onClick={() => setManual(m._id, { sellerId: c.sellerId, billId: "" })}
+                                        className={`text-left border rounded-lg px-2 py-1 transition-colors ${
+                                          man.sellerId === c.sellerId
+                                            ? "bg-blue-50 border-blue-400"
+                                            : "bg-white border-slate-200 hover:border-blue-300"
+                                        }`}
+                                      >
+                                        <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
+                                        <span className="text-[9px] text-slate-400">
+                                          {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                                 <select
                                   value={man.sellerId}
                                   onChange={(e) => setManual(m._id, { sellerId: e.target.value, billId: "" })}
@@ -596,6 +772,11 @@ export default function ReconciliationPage() {
                   <span className="ml-2 bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
                     {matches.length}
                   </span>
+                  {tab === "confirmed" && matches.some((m) => m.highConfidence) && (
+                    <span className="ml-2 bg-purple-50 border border-purple-200 text-purple-700 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
+                      ⚡ {matches.filter((m) => m.highConfidence).length} fast-tracked
+                    </span>
+                  )}
                 </h3>
               </div>
               {matches.length === 0 ? (
@@ -611,6 +792,7 @@ export default function ReconciliationPage() {
                         <th className="py-2.5 px-3 text-right">Credited</th>
                         <th className="py-2.5 px-3 text-right">Deduction</th>
                         <th className="py-2.5 px-3">Type</th>
+                        {tab === "confirmed" && <th className="py-2.5 px-3 text-center">Fast-track</th>}
                         {tab === "confirmed" && <th className="py-2.5 px-3 text-center">Actions</th>}
                       </tr>
                     </thead>
@@ -625,6 +807,9 @@ export default function ReconciliationPage() {
                             {m.deductionAmount ? `₹${formatMoney(m.deductionAmount)}` : "—"}
                           </td>
                           <td className="py-2.5 px-3">{m.correctedType || m.deductionType || "—"}</td>
+                          {tab === "confirmed" && (
+                            <td className="py-2.5 px-3 text-center">{m.highConfidence ? "⚡" : "—"}</td>
+                          )}
                           {tab === "confirmed" && (
                             <td className="py-2.5 px-3 text-center">
                               <button
@@ -736,6 +921,92 @@ export default function ReconciliationPage() {
                     </p>
                   )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cluster View — institute's orders grouped into date-burst clusters */}
+      {clusterViewFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                  <FiLayers className="text-purple-600" /> Order Clusters
+                </h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                  {sellerById[clusterViewFor]?.instituteName}
+                </p>
+              </div>
+              <button
+                onClick={() => setClusterViewFor(null)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-center">
+                  <span className="text-[9px] font-black uppercase text-slate-400 block">Clusters</span>
+                  <span className="text-sm font-black text-slate-800">{clusters.length}</span>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-center">
+                  <span className="text-[9px] font-black uppercase text-slate-400 block">Orders</span>
+                  <span className="text-sm font-black text-slate-800">{ordersForCluster.length}</span>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-center">
+                  <span className="text-[9px] font-black uppercase text-slate-400 block">Confirmed Payments</span>
+                  <span className="text-sm font-black text-slate-800">{clusterViewConfirmed.length}</span>
+                </div>
+              </div>
+
+              {clusters.length === 0 ? (
+                <p className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                  No orders for this institute yet
+                </p>
+              ) : (
+                clusters.map((cluster, i) => {
+                  const payments = paymentsForCluster(cluster);
+                  return (
+                    <div key={i} className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="bg-slate-50 px-3 py-2 flex items-center justify-between border-b border-slate-200">
+                        <span className="text-[11px] font-black text-slate-700">
+                          Cluster {i + 1}
+                          <span className="ml-2 font-mono font-normal text-slate-500">
+                            {cluster.startDate || "—"} → {cluster.endDate || "—"}
+                          </span>
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase">{cluster.orders.length} order(s)</span>
+                      </div>
+                      <table className="w-full text-left text-[11px] border-collapse">
+                        <tbody className="divide-y divide-slate-100">
+                          {cluster.orders.map((o: any) => (
+                            <tr key={o._id}>
+                              <td className="py-1.5 px-3 font-mono text-slate-600">{o.orderNo}</td>
+                              <td className="py-1.5 px-3 text-slate-500">{o.contractDate || "—"}</td>
+                              <td className="py-1.5 px-3 text-right font-mono text-slate-700">₹{formatMoney(o.totalAmount)}</td>
+                              <td className="py-1.5 px-3 text-slate-400">{o.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {payments.length > 0 && (
+                        <div className="bg-emerald-50/50 border-t border-emerald-100 px-3 py-2">
+                          <span className="text-[9px] font-black uppercase text-emerald-700 block mb-1">Matched Payment(s)</span>
+                          {payments.map((p) => (
+                            <div key={p._id} className="text-[10px] text-emerald-800 flex items-center justify-between">
+                              <span>{p.transactionDate} — {p.billIds.length > 1 ? "combo" : "single"}</span>
+                              <span className="font-mono">₹{formatMoney(p.creditedAmount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

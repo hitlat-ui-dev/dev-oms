@@ -10,52 +10,13 @@ import {
   learnFromDeductionCorrection,
   learnFromRejection,
 } from "@/lib/reconciliation/learningEngine";
+import { applyPaymentToBill, reversePaymentFromBill, applyComboPayment } from "@/lib/reconciliation/paymentEngine";
 
 async function connectMongoose() {
   await clientPromise;
   if (mongoose.connection.readyState !== 1) {
     await mongoose.connect(process.env.MONGODB_URI as string);
   }
-}
-
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-
-async function applyPaymentToBill(billId: string, amount: number, deductionAmount: number, deductionType: string | null, deductionReason: string) {
-  const bill = await SellerOrder.findById(billId);
-  if (!bill) return null;
-
-  const newPaidAmount = round2((bill.paidAmount || 0) + amount);
-  const newDeductionAmount = round2((bill.deductionAmount || 0) + deductionAmount);
-  const settled = newPaidAmount + newDeductionAmount >= (bill.totalAmount || 0) - 5;
-
-  bill.paidAmount = newPaidAmount;
-  bill.deductionAmount = newDeductionAmount;
-  if (deductionType) bill.deductionType = deductionType;
-  if (deductionReason) bill.deductionReason = deductionReason;
-  bill.paymentStatus = settled ? "Paid" : "Partial";
-  bill.isPaid = settled;
-  await bill.save();
-  return bill;
-}
-
-async function reversePaymentFromBill(billId: string, amount: number, deductionAmount: number) {
-  const bill = await SellerOrder.findById(billId);
-  if (!bill) return null;
-
-  const newPaidAmount = Math.max(0, round2((bill.paidAmount || 0) - amount));
-  const newDeductionAmount = Math.max(0, round2((bill.deductionAmount || 0) - deductionAmount));
-  const settled = newPaidAmount + newDeductionAmount >= (bill.totalAmount || 0) - 5;
-
-  bill.paidAmount = newPaidAmount;
-  bill.deductionAmount = newDeductionAmount;
-  bill.paymentStatus = newPaidAmount + newDeductionAmount <= 0 ? "Pending" : settled ? "Paid" : "Partial";
-  bill.isPaid = settled && newPaidAmount + newDeductionAmount > 0;
-  if (bill.paymentStatus === "Pending") {
-    bill.deductionType = null;
-    bill.deductionReason = "";
-  }
-  await bill.save();
-  return bill;
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -108,6 +69,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const finalDeductionAmount =
         deductionAmount !== undefined ? Number(deductionAmount) : match.deductionAmount || 0;
 
+      // Populated only for a combo (multi-bill) confirm, so the cluster-pattern
+      // learning hook below can record the gap between the orders it settled.
+      let comboOrderDates: string[] = [];
+
       if (match.billIds.length === 1) {
         await applyPaymentToBill(
           match.billIds[0],
@@ -117,12 +82,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           deductionReason ?? match.deductionReason ?? ""
         );
       } else {
-        // Combination match: full settlement across several bills, no deduction concept.
-        for (const billId of match.billIds) {
-          const bill = await SellerOrder.findById(billId);
-          if (!bill) continue;
-          await applyPaymentToBill(billId, Number(bill.totalAmount || 0) - Number(bill.paidAmount || 0), 0, null, "");
-        }
+        // Combination match: distribute the credited amount + any classified deduction
+        // proportionally across the bills by their remaining-amount share, so a
+        // cluster-combo-with-deduction match settles each bill correctly instead of
+        // silently absorbing the deduction as if the full remaining amount was paid.
+        const result = await applyComboPayment(
+          match.billIds,
+          match.creditedAmount,
+          finalDeductionAmount,
+          finalType || null,
+          deductionReason ?? match.deductionReason ?? ""
+        );
+        comboOrderDates = result.contractDates;
       }
 
       await matchesCollection.updateOne(
@@ -155,14 +126,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           });
         }
       } else if (seller) {
-        // Combination match: still reinforce the keyword's confidence, no deduction profile change.
+        // Combination match: reinforce the keyword's confidence, the deduction profile
+        // (now that combos can carry one), and the cluster/gap pattern from the orders
+        // this payment settled together.
         await reinforceOnConfirm(seller, {
           firmId: match.firmId,
           firmCode: match.firmCode,
           transactionDescription: match.transactionDescription,
+          billAmount: match.billAmount,
           creditedAmount: match.creditedAmount,
+          deductionAmount: finalDeductionAmount,
           matchedKeyword: match.matchedKeyword,
-          deductionType: null,
+          deductionType: finalDeductionAmount > 0 ? finalType || null : null,
+          clusterOrderDates: comboOrderDates,
           userName,
         });
       }

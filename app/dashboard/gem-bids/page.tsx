@@ -1,11 +1,10 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import * as XLSX from "xlsx";
 import Link from "next/link";
-import { FiArrowLeft, FiUploadCloud, FiX, FiLayers } from "react-icons/fi";
+import { FiArrowLeft, FiX, FiLayers, FiFileText } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import GemBidTable, { GemBid } from "@/components/GemBidTable";
-import { HEADER_TO_FIELD, DATA_FIELD_KEYS, SECTIONS, SectionKey } from "@/lib/gemBids/columns";
+import { SECTIONS, SectionKey } from "@/lib/gemBids/columns";
 
 interface ChangeHistoryRow {
   fieldChanged: string;
@@ -26,8 +25,6 @@ export default function GemBidsPage() {
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionKey>(SECTIONS[0].key);
   const [currentUsername, setCurrentUsername] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ newCount: number; updatedCount: number; oldCount: number } | null>(null);
 
   const [historyBidNo, setHistoryBidNo] = useState<string | null>(null);
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryRow[]>([]);
@@ -70,66 +67,6 @@ export default function GemBidsPage() {
 
   const bidsInActiveSection = useMemo(() => bids.filter((b) => b.currentSection === activeSection), [bids, activeSection]);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: "binary" });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const rawRows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-        if (rawRows.length < 2) throw new Error("No data rows found in this file.");
-
-        const headerRow: string[] = rawRows[0].map((h: any) => String(h || "").trim());
-        const colIndexByField: Record<string, number> = {};
-        headerRow.forEach((h, idx) => {
-          const field = HEADER_TO_FIELD[h];
-          if (field) colIndexByField[field] = idx;
-        });
-        if (colIndexByField.bidNo === undefined) {
-          throw new Error('Could not find a "Bid No" column — check this is a genuine GeM Bid Exporter export.');
-        }
-
-        const rows = rawRows
-          .slice(1)
-          .filter((r) => r.some((c: any) => String(c || "").trim() !== ""))
-          .map((r) => {
-            const obj: Record<string, string> = {};
-            for (const key of ["bidNo", ...DATA_FIELD_KEYS]) {
-              const idx = colIndexByField[key];
-              obj[key] = idx !== undefined ? String(r[idx] ?? "").trim() : "";
-            }
-            return obj;
-          })
-          .filter((r) => r.bidNo);
-
-        if (rows.length === 0) throw new Error("No valid Bid No rows found in this file.");
-
-        const res = await fetch("/api/gem-bids/import", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows, fileName: file.name, userName: currentUsername }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Import failed");
-        setImportResult(data);
-        fetchBids();
-      } catch (err: any) {
-        alert(err.message || "Failed to import file");
-      } finally {
-        setImporting(false);
-        e.target.value = "";
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
   const openHistory = async (bidNo: string) => {
     setHistoryBidNo(bidNo);
     setHistoryLoading(true);
@@ -161,43 +98,24 @@ export default function GemBidsPage() {
     >
       <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
         <div className="max-w-[1600px] mx-auto flex flex-col gap-6">
-          <div>
-            <Link href="/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
-              <FiArrowLeft /> Back to Dashboard
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <Link href="/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
+                <FiArrowLeft /> Back to Dashboard
+              </Link>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
+                <FiLayers className="text-blue-600" /> GeM Bids
+              </h1>
+              <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
+                Fetch, Track & Work GeM Bid Listings
+              </p>
+            </div>
+            <Link
+              href="/dashboard/gem-bids/document-maker"
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+            >
+              <FiFileText size={13} /> Open Document Maker →
             </Link>
-            <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
-              <FiLayers className="text-blue-600" /> GeM Bids
-            </h1>
-            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
-              Fetch, Track & Work GeM Bid Listings
-            </p>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5 mb-3">
-              <FiUploadCloud className="text-blue-600" size={14} /> Fetch Latest from GeM
-            </h3>
-            <label className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-black uppercase text-xs tracking-wider py-3 px-6 rounded-xl cursor-pointer transition-all">
-              <FiUploadCloud size={14} /> {importing ? "Importing..." : "Upload Latest Export (.xlsx)"}
-              <input type="file" accept=".xlsx,.xls" className="hidden" disabled={importing} onChange={handleFile} />
-            </label>
-            <p className="text-[10px] text-slate-400 mt-2">
-              Upload the GeM Bid Exporter's latest .xlsx export — bids are matched by Bid No and
-              tagged New Published / Old / Updated-Extended.
-            </p>
-            {importResult && (
-              <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold">
-                <span className="bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded-full">
-                  {importResult.newCount} New Published
-                </span>
-                <span className="bg-amber-50 border border-amber-200 text-amber-700 px-2 py-1 rounded-full">
-                  {importResult.updatedCount} Updated/Extended
-                </span>
-                <span className="bg-slate-50 border border-slate-200 text-slate-600 px-2 py-1 rounded-full">
-                  {importResult.oldCount} Old
-                </span>
-              </div>
-            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit">

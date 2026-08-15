@@ -5,14 +5,20 @@ import mongoose from "mongoose";
 import Seller from "@/models/Seller";
 import { txnKey, Transaction } from "@/app/api/account-statements/route";
 import {
-  findInstituteMatch,
+  findInstituteMatches,
+  scoreInstituteCandidates,
+  AMBIGUITY_SCORE_MARGIN,
   findOpenBills,
   findAmountMatch,
   findCombinationMatch,
   classifyDeduction,
+  isHighConfidenceMatch,
   SellerForMatching,
+  InstituteCandidate,
 } from "@/lib/reconciliation/matchingEngine";
 import { learnFromManualMatch } from "@/lib/reconciliation/learningEngine";
+import { buildClusters, findClusterCombinationMatch } from "@/lib/reconciliation/clusterEngine";
+import { recheckInstituteGroup } from "@/lib/reconciliation/correctionEngine";
 
 async function connectMongoose() {
   await clientPromise;
@@ -45,7 +51,39 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       const existingMatch = existingByKey.get(key);
       if (existingMatch && existingMatch.status !== "pending") continue; // final, don't touch
 
-      const instituteMatch = findInstituteMatch(t.description, sellers);
+      // A payer keyword can legitimately belong to more than one institute (shared
+      // district-treasury style names, or the same institute paying under a different
+      // procurement-mode name). Score every candidate on amount+date fit instead of
+      // silently picking the longest keyword match; only ask the user when it's close.
+      const candidates = findInstituteMatches(t.description, sellers);
+      let instituteMatch: InstituteCandidate | null = null;
+      let isAmbiguous = false;
+      let ambiguousCandidates: any[] = [];
+
+      if (candidates.length === 1) {
+        instituteMatch = candidates[0];
+      } else if (candidates.length > 1) {
+        const scored = await scoreInstituteCandidates(db, candidates, {
+          creditedAmount: t.credit,
+          transactionDate: t.date,
+          firmCode: statement.firmCode,
+        });
+        const [top, second] = scored;
+        const clearWinner = !second || top.score - second.score > AMBIGUITY_SCORE_MARGIN;
+        if (clearWinner) {
+          instituteMatch = top;
+        } else {
+          isAmbiguous = true;
+          ambiguousCandidates = scored.slice(0, 3).map((c) => ({
+            sellerId: String(c.sellerId),
+            instituteName: c.instituteName,
+            score: c.score,
+            amountFit: c.amountFit,
+            dateFit: c.dateFit,
+          }));
+        }
+      }
+
       const seller = instituteMatch ? sellersById.get(String(instituteMatch.sellerId)) : null;
 
       let billIds: string[] = [];
@@ -53,6 +91,8 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       let billAmount = 0;
       let deductionAmount = 0;
       let deductionType: string | null = null;
+      let matchTypeForConfidence: "exact" | "deduction" | "combination" | "combination-deduction" | null = null;
+      let deductionUsedHistory = false;
 
       if (instituteMatch) {
         const openBills = await findOpenBills(db, {
@@ -65,20 +105,62 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
           billIds = [String(single.bill._id)];
           billNos = [single.bill.orderNo];
           billAmount = single.remainingAmount;
+          matchTypeForConfidence = single.matchType;
           if (single.matchType === "deduction") {
             const classification = classifyDeduction(single.remainingAmount, t.credit, seller);
             deductionAmount = single.deductionAmount;
             deductionType = classification.type;
+            deductionUsedHistory = classification.usedHistory;
           }
         } else {
-          const combo = findCombinationMatch(openBills, t.credit);
+          // Cluster-scoped combination matching first — several orders in the same
+          // date-burst combining into one payment, deduction (if any) computed once
+          // on the combined total — trying the cluster nearest the payment date
+          // first; fall back to the whole open-bill pool (old behavior, no deduction)
+          // if nothing in any single cluster fits.
+          let combo:
+            | ReturnType<typeof findClusterCombinationMatch>
+            | ReturnType<typeof findCombinationMatch> = null;
+          const clusters = buildClusters(openBills as any);
+          const txnDate = t.date ? new Date(t.date) : null;
+          const txnDateValid = !!txnDate && !isNaN(txnDate.getTime());
+          const orderedClusters = txnDateValid
+            ? [...clusters].sort((a, b) => {
+                const distA = a.endDate ? Math.abs(txnDate!.getTime() - new Date(a.endDate).getTime()) : Infinity;
+                const distB = b.endDate ? Math.abs(txnDate!.getTime() - new Date(b.endDate).getTime()) : Infinity;
+                return distA - distB;
+              })
+            : clusters;
+
+          for (const cluster of orderedClusters) {
+            combo = findClusterCombinationMatch(cluster.orders, t.credit, seller);
+            if (combo) break;
+          }
+          if (!combo) {
+            combo = findCombinationMatch(openBills, t.credit);
+          }
+
           if (combo) {
             billIds = combo.bills.map((b) => String(b._id));
             billNos = combo.bills.map((b) => b.orderNo);
             billAmount = combo.totalAmount;
+            matchTypeForConfidence = combo.matchType;
+            if ("deductionAmount" in combo && combo.deductionAmount) {
+              deductionAmount = combo.deductionAmount;
+              deductionType = combo.deductionType;
+              deductionUsedHistory = "deductionUsedHistory" in combo ? combo.deductionUsedHistory : false;
+            }
           }
         }
       }
+
+      const highConfidence = instituteMatch
+        ? isHighConfidenceMatch({
+            confidenceLabel: instituteMatch.confidenceLabel,
+            matchType: matchTypeForConfidence,
+            deductionUsedHistory,
+          })
+        : false;
 
       const doc = {
         firmId: statement.firmId,
@@ -99,6 +181,9 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
         matchedKeyword: instituteMatch?.matchedKeyword || null,
         confidence: instituteMatch?.confidence ?? 0,
         confidenceLabel: instituteMatch?.confidenceLabel || "new",
+        isAmbiguous,
+        ambiguousCandidates,
+        highConfidence,
         status: "pending",
         suggestedType: deductionType,
         correctedType: null,
@@ -122,6 +207,38 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
 
   if (ops.length > 0) {
     await db.collection("bank_reconciliation_matches").bulkWrite(ops);
+  }
+
+  // Addition 4: leftover-entry-triggered recheck — scoped to a pending payment
+  // whose institute is known but which has no valid bill/combo left to match.
+  // Only worth checking when that institute already has confirmed history to
+  // recheck against, and only once per leftover (skip if already proposed).
+  const leftovers = await db
+    .collection("bank_reconciliation_matches")
+    .find({
+      ...(firmCode ? { firmCode } : {}),
+      status: "pending",
+      sellerId: { $ne: null },
+      $or: [{ billIds: { $size: 0 } }, { billIds: { $exists: false } }],
+    })
+    .toArray();
+
+  for (const leftover of leftovers) {
+    const existingAlert = await db.collection("reconciliation_correction_alerts").findOne({
+      leftoverMatchId: String(leftover._id),
+      status: "pending",
+    });
+    if (existingAlert) continue;
+
+    const seller = sellersById.get(String(leftover.sellerId)) || null;
+    const proposal = await recheckInstituteGroup(db, String(leftover.sellerId), leftover, seller);
+    if (proposal) {
+      await db.collection("reconciliation_correction_alerts").insertOne({
+        ...proposal,
+        status: "pending",
+        createdAt: new Date(),
+      });
+    }
   }
 }
 

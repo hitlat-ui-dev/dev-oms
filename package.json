@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1091.0",
+    "@aws-sdk/s3-request-presigner": "^3.1111.0",
     "enhanced-resolve": "^5.24.5",
     "googleapis": "^173.0.0",
     "jspdf": "^4.2.1",
@@ -19,6 +20,7 @@
     "mongoose": "^8.24.1",
     "next": "^16.1.6",
     "nodemailer": "^9.0.5",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-icons": "^5.5.0",

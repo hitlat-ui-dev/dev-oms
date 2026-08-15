@@ -31,7 +31,6 @@ const initialState = {
         bankReconciliation: false,
         dashboardSummary: false,
         gemBids: false,
-        advanceOrderTracker: false,
     },
 };
 
@@ -75,8 +74,7 @@ const MODULE_GROUPS = [
             { key: "accountStatements", label: "Account / Bank Statement Page" },
             { key: "bankReconciliation", label: "Bank Reconciliation / Learning Page" },
             { key: "dashboardSummary", label: "Summary Dashboard Page" },
-            { key: "gemBids", label: "GeM Bids Page" },
-            { key: "advanceOrderTracker", label: "Advance Order Tracker Page" }
+            { key: "gemBids", label: "GeM Bids Page" }
         ]
     }
 ];
@@ -207,7 +205,6 @@ export default function ManageUsers() {
                 bankReconciliation: user.permissions?.bankReconciliation || false,
                 dashboardSummary: user.permissions?.dashboardSummary || false,
                 gemBids: user.permissions?.gemBids || false,
-                advanceOrderTracker: user.permissions?.advanceOrderTracker || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });

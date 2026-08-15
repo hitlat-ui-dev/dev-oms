@@ -1,5 +1,7 @@
 import MatchFeedbackLog from "@/models/MatchFeedbackLog";
-import { extractKeywords, DeductionType } from "./matchingEngine";
+import { extractKeywords, round2, DeductionType } from "./matchingEngine";
+
+const MAX_GAP_SAMPLES = 20;
 
 // These hooks operate on a live (non-lean) Mongoose Seller document so callers
 // can `.save()` it once after learning has been applied.
@@ -13,6 +15,41 @@ interface FeedbackContext {
   deductionAmount?: number;
   userId?: string;
   userName?: string;
+}
+
+/**
+ * Updates an institute's learned cluster (order-burst) shape: the gaps, in days,
+ * between the contractDates of orders that a confirmed combo payment settled
+ * together. Bounded ring buffer of the most recent samples, median re-derived
+ * on every update — mirrors updateDeductionProfile's "no fixed threshold, learn
+ * from every confirmation" approach (Addition 3).
+ */
+export function updateClusterProfile(seller: any, orderDates: string[]): void {
+  if (!orderDates || orderDates.length < 2) return;
+  const dates = orderDates
+    .map((d) => new Date(d))
+    .filter((d) => !isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (dates.length < 2) return;
+
+  if (!seller.clusterProfile) {
+    seller.clusterProfile = { typicalGapDays: null, gapSamples: [], lastUpdated: null };
+  }
+  const profile = seller.clusterProfile;
+  profile.gapSamples = profile.gapSamples || [];
+
+  for (let i = 1; i < dates.length; i++) {
+    profile.gapSamples.push(round2((dates[i].getTime() - dates[i - 1].getTime()) / 86400000));
+  }
+  if (profile.gapSamples.length > MAX_GAP_SAMPLES) {
+    profile.gapSamples = profile.gapSamples.slice(profile.gapSamples.length - MAX_GAP_SAMPLES);
+  }
+
+  const sorted = [...profile.gapSamples].sort((a: number, b: number) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  profile.typicalGapDays =
+    sorted.length % 2 ? sorted[mid] : round2((sorted[mid - 1] + sorted[mid]) / 2);
+  profile.lastUpdated = new Date();
 }
 
 /** HOOK 1 — an unmatched transaction was manually linked to an institute. */
@@ -52,10 +89,16 @@ export async function learnFromManualMatch(
   return candidates;
 }
 
-/** HOOK 2 — engine's suggestion was confirmed as-is; reinforces the keyword + deduction history. */
+/** HOOK 2 — engine's suggestion was confirmed as-is; reinforces the keyword + deduction/cluster history. */
 export async function reinforceOnConfirm(
   seller: any,
-  ctx: FeedbackContext & { matchedKeyword?: string; deductionType?: DeductionType | null }
+  ctx: FeedbackContext & {
+    matchedKeyword?: string;
+    deductionType?: DeductionType | null;
+    // Contract dates of the orders a combo match settled — present only for a
+    // multi-bill confirm, used to learn this institute's typical burst gap.
+    clusterOrderDates?: string[];
+  }
 ): Promise<void> {
   if (ctx.matchedKeyword) {
     seller.aliasMeta = seller.aliasMeta || [];
@@ -78,6 +121,10 @@ export async function reinforceOnConfirm(
 
   if (ctx.deductionType) {
     updateDeductionProfile(seller, ctx.deductionType, ctx.deductionAmount || 0, ctx.billAmount || 0);
+  }
+
+  if (ctx.clusterOrderDates && ctx.clusterOrderDates.length >= 2) {
+    updateClusterProfile(seller, ctx.clusterOrderDates);
   }
 
   await seller.save();

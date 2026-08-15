@@ -38,8 +38,14 @@ interface Buyer {
 interface SavedSheet {
   id: string;
   fileName: string;
-  uploadedRows: UploadedRow[];
-  originalExcelData: any[];
+  // The Sheet Library list payload no longer carries these two heavy fields —
+  // they're fetched on demand via GET /api/gem-sync?sheetContent={id} (see
+  // fetchSheetContent) once a sheet is actually opened. totalRows/completedRows
+  // are the derived counts the list view uses instead.
+  uploadedRows?: UploadedRow[];
+  originalExcelData?: any[];
+  totalRows?: number;
+  completedRows?: number;
   selectedBuyerId: string;
   isCompleted?: boolean;
   lastEditedBy?: string;
@@ -116,6 +122,11 @@ export default function GeMSyncPage() {
 
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
+  // Stripped (originalName + mappedItemId only) mapping history across every
+  // past sheet — powers "Quick Fill from Master List" without needing every
+  // sheet's full uploadedRows in memory (those now live in R2, fetched only
+  // for the sheet actually being edited).
+  const [rowMappings, setRowMappings] = useState<{ sheetId: string; mappings: { originalName: string; mappedItemId: string }[] }[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<string>("");
 
   const [selectedBuyerId, setSelectedBuyerId] = useState<string>("");
@@ -167,6 +178,19 @@ export default function GeMSyncPage() {
     }
   }, []);
 
+  // Whether a sheet's heavy content (uploadedRows/originalExcelData) is
+  // currently being fetched from R2 on demand (see fetchSheetContent below).
+  const [loadingSheetContent, setLoadingSheetContent] = useState(false);
+
+  // The Sheet Library list no longer carries uploadedRows/originalExcelData —
+  // those live in R2 now, fetched only when a sheet is actually opened.
+  const fetchSheetContent = async (sheetId: string): Promise<{ uploadedRows: UploadedRow[]; originalExcelData: any[] }> => {
+    const res = await fetch(`/api/gem-sync?sheetContent=${encodeURIComponent(sheetId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || "Failed to load sheet content");
+    return { uploadedRows: data.uploadedRows || [], originalExcelData: data.originalExcelData || [] };
+  };
+
   // Load backend and MongoDB shared data
   useEffect(() => {
     // 1. Fetch Firms
@@ -187,16 +211,16 @@ export default function GeMSyncPage() {
       .then(data => setSellers(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching sellers", err));
 
-    // 4. Fetch Shared GeM Sync State from MongoDB
+    // 4. Fetch Shared GeM Sync State from MongoDB (rate history excluded — see below)
     fetch("/api/gem-sync")
       .then(res => res.json())
       .then(state => {
         if (state) {
           if (Array.isArray(state.buyers)) setBuyers(state.buyers);
           if (Array.isArray(state.listings)) setListings(state.listings);
-          if (Array.isArray(state.rateHistory)) setRateHistory(state.rateHistory);
           if (Array.isArray(state.customItems)) setCustomItems(state.customItems);
           if (Array.isArray(state.catalogueLinks)) setCatalogueLinks(state.catalogueLinks);
+          if (Array.isArray(state.rowMappings)) setRowMappings(state.rowMappings);
           if (Array.isArray(state.sheets)) {
             setSheets(state.sheets);
             // Default load the latest active sheet
@@ -205,14 +229,33 @@ export default function GeMSyncPage() {
               const latest = sorted[0];
               setActiveSheetId(latest.id);
               setFileName(latest.fileName);
-              setUploadedRows(latest.uploadedRows);
-              setOriginalExcelData(latest.originalExcelData);
               setSelectedBuyerId(latest.selectedBuyerId);
+              setLoadingSheetContent(true);
+              fetchSheetContent(latest.id)
+                .then(({ uploadedRows, originalExcelData }) => {
+                  setUploadedRows(uploadedRows);
+                  setOriginalExcelData(originalExcelData);
+                })
+                .catch(err => console.error("Failed to load latest sheet content", err))
+                .finally(() => setLoadingSheetContent(false));
             }
           }
         }
       })
       .catch(err => console.error("Error loading shared MongoDB state:", err));
+
+    // 5. Fetch rate history separately, in the background — it only feeds the
+    // Upload Sheet tab's "last quoted rate" hint, but a full scan of this
+    // collection has been observed taking 40+ seconds on this cluster. Keeping
+    // it out of the main state fetch above means every other tab (Master List,
+    // GeM Catalogue, Sheet Library) renders without waiting on it at all; the
+    // hint just fills in a bit later once this resolves.
+    fetch("/api/gem-sync?rateHistory=1")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data?.rateHistory)) setRateHistory(data.rateHistory);
+      })
+      .catch(err => console.error("Error loading rate history", err));
   }, []);
 
   // Combined options list of buyers from Sellers API and GeM Buyers
@@ -261,14 +304,15 @@ export default function GeMSyncPage() {
     const targetSheet = updatedSheets.find(s => s.id === sheetId);
     if (targetSheet) {
       try {
+        // Metadata-only update — deliberately omits uploadedRows/originalExcelData
+        // (the Sheet Library's copy of this sheet doesn't carry them anymore;
+        // sending them here would overwrite the sheet's real content with nothing).
         await fetch("/api/gem-sync?action=save_sheet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: targetSheet.id,
             fileName: targetSheet.fileName,
-            uploadedRows: targetSheet.uploadedRows,
-            originalExcelData: targetSheet.originalExcelData,
             selectedBuyerId: newBuyerId,
             isCompleted: targetSheet.isCompleted,
             lastEditedBy: targetSheet.lastEditedBy,
@@ -302,14 +346,14 @@ export default function GeMSyncPage() {
     const targetSheet = updatedSheets.find(s => s.id === sheetId);
     if (targetSheet) {
       try {
+        // Metadata-only update — see the note in handleChangeSheetBuyer above for why
+        // uploadedRows/originalExcelData are deliberately omitted here.
         await fetch("/api/gem-sync?action=save_sheet", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: targetSheet.id,
             fileName: targetSheet.fileName,
-            uploadedRows: targetSheet.uploadedRows,
-            originalExcelData: targetSheet.originalExcelData,
             selectedBuyerId: targetSheet.selectedBuyerId,
             isCompleted: newCompletedState,
             lastEditedBy: targetSheet.lastEditedBy,
@@ -343,14 +387,22 @@ export default function GeMSyncPage() {
         })
       })
         .then(() => {
-          // Refresh sheet list
-          fetch("/api/gem-sync")
-            .then(res => res.json())
-            .then(state => {
-              if (state && Array.isArray(state.sheets)) {
-                setSheets(state.sheets);
-              }
-            });
+          // Update this sheet's lightweight metadata locally instead of
+          // re-fetching every collection from scratch — the fresh counts are
+          // already known from what was just saved.
+          const totalRows = uploadedRows.length;
+          const completedRows = uploadedRows.filter(r => r.isCompleted).length;
+          setSheets(prev =>
+            prev.map(s => (s.id === activeSheetId ? { ...s, totalRows, completedRows, updatedAt: new Date().toISOString() } : s))
+          );
+
+          // Keep this sheet's mapping-history in sync locally too, so "Quick
+          // Fill from Master List" reflects rows mapped earlier in this same
+          // session immediately, without waiting for a reload.
+          const mappings = uploadedRows
+            .filter(r => r.originalName && r.mappedItemId)
+            .map(r => ({ originalName: r.originalName, mappedItemId: r.mappedItemId }));
+          setRowMappings(prev => [...prev.filter(rm => rm.sheetId !== activeSheetId), { sheetId: activeSheetId, mappings }]);
         })
         .catch(err => console.error("Failed to sync sheet to MongoDB", err));
     }, 1000);
@@ -478,14 +530,17 @@ export default function GeMSyncPage() {
     return { score: Math.max(0, jaccard - numericPenalty), overlap };
   };
 
-  // Build the historical match index from every past sheet's mapped rows (all 80+ sheets, not just the current one)
+  // Build the historical match index from every past sheet's mapped rows (all 80+ sheets, not just the current one).
+  // Sourced from the lightweight rowMappings collection (originalName + mappedItemId
+  // only) rather than each sheet's full uploadedRows, which now live in R2 and are
+  // only ever loaded for the one sheet actively being edited.
   const matchHistory = useMemo(() => {
     const exactMap = new Map<string, Map<string, number>>(); // normalized item text -> itemId -> times chosen
     const fuzzyEntries: { tokens: string[]; mappedItemId: string }[] = [];
     const seenPairs = new Set<string>();
 
-    sheets.forEach(sheet => {
-      (sheet.uploadedRows || []).forEach(row => {
+    rowMappings.forEach(entry => {
+      (entry.mappings || []).forEach(row => {
         if (!row?.originalName || !row?.mappedItemId) return;
         const norm = normalizeMatchText(row.originalName);
         if (!norm) return;
@@ -503,7 +558,7 @@ export default function GeMSyncPage() {
     });
 
     return { exactMap, fuzzyEntries };
-  }, [sheets]);
+  }, [rowMappings]);
 
   // Smart match: exact historical match > closest fuzzy historical match > direct stock-item name match
   const findSmartMatch = (name: string): string => {
@@ -651,6 +706,7 @@ export default function GeMSyncPage() {
     })
       .then(() => {
         setSheets(prev => prev.filter(s => s.id !== sheetId));
+        setRowMappings(prev => prev.filter(rm => rm.sheetId !== sheetId));
         if (activeSheetId === sheetId) {
           handleClearSheet();
         }
@@ -2163,8 +2219,8 @@ export default function GeMSyncPage() {
                         const displayBuyerName = matchedOpt?.name || sheet.selectedBuyerId || "Select Associated Buyer...";
                         const isSelected = !!matchedOpt || !!sheet.selectedBuyerId;
                         const isPopoverOpen = openBuyerSelectSheetId === sheet.id;
-                        const totalRowsCount = sheet.uploadedRows?.length || 0;
-                        const completedRowsCountForSheet = sheet.uploadedRows?.filter(r => r.isCompleted).length || 0;
+                        const totalRowsCount = sheet.totalRows ?? sheet.uploadedRows?.length ?? 0;
+                        const completedRowsCountForSheet = sheet.completedRows ?? sheet.uploadedRows?.filter(r => r.isCompleted).length ?? 0;
                         const progressPct = totalRowsCount > 0 ? Math.round((completedRowsCountForSheet / totalRowsCount) * 100) : 0;
 
                         return (
@@ -2309,7 +2365,7 @@ export default function GeMSyncPage() {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">{sheet.uploadedRows?.length || 0}</td>
+                            <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">{sheet.totalRows ?? sheet.uploadedRows?.length ?? 0}</td>
                             <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-secondary)]">
                               {sheet.updatedAt ? formatDate(sheet.updatedAt) : "—"}
                             </td>
@@ -2326,17 +2382,27 @@ export default function GeMSyncPage() {
                             <td className="py-4 px-6 text-center">
                               <div className="flex gap-2 justify-center">
                                 <button
+                                  disabled={loadingSheetContent}
                                   onClick={() => {
                                     setActiveSheetId(sheet.id);
                                     setFileName(sheet.fileName);
-                                    setUploadedRows(sheet.uploadedRows);
-                                    setOriginalExcelData(sheet.originalExcelData);
                                     setSelectedBuyerId(sheet.selectedBuyerId);
                                     setActiveTab("upload"); // Switch to mapping view
+                                    setLoadingSheetContent(true);
+                                    fetchSheetContent(sheet.id)
+                                      .then(({ uploadedRows, originalExcelData }) => {
+                                        setUploadedRows(uploadedRows);
+                                        setOriginalExcelData(originalExcelData);
+                                      })
+                                      .catch(err => {
+                                        console.error("Failed to load sheet content", err);
+                                        alert("Failed to load this sheet's content — check R2 connection and try again.");
+                                      })
+                                      .finally(() => setLoadingSheetContent(false));
                                   }}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-[10px] tracking-wider uppercase py-2 px-3.5 rounded-lg transition-colors flex items-center justify-center gap-1.5"
                                 >
-                                  Resume Mapping
+                                  {loadingSheetContent && activeSheetId === sheet.id ? "Loading..." : "Resume Mapping"}
                                 </button>
                                 <button
                                   onClick={() => handleDeleteSheet(sheet.id)}

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { uploadFileToR2, getFileFromR2, deleteFileFromR2 } from "@/lib/cloudflareR2";
+
+const sheetR2Key = (id: string) => `gem-sync/sheets/${id}.json`;
 
 // Helper: Deduplicate listings array by (itemId/itemName + firmCode + buyerId)
 function deduplicateListings(items: any[]) {
@@ -29,27 +32,69 @@ function deduplicateListings(items: any[]) {
   return Array.from(seen.values());
 }
 
-// GET: Fetch the shared console state from MongoDB (with auto-deduplicated listings)
-export async function GET() {
+// GET: Fetch the shared console state from MongoDB (with auto-deduplicated listings).
+// ?sheetContent={id} instead fetches just that one sheet's heavy uploadedRows/
+// originalExcelData payload from R2 on demand — never eagerly loaded for every
+// sheet up front, so gem_sheets documents stay flat-sized no matter how large
+// individual Excel uploads get.
+export async function GET(req: Request) {
   try {
     const client = await clientPromise;
     const db = client.db();
 
-    // Fetch collections
-    const buyers = await db.collection("gem_buyers").find({}).toArray();
-    const rawListings = await db.collection("gem_listings").find({}).toArray();
-    const rateHistory = await db.collection("gem_rate_history").find({}).toArray();
-    const customItems = await db.collection("gem_custom_items").find({}).toArray();
-    const sheets = await db.collection("gem_sheets").find({}).toArray();
-    const catalogueLinks = await db.collection("gem_catalogue_links").find({}).toArray();
+    const { searchParams } = new URL(req.url);
+    const sheetContentId = searchParams.get("sheetContent");
+    if (sheetContentId) {
+      const sheet = await db.collection("gem_sheets").findOne({ id: sheetContentId });
+      if (!sheet || !sheet.r2Key) {
+        return NextResponse.json({ error: "Sheet content not found" }, { status: 404 });
+      }
+      try {
+        const bytes = await getFileFromR2(sheet.r2Key);
+        const content = JSON.parse(bytes.toString("utf-8"));
+        return NextResponse.json({
+          uploadedRows: content.uploadedRows || [],
+          originalExcelData: content.originalExcelData || [],
+        });
+      } catch (err) {
+        console.error("Failed to fetch sheet content from R2:", err);
+        return NextResponse.json({ error: "Could not load sheet content — check R2 connection" }, { status: 502 });
+      }
+    }
+
+    // gem_rate_history is fetched separately (?rateHistory=1) rather than as
+    // part of the main bulk load below — it's only used by the Upload Sheet
+    // tab's "last quoted rate" hint, but a full unfiltered scan of it has been
+    // observed taking 40+ seconds on this cluster (looks like Atlas shared-tier
+    // throttling, not a query/index problem — small collection, tiny data size).
+    // Keeping it out of the main response means every other tab (which never
+    // needed it) stops waiting on that one slow collection.
+    if (searchParams.get("rateHistory")) {
+      const rateHistory = await db.collection("gem_rate_history").find({}).toArray();
+      return NextResponse.json({ rateHistory: rateHistory.map(({ _id, ...rest }) => ({ ...rest })) });
+    }
+
+    // Fetch the remaining collections concurrently rather than one-at-a-time —
+    // total wait becomes the slowest single query instead of the sum of all of them.
+    const [buyers, rawListings, customItems, sheets, catalogueLinks, rowMappings] = await Promise.all([
+      db.collection("gem_buyers").find({}).toArray(),
+      db.collection("gem_listings").find({}).toArray(),
+      db.collection("gem_custom_items").find({}).toArray(),
+      db.collection("gem_sheets").find({}).toArray(),
+      db.collection("gem_catalogue_links").find({}).toArray(),
+      // Lightweight (originalName + mappedItemId only) per-sheet mapping history —
+      // powers "Quick Fill from Master List" across all past sheets without
+      // needing every sheet's full uploadedRows (which now live in R2).
+      db.collection("gem_row_mappings").find({}).toArray(),
+    ]);
 
     // Clean MongoDB _id fields for React/JSON serialization
     const cleanBuyers = buyers.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanListings = rawListings.map(({ _id, ...rest }) => ({ ...rest }));
-    const cleanHistory = rateHistory.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanCustomItems = customItems.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanSheets = sheets.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanCatalogueLinks = catalogueLinks.map(({ _id, ...rest }) => ({ ...rest }));
+    const cleanRowMappings = rowMappings.map(({ _id, ...rest }) => ({ ...rest }));
 
     // Deduplicate listings
     const deduplicatedListings = deduplicateListings(cleanListings);
@@ -65,10 +110,10 @@ export async function GET() {
     return NextResponse.json({
       buyers: cleanBuyers,
       listings: deduplicatedListings,
-      rateHistory: cleanHistory,
       customItems: cleanCustomItems,
       sheets: cleanSheets,
-      catalogueLinks: cleanCatalogueLinks
+      catalogueLinks: cleanCatalogueLinks,
+      rowMappings: cleanRowMappings
     });
   } catch (error) {
     console.error("GET gem-sync error:", error);
@@ -150,29 +195,78 @@ export async function POST(req: Request) {
       if (!body.id) {
         return NextResponse.json({ error: "Sheet ID is required" }, { status: 400 });
       }
-      const sanitizedRows = sanitizeBody(body.uploadedRows || []);
+
+      // Two distinct callers hit this action: the active-sheet auto-save (which
+      // always has the full uploadedRows/originalExcelData in memory) and
+      // metadata-only updates like toggling "completed" or changing the
+      // associated buyer (which only ever have the lightweight Sheet Library
+      // row, not the sheet's content). Only touch R2/counts/mappings when real
+      // content was actually sent — otherwise a buyer-change or completed-toggle
+      // on ANY sheet would silently overwrite its real data with an empty array.
+      const hasContent = Array.isArray(body.uploadedRows);
+
+      const metadataSet: any = {
+        id: body.id,
+        fileName: body.fileName || "",
+        selectedBuyerId: body.selectedBuyerId || "",
+        isCompleted: body.isCompleted !== undefined ? !!body.isCompleted : false,
+        lastEditedBy: body.lastEditedBy || "",
+        updatedAt: new Date().toISOString()
+      };
+
+      let sanitizedRows: any[] = [];
+      if (hasContent) {
+        sanitizedRows = sanitizeBody(body.uploadedRows);
+        const originalExcelData = body.originalExcelData || [];
+
+        // The heavy payload lives in R2, keyed by sheet id — Mongo only ever
+        // stores lightweight metadata + derived counts + this pointer, so the
+        // document's size never grows with the size of the uploaded Excel file.
+        const r2Key = sheetR2Key(body.id);
+        try {
+          await uploadFileToR2(
+            Buffer.from(JSON.stringify({ uploadedRows: sanitizedRows, originalExcelData })),
+            r2Key,
+            "application/json"
+          );
+        } catch (err) {
+          console.error("Failed to upload sheet content to R2:", err);
+          return NextResponse.json({ error: "Save failed — check R2 connection" }, { status: 502 });
+        }
+        metadataSet.totalRows = sanitizedRows.length;
+        metadataSet.completedRows = sanitizedRows.filter((r: any) => r.isCompleted).length;
+        metadataSet.r2Key = r2Key;
+      }
+
       await db.collection("gem_sheets").updateOne(
         { id: body.id },
         {
-          $set: {
-            id: body.id,
-            fileName: body.fileName || "",
-            uploadedRows: sanitizedRows,
-            originalExcelData: body.originalExcelData || [],
-            selectedBuyerId: body.selectedBuyerId || "",
-            isCompleted: body.isCompleted !== undefined ? !!body.isCompleted : false,
-            lastEditedBy: body.lastEditedBy || "",
-            updatedAt: new Date().toISOString()
-          },
+          $set: metadataSet,
           // Only stamped the very first time this sheet id is created (the actual
           // upload event) — never overwritten by later edits/saves, unlike lastEditedBy.
           $setOnInsert: {
             uploadedBy: body.uploadedBy || "",
             uploadedAt: new Date().toISOString()
-          }
+          },
+          // Clean up any pre-migration doc that still had the heavy fields embedded.
+          ...(hasContent ? { $unset: { uploadedRows: "", originalExcelData: "" } } : {})
         },
         { upsert: true }
       );
+
+      if (hasContent) {
+        // Keep this sheet's stripped mapping-history in sync too — only the two
+        // fields "Quick Fill from Master List" actually needs, not the full row.
+        const mappings = sanitizedRows
+          .filter((r: any) => r.originalName && r.mappedItemId)
+          .map((r: any) => ({ originalName: r.originalName, mappedItemId: r.mappedItemId }));
+        await db.collection("gem_row_mappings").updateOne(
+          { sheetId: body.id },
+          { $set: { sheetId: body.id, mappings } },
+          { upsert: true }
+        );
+      }
+
       return NextResponse.json({ success: true });
     }
 
@@ -180,7 +274,13 @@ export async function POST(req: Request) {
       if (!body.id) {
         return NextResponse.json({ error: "Sheet ID is required" }, { status: 400 });
       }
+      try {
+        await deleteFileFromR2(sheetR2Key(body.id));
+      } catch (err) {
+        console.error("Failed to delete sheet content from R2 (continuing):", err);
+      }
       await db.collection("gem_sheets").deleteOne({ id: body.id });
+      await db.collection("gem_row_mappings").deleteOne({ sheetId: body.id });
       return NextResponse.json({ success: true });
     }
 

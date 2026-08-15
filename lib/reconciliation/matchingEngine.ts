@@ -24,6 +24,12 @@ export interface DeductionProfile {
   lastConfirmedType: string | null;
 }
 
+export interface ClusterProfile {
+  typicalGapDays: number | null;
+  gapSamples: number[];
+  lastUpdated?: Date | null;
+}
+
 // Minimal shape the matching engine needs from a Seller ("Institute") doc —
 // deliberately loose (matches this codebase's convention of `any` for Mongoose docs).
 export interface SellerForMatching {
@@ -33,6 +39,7 @@ export interface SellerForMatching {
   aliasMeta?: AliasMeta[];
   negativeKeywords?: NegativeKeyword[];
   deductionProfile?: DeductionProfile;
+  clusterProfile?: ClusterProfile;
   autoApproveTrusted?: boolean;
 }
 
@@ -61,7 +68,7 @@ export interface CombinationMatchResult {
   matchType: "combination";
 }
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // ============================================================
 // KEYWORD EXTRACTION (ported from the provided learning-engine.js)
@@ -103,67 +110,213 @@ export function extractKeywords(description?: string): string[] {
   return [...candidates];
 }
 
+// Narration lines that are pure bank fees/charges — there is no institute/payer
+// name to extract from these, so they should fall straight to "Unmatched".
+const BANK_CHARGE_PATTERNS = [
+  /\bDD\s*ISSUE\s*CHARGES?\b/,
+  /\bCOMMN\s*DEBIT\b/,
+  /\bCOMMISSION\b/,
+  /\b(?:BANK\s*)?CHARGES?\b/,
+  /\bSMS\s*CHARGES?\b/,
+  /\bGST\s*ON\s*CHARGES?\b/,
+  /\bMIN\s*BAL(?:ANCE)?\s*CHARGES?\b/,
+  /\bPENAL(?:TY)?\s*CHARGES?\b/,
+];
+
+/**
+ * Extracts the trailing payer-name fragment from a bank-statement narration:
+ * the free text after a UTR code (e.g. "Cr.for UTR:RBISH00803362582 GOGJSPARSH S"
+ * -> "GOGJSPARSH S"), or the last "/"-separated segment of a NEFT/RTGS/IMPS/UPI
+ * reference (e.g. "NEFT/MSNUX26226205063/BLUE EXIM INNOVATI" -> "BLUE EXIM INNOVATI").
+ * Returns null for bank-fee lines with no payer name to extract, or when neither
+ * pattern applies (callers should fall back to extractKeywords()'s generic tokenizer).
+ */
+export function extractPayerKeyword(description?: string): string | null {
+  if (!description) return null;
+  const raw = description.trim();
+  if (!raw) return null;
+  if (BANK_CHARGE_PATTERNS.some((re) => re.test(normalizeText(raw)))) return null;
+
+  const utrMatch = raw.match(/UTR:?\s*[A-Z0-9]{6,}\s+(.+)$/i);
+  if (utrMatch && utrMatch[1].trim()) {
+    const fragment = normalizeText(utrMatch[1]);
+    if (fragment) return fragment;
+  }
+
+  if (/^(NEFT|RTGS|IMPS|UPI)\//i.test(raw)) {
+    const segments = raw.split("/").map((s) => s.trim()).filter(Boolean);
+    if (segments.length >= 2) {
+      const fragment = normalizeText(segments[segments.length - 1]);
+      if (fragment) return fragment;
+    }
+  }
+
+  return null;
+}
+
 // ============================================================
 // STEP 1 — INSTITUTE MATCH
 // ============================================================
+
+export interface InstituteCandidate extends InstituteMatchResult {
+  // Length of the matched keyword text — used only to break ties between
+  // candidates that score equally on amount/date fit (see scoreInstituteCandidates).
+  matchLength: number;
+}
+
+/**
+ * Collects every institute whose registered keyword matches the description —
+ * a payer name like "Dist Treasury Mehsana" can legitimately belong to several
+ * institutes' statementDescriptionName lists, so this deliberately does NOT pick
+ * a single winner by keyword length alone (that used to silently hide ties).
+ * One candidate per seller (its best-matching keyword), sorted longest-match-first.
+ */
+function collectInstituteCandidates(
+  description: string,
+  sellers: SellerForMatching[]
+): InstituteCandidate[] {
+  const desc = (description || "").toLowerCase();
+  const bySeller = new Map<string, InstituteCandidate>();
+
+  const consider = (seller: SellerForMatching, raw: string, candidateLower: string, matchLength: number) => {
+    const key = String(seller._id ?? seller.instituteName);
+    const existing = bySeller.get(key);
+    if (existing && existing.matchLength >= matchLength) return;
+
+    const meta = (seller.aliasMeta || []).find(
+      (a) => (a.keyword || "").trim().toLowerCase() === candidateLower
+    );
+    const confidence = meta ? meta.confidence : 1;
+    bySeller.set(key, {
+      instituteName: seller.instituteName,
+      sellerId: seller._id,
+      matchedKeyword: raw,
+      confidence,
+      confidenceLabel: confidence >= 3 ? "high" : meta ? "low" : "new",
+      matchLength,
+    });
+  };
+
+  if (desc) {
+    for (const seller of sellers) {
+      const negatives = new Set(
+        (seller.negativeKeywords || []).map((n) => (n.keyword || "").trim().toLowerCase())
+      );
+      for (const raw of seller.statementDescriptionName || []) {
+        const candidate = (raw || "").trim().toLowerCase();
+        if (candidate.length < 3) continue;
+        if (negatives.has(candidate)) continue;
+        if (!desc.includes(candidate)) continue;
+        consider(seller, raw, candidate, candidate.length);
+      }
+    }
+  }
+
+  // Second pass: nothing in the full description contained a registered keyword
+  // outright — likely a truncated bank narration (e.g. "DISTRICT TRE"). Fall back
+  // to the UTR/NEFT-extracted payer fragment and match it bidirectionally, since
+  // either the narration or the registered keyword could be the shorter/truncated one.
+  if (bySeller.size === 0) {
+    const fragment = extractPayerKeyword(description);
+    if (fragment) {
+      const fragmentLower = fragment.toLowerCase();
+      for (const seller of sellers) {
+        const negatives = new Set(
+          (seller.negativeKeywords || []).map((n) => (n.keyword || "").trim().toLowerCase())
+        );
+        for (const raw of seller.statementDescriptionName || []) {
+          const candidate = (raw || "").trim().toLowerCase();
+          if (candidate.length < 3) continue;
+          if (negatives.has(candidate)) continue;
+          const isPrefixMatch =
+            candidate.startsWith(fragmentLower) || fragmentLower.startsWith(candidate);
+          if (!isPrefixMatch) continue;
+          consider(seller, raw, candidate, candidate.length);
+        }
+      }
+    }
+  }
+
+  return [...bySeller.values()].sort((a, b) => b.matchLength - a.matchLength);
+}
 
 /**
  * Richer sibling of lib/institutMatcher.ts's matchInstituteFromDescription: also honors
  * per-institute negativeKeywords (past rejections) and returns confidence info instead
  * of just the institute name, so the caller can persist a scored suggestion.
+ * Returns only the single best candidate — use findInstituteMatches when a keyword
+ * might legitimately belong to more than one institute and the caller wants to
+ * disambiguate rather than silently pick one.
  */
 export function findInstituteMatch(
   description: string,
   sellers: SellerForMatching[]
 ): InstituteMatchResult | null {
-  const desc = (description || "").toLowerCase();
-  if (!desc) return null;
+  return collectInstituteCandidates(description, sellers)[0] ?? null;
+}
 
-  let best: {
-    instituteName: string;
-    sellerId: any;
-    matchedKeyword: string;
-    length: number;
-    confidence: number;
-    hasMeta: boolean;
-  } | null = null;
+/** All institutes whose registered keyword matches the description, best match first. */
+export function findInstituteMatches(
+  description: string,
+  sellers: SellerForMatching[]
+): InstituteCandidate[] {
+  return collectInstituteCandidates(description, sellers);
+}
 
-  for (const seller of sellers) {
-    const negatives = new Set(
-      (seller.negativeKeywords || []).map((n) => (n.keyword || "").trim().toLowerCase())
-    );
-    for (const raw of seller.statementDescriptionName || []) {
-      const candidate = (raw || "").trim().toLowerCase();
-      if (candidate.length < 3) continue;
-      if (negatives.has(candidate)) continue;
-      if (!desc.includes(candidate)) continue;
-      if (best && candidate.length <= best.length) continue;
+export interface ScoredInstituteCandidate extends InstituteCandidate {
+  amountFit: boolean;
+  dateFit: boolean;
+  score: number;
+}
 
-      const meta = (seller.aliasMeta || []).find(
-        (a) => (a.keyword || "").trim().toLowerCase() === candidate
-      );
-      best = {
-        instituteName: seller.instituteName,
-        sellerId: seller._id,
-        matchedKeyword: raw,
-        length: candidate.length,
-        confidence: meta ? meta.confidence : 1,
-        hasMeta: !!meta,
-      };
-    }
-  }
+// How close (in days) a payment date needs to be to one of the institute's open
+// bill dates to count as a "date fit" — a rough proxy until Phase 3's cluster
+// engine gives a real per-institute burst window.
+const DATE_FIT_WINDOW_DAYS = 60;
 
-  if (!best) return null;
-  const confidenceLabel: ConfidenceLabel =
-    best.confidence >= 3 ? "high" : best.hasMeta ? "low" : "new";
+// A candidate is a "clear winner" over the runner-up once its score is ahead by
+// more than this margin — below it, the two are close enough to ask the user.
+export const AMBIGUITY_SCORE_MARGIN = 60;
 
-  return {
-    instituteName: best.instituteName,
-    sellerId: best.sellerId,
-    matchedKeyword: best.matchedKeyword,
-    confidence: best.confidence,
-    confidenceLabel,
-  };
+/**
+ * Scores each candidate institute by (a) whether the credited amount fits one of
+ * its open bills/combinations and (b) whether the payment date falls near its
+ * open-bill activity — used to resolve a keyword shared by multiple institutes
+ * (Addition 2) without guessing. Amount fit is the dominant signal since two
+ * institutes rarely have the same institute-specific pending amount at once.
+ */
+export async function scoreInstituteCandidates(
+  db: Db,
+  candidates: InstituteCandidate[],
+  { creditedAmount, transactionDate, firmCode }: { creditedAmount: number; transactionDate?: string; firmCode?: string }
+): Promise<ScoredInstituteCandidate[]> {
+  const txnDate = transactionDate ? new Date(transactionDate) : null;
+  const txnDateValid = !!txnDate && !isNaN(txnDate.getTime());
+
+  const scored = await Promise.all(
+    candidates.map(async (c) => {
+      const openBills = await findOpenBills(db, { instituteName: c.instituteName, firmCode });
+      const amountFit = !!(findAmountMatch(openBills, creditedAmount) || findCombinationMatch(openBills, creditedAmount));
+
+      let dateFit = false;
+      if (txnDateValid) {
+        for (const b of openBills) {
+          if (!b.contractDate) continue;
+          const billDate = new Date(b.contractDate);
+          if (isNaN(billDate.getTime())) continue;
+          if (Math.abs(txnDate!.getTime() - billDate.getTime()) / 86400000 <= DATE_FIT_WINDOW_DAYS) {
+            dateFit = true;
+            break;
+          }
+        }
+      }
+
+      const score = (amountFit ? 100 : 0) + (dateFit ? 20 : 0) + Math.min(c.matchLength, 15);
+      return { ...c, amountFit, dateFit, score };
+    })
+  );
+
+  return scored.sort((a, b) => b.score - a.score);
 }
 
 // ============================================================
@@ -193,7 +346,7 @@ export async function findOpenBills(
   return db.collection("sellerorders").find(query).sort({ contractDate: 1 }).toArray();
 }
 
-const withRemaining = (bills: any[]) =>
+export const withRemainingAmounts = (bills: any[]) =>
   bills.map((b) => ({
     ...b,
     remainingAmount: round2(Number(b.totalAmount || 0) - Number(b.paidAmount || 0)),
@@ -209,7 +362,7 @@ export function findAmountMatch(
   creditedAmount: number,
   tolerance = 5
 ): BillMatchResult | null {
-  const candidates = withRemaining(bills);
+  const candidates = withRemainingAmounts(bills);
 
   const exact = candidates.find((b) => Math.abs(b.remainingAmount - creditedAmount) <= tolerance);
   if (exact) {
@@ -240,7 +393,7 @@ export function findCombinationMatch(
   tolerance = 5,
   maxCombo = 4
 ): CombinationMatchResult | null {
-  const candidates = withRemaining(bills)
+  const candidates = withRemainingAmounts(bills)
     .filter((b) => b.remainingAmount > 0)
     .slice(0, 25); // bound the search space
 
@@ -307,6 +460,10 @@ export function suggestDeductionTypeFromHistory(
 export interface DeductionClassification {
   type: DeductionType | null;
   percent: number;
+  // True when `type` came from the institute's own learned deductionProfile
+  // rather than the generic percentage-range fallback — used to decide
+  // whether a suggestion is confident enough to fast-track (see Phase 4).
+  usedHistory: boolean;
 }
 
 /** Step 3: classify a deduction as TDS (~2%), TDS+GST (~4%), or Kasar (anything else). */
@@ -315,15 +472,37 @@ export function classifyDeduction(
   creditedAmount: number,
   seller?: SellerForMatching | null
 ): DeductionClassification {
-  if (!billAmount) return { type: null, percent: 0 };
+  if (!billAmount) return { type: null, percent: 0, usedHistory: false };
   const deduction = billAmount - creditedAmount;
   const percent = round2((deduction / billAmount) * 100);
-  if (percent <= 0) return { type: null, percent: 0 };
+  if (percent <= 0) return { type: null, percent: 0, usedHistory: false };
 
   const historySuggestion = suggestDeductionTypeFromHistory(seller, percent);
-  if (historySuggestion) return { type: historySuggestion, percent };
+  if (historySuggestion) return { type: historySuggestion, percent, usedHistory: true };
 
-  if (percent >= 1.25 && percent <= 2.75) return { type: "TDS", percent };
-  if (percent >= 3.25 && percent <= 4.75) return { type: "TDS+GST", percent };
-  return { type: "Kasar", percent };
+  if (percent >= 1.25 && percent <= 2.75) return { type: "TDS", percent, usedHistory: false };
+  if (percent >= 3.25 && percent <= 4.75) return { type: "TDS+GST", percent, usedHistory: false };
+  return { type: "Kasar", percent, usedHistory: false };
+}
+
+// ============================================================
+// STEP 4 — HIGH-CONFIDENCE FAST-TRACK (Addition 3, non-automatic)
+// ============================================================
+
+/**
+ * A suggestion is "high confidence" only when the keyword match itself is
+ * already trusted (learned aliasMeta confidence >= 3) AND the amount either
+ * settled exactly or its deduction matched the institute's own learned
+ * deduction history (not just the generic % fallback). This never skips the
+ * Confirm click — it only decides whether the UI pre-fills/fast-tracks a row.
+ */
+export function isHighConfidenceMatch(params: {
+  confidenceLabel: ConfidenceLabel;
+  matchType: "exact" | "deduction" | "combination" | "combination-deduction" | null;
+  deductionUsedHistory: boolean;
+}): boolean {
+  const { confidenceLabel, matchType, deductionUsedHistory } = params;
+  if (confidenceLabel !== "high" || !matchType) return false;
+  if (matchType === "exact" || matchType === "combination") return true;
+  return deductionUsedHistory;
 }

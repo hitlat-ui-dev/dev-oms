@@ -14,7 +14,7 @@ export interface IMatchFeedbackLog extends Document {
   deductionAmount?: number;
   suggestedType?: string;
   correctedType?: string;
-  action: "confirm" | "edit" | "reject" | "manual_match" | "reverse";
+  action: "confirm" | "edit" | "reject" | "manual_match" | "reverse" | "correction_accepted" | "correction_rejected";
   userId?: mongoose.Types.ObjectId;
   userName?: string;
 }
@@ -33,7 +33,7 @@ const MatchFeedbackLogSchema = new Schema<IMatchFeedbackLog>(
     correctedType: { type: String },
     action: {
       type: String,
-      enum: ["confirm", "edit", "reject", "manual_match", "reverse"],
+      enum: ["confirm", "edit", "reject", "manual_match", "reverse", "correction_accepted", "correction_rejected"],
       required: true,
     },
     userId: { type: Schema.Types.ObjectId, ref: "User" },

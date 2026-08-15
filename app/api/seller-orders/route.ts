@@ -3,7 +3,6 @@ import clientPromise from "@/lib/mongodb";
 import SellerOrder from "@/models/SellerOrder";
 import mongoose from "mongoose";
 import { ObjectId } from "mongodb";
-import { round2, getRemainingOut, createAdvanceLink } from "@/lib/advanceOrders";
 
 // A seller's registered instituteName is the single source of truth for how that
 // institute's name should read on an order — instituteName typed/scraped at order-creation
@@ -142,23 +141,6 @@ export async function POST(req: Request) {
     const totalAmount = Number(data.total || data.totalAmount || (orderQty * rate));
     const itemSku = data.sku?.trim() || "";
 
-    // --- ADVANCE ORDER AUTO-MERGE (pre-check, before the order exists) ---
-    // If this order is being merged against an open Advance Order, only the genuinely
-    // uncovered portion should count as new pending stock demand, and a fully-covered
-    // order needs no further shipment. See lib/advanceOrders.ts and the plan doc for why.
-    let mergeAdvanceOrderId: string | null = null;
-    let mergeCoveredQty = 0;
-    if (data.mergeAdvanceOrderId && data.mergeLinkedQty && ObjectId.isValid(data.mergeAdvanceOrderId)) {
-      const advanceOrderDoc = await db.collection("sellerorders").findOne({ _id: new ObjectId(data.mergeAdvanceOrderId) });
-      if (advanceOrderDoc?.isAdvanceOrder) {
-        const advanceRemaining = await getRemainingOut(db, data.mergeAdvanceOrderId, advanceOrderDoc.reQty);
-        mergeCoveredQty = round2(Math.min(Number(data.mergeLinkedQty), advanceRemaining, orderQty));
-        if (mergeCoveredQty > 0) mergeAdvanceOrderId = data.mergeAdvanceOrderId;
-      }
-    }
-    const mergeUncoveredQty = round2(orderQty - mergeCoveredQty);
-    const mergeFullyCovered = !!mergeAdvanceOrderId && mergeUncoveredQty <= 0;
-
     // If order comes from GeM Chrome Extension or is missing mandatory Mongoose fields (like sellerId/firmCode/itemId), handle insertion safely
     if (data.source === "GeM Chrome Extension" || !data.sellerId || !data.firmCode || !data.itemId) {
       const rawInstituteName = data.instituteName || data.buyerDesignation || "GeM Buyer";
@@ -179,7 +161,7 @@ export async function POST(req: Request) {
         rate: rate,
         totalAmount: totalAmount,
         remark: data.remark || (data.location ? `Location: ${data.location}` : "Imported from GeM"),
-        status: mergeFullyCovered ? "FULFILLED" : (data.status || "TO CHECK"),
+        status: data.status || "TO CHECK",
         isPaid: false,
         transportName: "",
         transportRemark: "",
@@ -191,21 +173,7 @@ export async function POST(req: Request) {
 
       const insertResult = await db.collection("sellerorders").insertOne(newOrderDoc);
 
-      let mergeWarning: string | null = null;
-      if (mergeAdvanceOrderId) {
-        const linkResult = await createAdvanceLink(db, {
-          advanceOrderId: mergeAdvanceOrderId,
-          gemOrderId: String(insertResult.insertedId),
-          linkedQty: mergeCoveredQty,
-          linkedBy: data.createdBy || "",
-        });
-        if (!linkResult.ok) {
-          mergeWarning = `Order created, but auto-merge with the Advance Order failed: ${linkResult.error}. Link it manually from the Advance Order Tracker.`;
-          console.error("Advance order auto-merge link failed:", linkResult.error);
-        }
-      }
-
-      return NextResponse.json({ ...newOrderDoc, _id: insertResult.insertedId, mergeWarning }, { status: 201, headers: corsHeaders });
+      return NextResponse.json({ ...newOrderDoc, _id: insertResult.insertedId }, { status: 201, headers: corsHeaders });
     }
 
     // --- 3. STANDARD CREATE ORDER FOR FORM SUBMISSIONS ---
@@ -216,7 +184,7 @@ export async function POST(req: Request) {
       totalAmount,
       sku: itemSku,
       instituteName: await resolveCanonicalInstituteName(db, data.sellerId, data.instituteName),
-      status: mergeFullyCovered ? "FULFILLED" : (data.status || "TO CHECK"),
+      status: data.status || "TO CHECK",
     });
 
     // Deduct stock from GeM Listings if a contract URL is provided
@@ -243,44 +211,20 @@ export async function POST(req: Request) {
     }
 
     // --- 4. UPDATE STOCK & ITEMS DB ---
-    // Only the genuinely-uncovered portion counts as new pending demand when this order
-    // was merged against an Advance Order — the covered portion's material already
-    // shipped under that advance order and its own reQty/quantity were already settled
-    // when IT transitioned to DELIVERY. Double-counting it here would permanently
-    // inflate "required qty" for stock that isn't actually needed.
-    const stockReQtyDelta = mergeAdvanceOrderId ? mergeUncoveredQty : orderQty;
-    if (itemSku && stockReQtyDelta > 0) {
+    if (itemSku && orderQty > 0) {
       const skuFilter = { sku: itemSku };
 
       await db.collection("stock").updateOne(
         skuFilter,
-        { $inc: { reQty: stockReQtyDelta } },
+        { $inc: { reQty: orderQty } },
         { upsert: false }
       );
 
       await db.collection("items").updateOne(
         skuFilter,
-        { $inc: { reQty: stockReQtyDelta } },
+        { $inc: { reQty: orderQty } },
         { upsert: false }
       );
-    }
-
-    // --- 4b. AUTO-MERGE LINK ---
-    // Record the coverage against the Advance Order now that this order has a real _id.
-    // If this fails, the order itself is NOT rolled back - it can still be linked
-    // manually via the Advance Order Tracker instead of silently losing the order.
-    let mergeWarning: string | null = null;
-    if (mergeAdvanceOrderId) {
-      const linkResult = await createAdvanceLink(db, {
-        advanceOrderId: mergeAdvanceOrderId,
-        gemOrderId: String(newOrder._id),
-        linkedQty: mergeCoveredQty,
-        linkedBy: data.createdBy || "",
-      });
-      if (!linkResult.ok) {
-        mergeWarning = `Order created, but auto-merge with the Advance Order failed: ${linkResult.error}. Link it manually from the Advance Order Tracker.`;
-        console.error("Advance order auto-merge link failed:", linkResult.error);
-      }
     }
 
     // --- 5. AUTO PURCHASE REQUEST ---
@@ -298,7 +242,7 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ ...newOrder.toObject(), mergeWarning }, { status: 201, headers: corsHeaders });
+    return NextResponse.json({ ...newOrder.toObject() }, { status: 201, headers: corsHeaders });
   } catch (error: any) {
     console.error("CRITICAL POST ERROR:", error);
     return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });

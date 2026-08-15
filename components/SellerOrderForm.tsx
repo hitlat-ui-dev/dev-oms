@@ -46,46 +46,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     orderQty: "" as any,
     reQty: 0,
     rate: "" as any,
-    remark: "",
-    isAdvanceOrder: false
+    remark: ""
   });
-
-  // Advance Order auto-merge: candidate open Advance Orders matching the currently
-  // selected Institute + Item, so a real GeM order can be one-click merged against
-  // whatever was already shipped early instead of needing a separate manual step.
-  interface AdvanceCandidate {
-    orderId: string;
-    orderNo: string;
-    remainingQty: number;
-  }
-  const [advanceCandidates, setAdvanceCandidates] = useState<AdvanceCandidate[]>([]);
-  const [selectedMergeId, setSelectedMergeId] = useState("");
-  const [mergeEnabled, setMergeEnabled] = useState(true);
-
-  useEffect(() => {
-    if (formData.isAdvanceOrder || !formData.instituteName || !formData.itemId) {
-      setAdvanceCandidates([]);
-      setSelectedMergeId("");
-      return;
-    }
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams({ instituteName: formData.instituteName, itemId: formData.itemId });
-      fetch(`/api/advance-order-links/candidates?${params.toString()}`)
-        .then((res) => res.json())
-        .then((data: AdvanceCandidate[]) => {
-          const list = Array.isArray(data) ? data : [];
-          setAdvanceCandidates(list);
-          setSelectedMergeId(list[0]?.orderId || "");
-          setMergeEnabled(list.length > 0);
-        })
-        .catch((err) => console.error("Failed to load advance order candidates", err));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [formData.instituteName, formData.itemId, formData.isAdvanceOrder]);
-
-  const selectedCandidate = advanceCandidates.find((c) => c.orderId === selectedMergeId) || null;
-  const requestedQty = Number(formData.reQty) || 0;
-  const mergeCoverPreview = selectedCandidate ? Math.min(requestedQty, selectedCandidate.remainingQty) : 0;
 
   // Tracks which record (by _id/contractNo) has already been loaded into the
   // form, so this effect populates formData exactly once per "open for
@@ -122,8 +84,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       orderQty: initialData.orderQty || "",
       reQty: initialData.reQty || 0,
       rate: initialData.rate || "",
-      remark: initialData.remark || "",
-      isAdvanceOrder: initialData.isAdvanceOrder || false,
+      remark: initialData.remark || ""
     });
     loadedRecordRef.current = recordKey;
   }, [initialData, sellers, stocks]);
@@ -229,18 +190,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       const method = isEditing ? "PATCH" : "POST";
       const url = isEditing ? `/api/seller-orders/${initialData._id}` : "/api/seller-orders";
 
-      // Advance Order auto-merge only applies to brand-new, non-advance orders with a
-      // selected + enabled matching candidate.
-      const mergeFields =
-        !isEditing && !formData.isAdvanceOrder && mergeEnabled && selectedCandidate && mergeCoverPreview > 0
-          ? { mergeAdvanceOrderId: selectedCandidate.orderId, mergeLinkedQty: mergeCoverPreview }
-          : {};
-
       const res = await fetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
         // createdBy is only sent on create — an edit shouldn't reassign authorship
-        body: JSON.stringify({ ...formData, totalAmount, ...(isEditing ? {} : { createdBy: currentUsername, ...mergeFields }) })
+        body: JSON.stringify({ ...formData, totalAmount, ...(isEditing ? {} : { createdBy: currentUsername }) })
       });
 
       if (res.ok) {
@@ -461,59 +415,6 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
               <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
             </div>
-
-            {!formData.isAdvanceOrder && advanceCandidates.length > 0 && (
-              <div className="md:col-span-3 p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-black text-amber-800 uppercase tracking-wide">⚡ Advance Order Match Found</p>
-                    <p className="text-[11px] text-amber-700 mt-0.5">
-                      This Institute + Item already has material shipped early under{" "}
-                      <span className="font-bold">{selectedCandidate?.orderNo}</span> (Remaining:{" "}
-                      {selectedCandidate?.remainingQty}). Merging will cover{" "}
-                      <span className="font-bold">{mergeCoverPreview}</span> of this order's {requestedQty || 0} unit(s) —
-                      {mergeCoverPreview >= requestedQty && requestedQty > 0
-                        ? " this order will be marked Fulfilled directly, no shipment needed."
-                        : " the rest will still need a normal shipment."}
-                    </p>
-                  </div>
-                  <label className="flex items-center gap-2 shrink-0 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={mergeEnabled}
-                      onChange={(e) => setMergeEnabled(e.target.checked)}
-                      className="w-4 h-4 accent-amber-600"
-                    />
-                    <span className="text-[10px] font-black text-amber-800 uppercase">Merge</span>
-                  </label>
-                </div>
-                {advanceCandidates.length > 1 && (
-                  <select
-                    value={selectedMergeId}
-                    onChange={(e) => setSelectedMergeId(e.target.value)}
-                    className="w-full bg-white border border-amber-300 rounded-lg py-2 px-3 text-xs font-bold"
-                  >
-                    {advanceCandidates.map((c) => (
-                      <option key={c.orderId} value={c.orderId}>
-                        {c.orderNo} — Remaining {c.remainingQty}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            )}
-
-            <label className="md:col-span-3 flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formData.isAdvanceOrder}
-                onChange={(e) => setFormData({ ...formData, isAdvanceOrder: e.target.checked })}
-                className="w-5 h-5 accent-amber-600"
-              />
-              <span className="text-xs font-bold text-amber-800">
-                This is an Advance Order <span className="font-normal text-amber-700">(material delivered before the real GeM order exists)</span>
-              </span>
-            </label>
 
             <button type="submit" disabled={loading} className=" bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest">
               {loading ? "Saving..." : "Save Order"}

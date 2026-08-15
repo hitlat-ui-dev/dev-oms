@@ -72,9 +72,18 @@ const SellerSchema = new Schema({
     },
     lastConfirmedType: { type: String, default: null },
   },
-  // If true, high-confidence auto-suggested matches for this institute can be
-  // auto-confirmed instead of always requiring manual review
+  // Fast-tracks a pending suggestion's UI (pre-filled, one-click Confirm) when it
+  // exactly matches this institute's learned pattern — it never bypasses the
+  // Confirm click itself, money is only ever posted by an explicit user action.
   autoApproveTrusted: { type: Boolean, default: false },
+  // Learned shape of this institute's order-clustering behavior (Addition 1/3):
+  // how many days typically separate consecutive orders once payments confirm
+  // which orders belonged to the same burst.
+  clusterProfile: {
+    typicalGapDays: { type: Number, default: null },
+    gapSamples: [{ type: Number }],
+    lastUpdated: { type: Date, default: null },
+  },
 }, { timestamps: true });
 
 export default models.Seller || model("Seller", SellerSchema);
