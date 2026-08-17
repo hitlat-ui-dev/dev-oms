@@ -938,7 +938,7 @@ const shippingLock = useRef(false);
 
         {!ordersLoadedAll && (
           <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[11px] text-amber-800 font-bold">
-            <span>Showing the {orders.length} most recent orders. Search/filters here only look within these — older orders need Load All.</span>
+            <span>Showing orders from the last 45 days ({orders.length} orders loaded). Search/filters look within these — older history needs Load All.</span>
             <button
               onClick={() => fetchOrders(true)}
               disabled={loadingAllOrders}
@@ -1407,7 +1407,6 @@ const shippingLock = useRef(false);
               setShowOrderModal(false);
               setEditingOrder(null);
               fetchOrders();
-              fetchStocks();
             }}
             initialData={editingOrder}
           />
