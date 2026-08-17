@@ -16,9 +16,9 @@ export default function AddItemModal({ isOpen, onClose, initialData }: AddItemMo
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* 1. The Dark Background Overlay */}
-      <div 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
-        onClick={onClose} 
+      <div
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+        onClick={onClose}
       />
 
       {/* 2. The Actual Popup Box */}
