@@ -275,12 +275,12 @@ export async function GET(req: Request) {
     const fortyFiveDaysAgo = new Date(Date.now() - DEFAULT_DAYS_WINDOW * 24 * 60 * 60 * 1000);
     const filterQuery = fetchAll ? {} : { createdAt: { $gte: fortyFiveDaysAgo } };
 
-    const ordersQuery = SellerOrder.find(filterQuery).sort({ createdAt: -1 });
-    if (!fetchAll) ordersQuery.limit(DEFAULT_INITIAL_LIMIT);
+    let rawOrdersQuery = db.collection("sellerorders").find(filterQuery).sort({ createdAt: -1 });
+    if (!fetchAll) rawOrdersQuery = rawOrdersQuery.limit(DEFAULT_INITIAL_LIMIT);
 
     // These three queries run concurrently using database indexes.
     const [orders, prTotals, opTotals] = await Promise.all([
-      ordersQuery.lean(),
+      rawOrdersQuery.toArray(),
       // 2. Aggregate active PR Quantities from 'purchase_requests'
       db.collection("purchase_requests").aggregate([
         { $match: { status: "Purchase Request" } },
