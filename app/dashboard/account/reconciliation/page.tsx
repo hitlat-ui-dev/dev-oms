@@ -127,6 +127,7 @@ export default function ReconciliationPage() {
   const [clusterViewConfirmed, setClusterViewConfirmed] = useState<Match[]>([]);
   const [correctionAlerts, setCorrectionAlerts] = useState<CorrectionAlert[]>([]);
   const [correctionBusyId, setCorrectionBusyId] = useState<string | null>(null);
+  const [runningMatching, setRunningMatching] = useState(false);
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
@@ -190,6 +191,30 @@ export default function ReconciliationPage() {
     fetchMatches();
     fetchCorrectionAlerts();
   }, [fetchMatches, fetchCorrectionAlerts]);
+
+  // Matching used to re-run automatically inside every fetchMatches() call,
+  // which meant just opening this page re-scanned every statement against
+  // every seller. It's now only triggered here, explicitly.
+  const handleRunMatching = async () => {
+    setRunningMatching(true);
+    try {
+      const res = await fetch("/api/reconciliation/matches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate", firmCode: firmFilter || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Matching run failed");
+      }
+      fetchMatches();
+      fetchCorrectionAlerts();
+    } catch (err: any) {
+      alert(err.message || "Matching run failed");
+    } finally {
+      setRunningMatching(false);
+    }
+  };
 
   const resolveCorrectionAlert = async (alertId: string, action: "accept" | "reject") => {
     setCorrectionBusyId(alertId);
@@ -296,7 +321,11 @@ export default function ReconciliationPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Action failed");
-      fetchMatches();
+      // Drop the row locally instead of calling fetchMatches() (which flips
+      // `loading` and blanks the whole table with a spinner) - confirm/reject/
+      // reverse all move this row's status away from whichever tab is
+      // currently open, so it no longer belongs in this list either way.
+      setMatches((prev) => prev.filter((match) => match._id !== id));
       refreshSellers();
     } catch (err: any) {
       alert(err.message || "Action failed");
@@ -410,12 +439,23 @@ export default function ReconciliationPage() {
                 Review & Confirm Auto-Matched Payments
               </p>
             </div>
-            <button
-              onClick={fetchMatches}
-              className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl py-2 px-3 text-[11px] font-bold text-slate-600 transition-colors"
-            >
-              <FiRefreshCw size={12} /> Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchMatches}
+                className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl py-2 px-3 text-[11px] font-bold text-slate-600 transition-colors"
+              >
+                <FiRefreshCw size={12} /> Refresh
+              </button>
+              <button
+                onClick={handleRunMatching}
+                disabled={runningMatching}
+                title="Scan statements for new/unmatched payments and (re)generate suggestions"
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2 px-4 text-[11px] font-black uppercase tracking-wide transition-colors"
+              >
+                <FiRefreshCw size={12} className={runningMatching ? "animate-spin" : ""} />
+                {runningMatching ? "Running..." : "Run Matching"}
+              </button>
+            </div>
           </div>
 
           {/* Filters + Tabs */}

@@ -102,7 +102,7 @@ export default function SummaryDashboardPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [firmFilter, setFirmFilter] = useState("");
   const [data, setData] = useState<SummaryData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/companies")
@@ -122,10 +122,8 @@ export default function SummaryDashboardPage() {
       .finally(() => setLoading(false));
   }, [firmFilter]);
 
-  useEffect(() => {
-    fetchSummary();
-  }, [fetchSummary]);
-
+  // No auto-run on mount - this aggregates across sellerorders/items/gem_sheets
+  // in full, so it only scans when the button below is explicitly pressed.
   const maxStatusValue = useMemo(
     () => Math.max(1, ...(data?.statusBreakdown || []).map((s) => s.value)),
     [data]
@@ -176,16 +174,29 @@ export default function SummaryDashboardPage() {
               </select>
               <button
                 onClick={fetchSummary}
-                className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl py-2 px-3 text-[11px] font-bold text-slate-600 transition-colors"
+                disabled={loading}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2 px-4 text-[11px] font-black uppercase tracking-wide transition-colors"
               >
-                <FiRefreshCw size={12} /> Refresh
+                <FiRefreshCw size={12} className={loading ? "animate-spin" : ""} />
+                {loading ? "Scanning..." : data ? "Rescan" : "Scan Data"}
               </button>
             </div>
           </div>
 
-          {loading || !data ? (
+          {loading ? (
             <div className="flex justify-center items-center py-16">
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
+            </div>
+          ) : !data ? (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm py-16 text-center text-slate-400 space-y-3">
+              <FiBarChart2 className="mx-auto text-2xl text-slate-300" />
+              <p className="text-xs uppercase font-black tracking-widest">Press "Scan Data" to load the business overview</p>
+              <button
+                onClick={fetchSummary}
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-2.5 px-5 text-[11px] font-black uppercase tracking-wide transition-colors"
+              >
+                <FiRefreshCw size={12} /> Scan Data
+              </button>
             </div>
           ) : (
             <>

@@ -32,7 +32,7 @@ export async function GET() {
           }
         }
       },
-      { $project: { masterInfo: 0 } } 
+      { $project: { masterInfo: 0, history: 0 } }
     ]).toArray();
 
     // 2. Fetch Order place Purchase totals grouped by SKU
@@ -47,8 +47,10 @@ export async function GET() {
     const opMap: Record<string, number> = {};
     opTotals.forEach((t: any) => { if (t._id) opMap[t._id] = t.totalOrderQty; });
 
-    // 3. Fetch stock to get reQty
-    const stockItems = await db.collection("stock").find({}).toArray();
+    // 3. Fetch stock to get reQty - only the two fields actually used below,
+    // instead of shipping every stock field (this was a second full,
+    // unprojected stock read on top of the page's own /api/stock call)
+    const stockItems = await db.collection("stock").find({}, { projection: { sku: 1, reQty: 1 } }).toArray();
     const stockMap: Record<string, number> = {};
     stockItems.forEach((s: any) => {
       const skuKey = (s.sku || "").trim().toUpperCase();

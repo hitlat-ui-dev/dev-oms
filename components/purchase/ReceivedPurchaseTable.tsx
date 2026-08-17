@@ -5,6 +5,7 @@ import { FiSave, FiSearch, FiCalendar, FiUser, FiTag, FiDownload } from "react-i
 interface ReceivedPurchaseTableProps {
   data: any[];
   onRefresh: () => void;
+  onItemUpdated?: (id: string, updates: { receivedQty: number; rate: number }) => void;
   loading?: boolean;
   // Add these value props:
   filterDate: string;
@@ -21,6 +22,7 @@ interface ReceivedPurchaseTableProps {
 export default function ReceivedPurchaseTable({
   data,
   onRefresh,
+  onItemUpdated,
   loading,
   filterDate,      // Add this
   filterItem,      // Add this
@@ -117,7 +119,14 @@ export default function ReceivedPurchaseTable({
           delete newState[item._id];
           return newState;
         });
-        onRefresh();
+        // Patch this row locally instead of onRefresh() (a full tab + stock
+        // refetch that blanks the table with a loading spinner) - the saved
+        // values are already known here, no need to re-fetch them.
+        if (onItemUpdated) {
+          onItemUpdated(item._id, { receivedQty: Number(newQty), rate: Number(updates.rate ?? item.rate) });
+        } else {
+          onRefresh();
+        }
       }
     } catch (err) {
       alert("❌ Update failed");

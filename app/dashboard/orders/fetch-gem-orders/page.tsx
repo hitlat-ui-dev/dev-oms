@@ -13,7 +13,9 @@ import {
   FiInfo,
   FiClock,
   FiCheck,
-  FiAlertCircle
+  FiAlertCircle,
+  FiChevronUp,
+  FiChevronDown
 } from "react-icons/fi";
 
 interface RawGeMOrder {
@@ -75,6 +77,7 @@ export default function FetchGeMOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortConfig, setSortConfig] = useState<{ key: "firmCode" | "instituteName" | "itemName"; direction: "asc" | "desc" } | null>(null);
 
   // Verification modal state
   const [selectedOrder, setSelectedOrder] = useState<RawGeMOrder | null>(null);
@@ -246,6 +249,33 @@ export default function FetchGeMOrdersPage() {
     }
   };
 
+  // Same "does the Seller Directory already have a matching institute"
+  // guess used to pre-select the Verify modal's dropdown - also used in the
+  // list itself so a match is visible before ever opening Verify.
+  const guessBuyerForOrder = (order: RawGeMOrder): BuyerOption | null => {
+    const rawLoc = (order.instituteName || order.location || "").toLowerCase();
+    if (!rawLoc) return null;
+    return (
+      buyerOptions.find((b) => {
+        const gemLoc = (b.gemLocationText || "").toLowerCase();
+        return gemLoc && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc));
+      }) ||
+      buyerOptions.find(
+        (b) => b.name && (rawLoc.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(rawLoc))
+      ) ||
+      null
+    );
+  };
+
+  const handleSort = (key: "firmCode" | "instituteName" | "itemName") => {
+    setSortConfig((prev) => {
+      if (prev && prev.key === key) {
+        return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
+      }
+      return { key, direction: "asc" };
+    });
+  };
+
   const handleDelete = async (id: string, contractNo: string) => {
     if (!confirm(`Are you sure you want to delete/reject order ${contractNo}?`)) return;
 
@@ -266,20 +296,9 @@ export default function FetchGeMOrdersPage() {
     setSelectedOrder(order);
     const firmMatch = order.firmCode && companies.some(c => c.firmCode === order.firmCode);
     setSelectedFirmCode(firmMatch ? order.firmCode! : (companies.length > 0 ? companies[0].firmCode : "GeM"));
-    // Try to pre-select a matching Institute from the Seller Directory.
-    // Prefer the dedicated "GeM Location" field (an exact/near-exact copy of
-    // GeM's own Location text, set once per seller in Add Seller) since it's
-    // far more reliable than guessing off the institute name alone - only
-    // fall back to a name-based substring guess if no seller has that set.
-    const rawLoc = (order.instituteName || order.location || "").toLowerCase();
-    const guessedBuyer =
-      buyerOptions.find((b) => {
-        const gemLoc = (b.gemLocationText || "").toLowerCase();
-        return gemLoc && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc));
-      }) ||
-      buyerOptions.find(
-        (b) => b.name && (rawLoc.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(rawLoc))
-      );
+    // Try to pre-select a matching Institute from the Seller Directory (same
+    // guess already shown in the list itself - see guessBuyerForOrder).
+    const guessedBuyer = guessBuyerForOrder(order);
     setCustomInstituteName(guessedBuyer ? guessedBuyer.name : "");
     setCustomItemName(order.itemName);
     setItemQuery(order.itemName || "");
@@ -371,8 +390,37 @@ export default function FetchGeMOrdersPage() {
     );
   }, [rawOrders, searchQuery]);
 
+  const sortedOrders = useMemo(() => {
+    if (!sortConfig) return filteredOrders;
+    const items = [...filteredOrders];
+    items.sort((a, b) => {
+      const valA = (a[sortConfig.key] || "").toString().toLowerCase();
+      const valB = (b[sortConfig.key] || "").toString().toLowerCase();
+      if (valA < valB) return sortConfig.direction === "asc" ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+    return items;
+  }, [filteredOrders, sortConfig]);
+
+  const SortHeader = ({ label, sortKey }: { label: string; sortKey: "firmCode" | "instituteName" | "itemName" }) => (
+    <th
+      onClick={() => handleSort(sortKey)}
+      className="px-3 py-3 cursor-pointer select-none hover:text-blue-600 transition-colors"
+    >
+      <div className="flex items-center gap-1">
+        {label}
+        {sortConfig?.key === sortKey ? (
+          sortConfig.direction === "asc" ? <FiChevronUp size={12} /> : <FiChevronDown size={12} />
+        ) : (
+          <FiChevronUp size={12} className="opacity-20" />
+        )}
+      </div>
+    </th>
+  );
+
   return (
-    <div className="p-4 md:p-10 max-w-7xl mx-auto font-sans">
+    <div className="p-4 md:p-10 max-w-[1600px] mx-auto font-sans">
       {/* Top Header Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
         <button
@@ -391,13 +439,13 @@ export default function FetchGeMOrdersPage() {
       </div>
 
       {/* Page Title */}
-      <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-6 md:p-8 rounded-2xl shadow-xl mb-8">
-        <div className="flex items-center gap-3 text-amber-400 text-xs font-black uppercase tracking-[0.25em] mb-2">
-          <FiClock size={16} /> Extension Staging Verification
+      <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white px-4 py-3 md:px-5 md:py-3.5 rounded-xl shadow-md mb-5 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="flex items-center gap-2 text-amber-400 text-[10px] font-black uppercase tracking-[0.2em]">
+          <FiClock size={13} /> Staging
         </div>
-        <h1 className="text-3xl font-black uppercase tracking-tight">Fetched GeM Orders</h1>
-        <p className="text-slate-300 text-xs font-medium mt-2 max-w-2xl">
-          Review, verify and approve raw orders fetched from the GeM Chrome Extension before moving them into your Main Sales Orders.
+        <h1 className="text-base md:text-lg font-black uppercase tracking-tight">Fetched GeM Orders</h1>
+        <p className="text-slate-300 text-[11px] font-medium">
+          Review, verify and approve raw orders before moving them into Main Sales Orders.
         </p>
       </div>
 
@@ -437,10 +485,10 @@ export default function FetchGeMOrdersPage() {
           <table className="w-full text-left text-xs border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
-                <th className="px-3 py-3">Firm</th>
-                <th className="px-3 py-3">Buyer</th>
+                <SortHeader label="Firm" sortKey="firmCode" />
+                <SortHeader label="Buyer" sortKey="instituteName" />
                 <th className="px-3 py-3">Cat.</th>
-                <th className="px-3 py-3">Item Details</th>
+                <SortHeader label="Item Details" sortKey="itemName" />
                 <th className="px-3 py-3">Contract</th>
                 <th className="px-3 py-3 text-center">O-Qty</th>
                 <th className="px-3 py-3 text-right">Rate</th>
@@ -450,11 +498,20 @@ export default function FetchGeMOrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredOrders.map((order) => (
+              {sortedOrders.map((order) => {
+                const matchedBuyer = guessBuyerForOrder(order);
+                return (
                 <tr key={order._id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
                   <td className="px-3 py-3 max-w-56">
-                    <div className="font-bold text-slate-800 truncate">{order.instituteName}</div>
+                    <div className="font-bold text-slate-800 truncate" title={order.instituteName}>{order.instituteName}</div>
+                    {matchedBuyer ? (
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchedBuyer.name}>
+                        <FiCheck size={11} /> {matchedBuyer.name}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-amber-600 font-semibold">No match</div>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-slate-400">—</td>
                   <td className="px-3 py-3 max-w-72">
@@ -498,7 +555,8 @@ export default function FetchGeMOrdersPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

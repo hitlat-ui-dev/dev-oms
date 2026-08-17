@@ -26,6 +26,14 @@ async function connectMongoose() {
   await dbConnect();
 }
 
+// generateSuggestions does per-transaction DB round trips (findOpenBills,
+// scoreInstituteCandidates, the leftover recheck loop) - it used to run
+// automatically inside every GET, which meant just opening the Reconciliation
+// page re-ran the whole matching engine over every statement each time. It's
+// now only reachable via POST { action: "generate" }, triggered by the
+// page's "Run Matching" button.
+export const maxDuration = 60;
+
 // Builds (or refreshes, if still pending) a suggested match row for every credited
 // transaction across the given statements that doesn't already have a final
 // (confirmed/rejected) match on file.
@@ -252,15 +260,6 @@ export async function GET(req: Request) {
     const status = searchParams.get("status");
     const instituteName = searchParams.get("instituteName");
 
-    const statementFilter: any = {};
-    if (firmCode) statementFilter.firmCode = firmCode;
-
-    const shouldGenerate = !status || status === "pending";
-    if (shouldGenerate) {
-      const statements = await db.collection("account_statements").find(statementFilter).toArray();
-      await generateSuggestions(db, statements, firmCode);
-    }
-
     const matchFilter: any = {};
     if (firmCode) matchFilter.firmCode = firmCode;
     if (status) matchFilter.status = status;
@@ -289,6 +288,16 @@ export async function POST(req: Request) {
     const client = await clientPromise;
     const db = client.db();
     const body = await req.json();
+
+    // Explicit "Run Matching" trigger - the only place generateSuggestions runs from now.
+    if (body.action === "generate") {
+      const firmCode = body.firmCode || null;
+      const statementFilter: any = {};
+      if (firmCode) statementFilter.firmCode = firmCode;
+      const statements = await db.collection("account_statements").find(statementFilter).toArray();
+      await generateSuggestions(db, statements, firmCode);
+      return NextResponse.json({ success: true });
+    }
 
     const { matchId, sellerId, billId, deductionType, deductionAmount, deductionReason } = body;
     if (!matchId || !ObjectId.isValid(matchId) || !sellerId) {

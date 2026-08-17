@@ -12,4 +12,6 @@ const TransporterSchema = new Schema({
   ],
 }, { timestamps: true });
 
+TransporterSchema.index({ createdAt: -1 });
+
 export default models.Transporter || model("Transporter", TransporterSchema);

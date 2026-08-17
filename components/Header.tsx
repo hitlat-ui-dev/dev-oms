@@ -30,10 +30,13 @@ export default function Header() {
   const [hasDmNotification, setHasDmNotification] = useState(false);
 
   // Whether Chat/Workspace auto-check every 8s while sitting on any page —
-  // opt-out preference, persisted per-browser. Off just means no recurring
-  // background poll; a check still runs once per page visit either way, and
-  // opening either dropdown always fetches fresh data on demand.
-  const [autoPollEnabled, setAutoPollEnabled] = useState(true);
+  // opt-in preference, persisted per-browser. Defaults off (this polling was
+  // adding constant background load on the shared database across every open
+  // tab/page, regardless of whether anyone was using Chat/Workspace). Off
+  // just means no recurring background poll; a check still runs once per
+  // page visit either way, and opening either dropdown always fetches fresh
+  // data on demand.
+  const [autoPollEnabled, setAutoPollEnabled] = useState(false);
   useEffect(() => {
     const stored = localStorage.getItem("oms_auto_poll");
     if (stored !== null) setAutoPollEnabled(stored === "1");
@@ -110,7 +113,7 @@ export default function Header() {
         
         const [chatRes, todoRes, dmRes] = await Promise.all([
           fetch("/api/chat?t=" + Date.now()),
-          fetch("/api/todo?t=" + Date.now()),
+          fetch("/api/todo?status=Pending&t=" + Date.now()),
           user?.username ? fetch(`/api/direct-messages?user=${user.username}&t=${Date.now()}`) : Promise.resolve(null)
         ]);
 
@@ -165,7 +168,7 @@ export default function Header() {
 
   const fetchTodoTasks = async () => {
     try {
-      const res = await fetch("/api/todo?t=" + Date.now());
+      const res = await fetch("/api/todo?status=Pending&t=" + Date.now());
       if (res.ok) {
         const data = await res.json();
         setTodoTasks(data);

@@ -77,7 +77,7 @@ export default function DocumentMakerPage() {
       .then((res) => res.json())
       .then((data) => setCompanies(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load firms", err));
-    fetch("/api/gem-bids")
+    fetch("/api/gem-bids?light=1")
       .then((res) => res.json())
       .then((data) => setBids(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load bids", err));

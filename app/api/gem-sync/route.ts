@@ -74,14 +74,30 @@ export async function GET(req: Request) {
       return NextResponse.json({ rateHistory: rateHistory.map(({ _id, ...rest }) => ({ ...rest })) });
     }
 
+    // gem_catalogue_links is the raw browser-extension-scraped GeM catalogue —
+    // by far the largest/slowest collection here, and only the dedicated
+    // /dashboard/gem-sync/catalogue page ever needs it. Fetched only on
+    // ?catalogue=1 so the main console's every-visit load skips it entirely.
+    if (searchParams.get("catalogue")) {
+      const [catalogueLinks, rawListings] = await Promise.all([
+        db.collection("gem_catalogue_links").find({}).toArray(),
+        db.collection("gem_listings").find({}).toArray(),
+      ]);
+      const cleanCatalogueLinks = catalogueLinks.map(({ _id, ...rest }) => ({ ...rest }));
+      const cleanListings = rawListings.map(({ _id, ...rest }) => ({ ...rest }));
+      return NextResponse.json({
+        catalogueLinks: cleanCatalogueLinks,
+        listings: deduplicateListings(cleanListings),
+      });
+    }
+
     // Fetch the remaining collections concurrently rather than one-at-a-time —
     // total wait becomes the slowest single query instead of the sum of all of them.
-    const [buyers, rawListings, customItems, sheets, catalogueLinks, rowMappings] = await Promise.all([
+    const [buyers, rawListings, customItems, sheets, rowMappings] = await Promise.all([
       db.collection("gem_buyers").find({}).toArray(),
       db.collection("gem_listings").find({}).toArray(),
       db.collection("gem_custom_items").find({}).toArray(),
       db.collection("gem_sheets").find({}).toArray(),
-      db.collection("gem_catalogue_links").find({}).toArray(),
       // Lightweight (originalName + mappedItemId only) per-sheet mapping history —
       // powers "Quick Fill from Master List" across all past sheets without
       // needing every sheet's full uploadedRows (which now live in R2).
@@ -93,7 +109,6 @@ export async function GET(req: Request) {
     const cleanListings = rawListings.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanCustomItems = customItems.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanSheets = sheets.map(({ _id, ...rest }) => ({ ...rest }));
-    const cleanCatalogueLinks = catalogueLinks.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanRowMappings = rowMappings.map(({ _id, ...rest }) => ({ ...rest }));
 
     // Deduplicate listings
@@ -112,7 +127,6 @@ export async function GET(req: Request) {
       listings: deduplicatedListings,
       customItems: cleanCustomItems,
       sheets: cleanSheets,
-      catalogueLinks: cleanCatalogueLinks,
       rowMappings: cleanRowMappings
     });
   } catch (error) {

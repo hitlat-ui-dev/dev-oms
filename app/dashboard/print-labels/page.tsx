@@ -19,6 +19,8 @@ export default function PrintLabelsPage() {
     const [selectedFrom, setSelectedFrom] = useState<any>(null);
     const [selectedTo, setSelectedTo] = useState<any>(null);
     const [labelSize, setLabelSize] = useState<"4x4" | "3.5x6">("3.5x6");
+    const [fromSearch, setFromSearch] = useState("");
+    const [toSearch, setToSearch] = useState("");
 
     useEffect(() => {
         Promise.all([
@@ -212,7 +214,10 @@ export default function PrintLabelsPage() {
             doc.setFontSize(11); // Slightly larger for sender mobile too
             doc.text(`MOB: ${fromExtra.mobile}`, 0.3, fromTextY);
         }
-        doc.save(`Label_${selectedTo.mobile || 'Order'}.pdf`);
+        // Open the label straight into the browser's print dialog instead of
+        // downloading a file the user then has to find and open themselves.
+        doc.autoPrint();
+        window.open(doc.output("bloburl") as unknown as string, "_blank");
     };
 
     return (
@@ -240,31 +245,47 @@ export default function PrintLabelsPage() {
                     {/* FROM COMPANY */}
                     <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">Sender (From)</label>
-                        <select
+                        <input
+                            type="text"
+                            list="from-company-options"
+                            placeholder="Search company..."
+                            value={fromSearch}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                setFromSearch(val);
+                                const match = companies.find((c: any) => c.firmName === val);
+                                setSelectedFrom(match || null);
+                            }}
                             className="w-full border-2 border-gray-100 p-3 rounded-lg focus:border-blue-500 outline-none transition"
-                            onChange={(e) => setSelectedFrom(companies.find((c: any) => c.firmCode === e.target.value))}
-                        >
-                            <option value="">Select Company</option>
+                        />
+                        <datalist id="from-company-options">
                             {companies.map((c: any) => (
-                                <option key={c._id} value={c.firmCode}>{c.firmName}</option>
+                                <option key={c._id} value={c.firmName} />
                             ))}
-                        </select>
+                        </datalist>
                     </div>
 
                     {/* TO DESTINATION */}
                     <div>
                         <label className="block text-sm font-semibold text-gray-600 mb-2">Recipient (To)</label>
-                        <select
+                        <input
+                            type="text"
+                            list="to-destination-options"
+                            placeholder="Search institute/buyer..."
+                            value={toSearch}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                setToSearch(val);
+                                const match = vendors.find((v: any) => (v.instituteName || v.buyerName) === val);
+                                setSelectedTo(match || null);
+                            }}
                             className="w-full border-2 border-gray-100 p-3 rounded-lg focus:border-blue-500 outline-none transition"
-                            onChange={(e) => setSelectedTo(vendors.find((v: any) => v._id === e.target.value))}
-                        >
-                            <option value="">Select Destination</option>
+                        />
+                        <datalist id="to-destination-options">
                             {vendors.map((v: any) => (
-                                <option key={v._id} value={v._id}>
-                                    {v.instituteName || v.buyerName}
-                                </option>
+                                <option key={v._id} value={v.instituteName || v.buyerName} />
                             ))}
-                        </select>
+                        </datalist>
                     </div>
                 </div>
 
@@ -292,7 +313,7 @@ export default function PrintLabelsPage() {
                     onClick={handlePrint}
                     className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg active:scale-[0.98] transition flex items-center justify-center gap-2"
                 >
-                    <FiPrinter /> DOWNLOAD SHIPPING LABEL
+                    <FiPrinter /> PRINT SHIPPING LABEL
                 </button>
             </div>
             </div>

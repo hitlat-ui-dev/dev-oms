@@ -144,11 +144,27 @@ export async function GET(req: Request) {
       return bucket;
     };
 
+    // $elemMatch first so items with zero history entries in range are excluded
+    // before any $unwind runs, then $filter trims each surviving item's array
+    // down to just today's entries before unwinding - the old version unwound
+    // every history entry of every item (this app's audit-log field, unbounded
+    // for long-lived SKUs) and only filtered by date afterward.
     const historyEntries = await db
       .collection("items")
       .aggregate([
+        { $match: { history: { $elemMatch: { date: { $gte: todayStart, $lt: todayEnd } } } } },
+        {
+          $project: {
+            history: {
+              $filter: {
+                input: "$history",
+                as: "h",
+                cond: { $and: [{ $gte: ["$$h.date", todayStart] }, { $lt: ["$$h.date", todayEnd] }] },
+              },
+            },
+          },
+        },
         { $unwind: "$history" },
-        { $match: { "history.date": { $gte: todayStart, $lt: todayEnd } } },
         { $project: { _id: 0, type: "$history.type", byWhom: "$history.byWhom", qty: "$history.qty" } },
       ])
       .toArray();
@@ -194,13 +210,31 @@ export async function GET(req: Request) {
 
     const completionsAgg = await gemSheets
       .aggregate([
-        { $unwind: "$uploadedRows" },
         {
           $match: {
-            "uploadedRows.completedBy": { $exists: true, $ne: "" },
-            "uploadedRows.completedAt": { $gte: todayStartISO, $lt: todayEndISO },
+            uploadedRows: {
+              $elemMatch: { completedBy: { $exists: true, $ne: "" }, completedAt: { $gte: todayStartISO, $lt: todayEndISO } },
+            },
           },
         },
+        {
+          $project: {
+            uploadedRows: {
+              $filter: {
+                input: "$uploadedRows",
+                as: "r",
+                cond: {
+                  $and: [
+                    { $ne: ["$$r.completedBy", ""] },
+                    { $gte: ["$$r.completedAt", todayStartISO] },
+                    { $lt: ["$$r.completedAt", todayEndISO] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        { $unwind: "$uploadedRows" },
         { $group: { _id: "$uploadedRows.completedBy", productsCompleted: { $sum: 1 } } },
       ])
       .toArray();

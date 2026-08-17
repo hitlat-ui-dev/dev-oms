@@ -107,6 +107,14 @@ export default function PurchaseLogisticsPage() {
     }
   };
 
+  // Patches one row in place after a Received Purchase edit is saved,
+  // instead of calling fetchTabData() (which flips `loading` and blanks the
+  // whole table + refetches stock, feeling like a full page reload for a
+  // single-row rate/qty edit).
+  const handleReceivedPurchaseUpdated = (id: string, updates: { receivedQty: number; rate: number }) => {
+    setReceivedRequests(prev => prev.map(item => (item._id === id ? { ...item, ...updates } : item)));
+  };
+
   // 4. Memoized Sorting for Stock (Fixes the red line error)
   const sortedStock = useMemo(() => {
     if (!stock || !Array.isArray(stock)) return [];
@@ -338,6 +346,7 @@ export default function PurchaseLogisticsPage() {
             <ReceivedPurchaseTable
               data={filteredReceivedData}
               onRefresh={fetchTabData}
+              onItemUpdated={handleReceivedPurchaseUpdated}
               loading={loading}
 
               // Pass the state values:

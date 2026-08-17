@@ -1,14 +1,22 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
-// GET: Fetch all to-do tasks
-export async function GET() {
+// GET: Fetch to-do tasks. Optional ?status=Pending|Completed narrows it -
+// Header polls this on every navigation across the whole app but only ever
+// needs Pending tasks for its badge/dropdown, so making that filter explicit
+// lets Mongo use an index instead of returning (and re-fetching) every
+// completed task ever created on each page change.
+export async function GET(req: Request) {
   try {
     const client = await clientPromise;
     const db = client.db();
-    
+
+    const { searchParams } = new URL(req.url);
+    const status = searchParams.get("status");
+    const filter = status ? { status } : {};
+
     const tasks = await db.collection("todo_tasks")
-      .find({})
+      .find(filter)
       .sort({ createdAt: -1 })
       .toArray();
 

@@ -175,6 +175,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     //console.log("Data being sent to DB:", formData);
+    if (!dataLoaded) {
+      alert("Still loading firm/institute/item lists — please wait a second and press Save again.");
+      return;
+    }
     const isValidFirm = firms.some((f: any) => f.firmCode === formData.firmCode);
     if (!isValidFirm) {
       alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
@@ -423,8 +427,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
             </div>
 
-            <button type="submit" disabled={loading || !dataLoaded} className="bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? "Saving..." : !dataLoaded ? "Loading..." : "Save Order"}
+            <button type="submit" disabled={loading} className="bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">
+              {loading ? "Saving..." : "Save Order"}
             </button>
           </form>
         </div>
