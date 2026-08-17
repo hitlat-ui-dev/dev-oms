@@ -77,14 +77,13 @@ export default function PurchaseLogisticsPage() {
       else if (activeTab === "Order Place") endpoint = "/api/purchase/order-place";
       else if (activeTab === "Received Purchase") endpoint = "/api/purchase/purchase-received";
 
-      // Stock (always refreshed to keep quantities accurate) and the active
-      // tab's own data don't depend on each other — fetch them together so
-      // the wait is whichever one is slower, not the sum of both.
-      const [stockData, tabData] = await Promise.all([
-        fetch('/api/stock').then(r => r.json()),
-        endpoint ? fetch(endpoint).then(r => r.json()) : Promise.resolve(null)
-      ]);
-      setStock(stockData);
+      // Stock is loaded once on mount — switching tabs only fetches the active tab data,
+      // avoiding duplicate 2,500-item stock downloads on every tab click.
+      const fetchStockPromise = stock.length === 0 ? fetch('/api/stock').then(r => r.json()).catch(() => []) : Promise.resolve(null);
+      const fetchTabPromise = endpoint ? fetch(endpoint).then(r => r.json()).catch(() => []) : Promise.resolve(null);
+
+      const [stockData, tabData] = await Promise.all([fetchStockPromise, fetchTabPromise]);
+      if (stockData) setStock(stockData);
 
       if (!endpoint) {
         setLoading(false);
