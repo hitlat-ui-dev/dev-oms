@@ -16,8 +16,11 @@ export async function GET() {
   try {
     await connectDB();
     
-    // Check if the model exists before querying to avoid "Schema not found" errors
-    const sellers = await Seller.find({}).sort({ createdAt: -1 }).lean(); 
+    // Exclude bulky self-learning history arrays to keep UI dropdown fetch lightweight
+    const sellers = await Seller.find(
+      {},
+      { aliasMeta: 0, negativeKeywords: 0, deductionProfile: 0, clusterProfile: 0 }
+    ).sort({ createdAt: -1 }).lean(); 
     
     // Always return an array, even if empty, to prevent frontend .map() crashes
     return NextResponse.json(sellers || [], { status: 200 });

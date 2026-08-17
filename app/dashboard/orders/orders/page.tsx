@@ -15,6 +15,11 @@ const TABS = [
   "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
+// Module level cache for static directories so navigation stays instant
+let sellersCache: any[] | null = null;
+let companiesCache: any[] | null = null;
+let transportersCache: any[] | null = null;
+
 export default function OrdersListPage() {
   const router = useRouter();
   const [orders, setOrders] = useState<any[]>([]);
@@ -175,12 +180,17 @@ export default function OrdersListPage() {
       const timestamp = Date.now();
       const ordersUrl = all ? `/api/seller-orders?all=1&t=${timestamp}` : `/api/seller-orders?t=${timestamp}`;
 
+      // Fast path: reuse cached static directories if already loaded in component session
+      if (sellersCache) setSellers(sellersCache);
+      if (companiesCache) setCompanies(companiesCache);
+      if (transportersCache) setTransporters(transportersCache);
+
       const [ordersRes, stockRes, sellerRes, companyRes, transporterRes] = await Promise.all([
         fetch(ordersUrl).catch(() => null),
         fetch(`/api/stock?t=${timestamp}`).catch(() => null),
-        fetch(`/api/sellers?t=${timestamp}`).catch(() => null),
-        fetch(`/api/companies?t=${timestamp}`).catch(() => null),
-        fetch(`/api/transporters`).catch(() => null),
+        !sellersCache ? fetch(`/api/sellers?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
+        !companiesCache ? fetch(`/api/companies?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
+        !transportersCache ? fetch(`/api/transporters`).catch(() => null) : Promise.resolve(null),
       ]);
 
       if (ordersRes && ordersRes.ok) {
@@ -196,15 +206,21 @@ export default function OrdersListPage() {
       }
       if (sellerRes && sellerRes.ok) {
         const sellerData = await sellerRes.json();
-        setSellers(Array.isArray(sellerData) ? sellerData : []);
+        const arr = Array.isArray(sellerData) ? sellerData : [];
+        sellersCache = arr;
+        setSellers(arr);
       }
       if (companyRes && companyRes.ok) {
         const companyData = await companyRes.json();
-        setCompanies(Array.isArray(companyData) ? companyData : []);
+        const arr = Array.isArray(companyData) ? companyData : [];
+        companiesCache = arr;
+        setCompanies(arr);
       }
       if (transporterRes && transporterRes.ok) {
         const transporterData = await transporterRes.json();
-        setTransporters(Array.isArray(transporterData) ? transporterData : []);
+        const arr = Array.isArray(transporterData) ? transporterData : [];
+        transportersCache = arr;
+        setTransporters(arr);
       }
     } catch (err) {
       console.error("Fetch error", err);
