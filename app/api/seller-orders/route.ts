@@ -309,13 +309,36 @@ export async function GET(req: Request) {
     const opMap: Record<string, number> = {};
     opTotals.forEach(item => { if (item._id) opMap[item._id] = item.total; });
 
-    // 5. Merge data
+    // 5. Batch lookup stock quantity for unique itemIds in the returned orders set (~20 items)
+    const itemIds = Array.from(new Set(orders.map((o: any) => o.itemId).filter(Boolean)));
+    const objectIds = itemIds.map(id => {
+      try { return new ObjectId(id); } catch { return id; }
+    });
+
+    const stockItems = await db.collection("stock").find(
+      { $or: [{ _id: { $in: objectIds } }, { _id: { $in: itemIds } }] },
+      { projection: { quantity: 1, reQty: 1 } }
+    ).toArray();
+
+    const stockMap: Record<string, { totalQty: number; reQty: number }> = {};
+    stockItems.forEach(s => {
+      const key = s._id.toString();
+      stockMap[key] = {
+        totalQty: s.quantity || 0,
+        reQty: s.reQty || 0
+      };
+    });
+
+    // 6. Merge data into enriched orders payload
     const enrichedOrders = orders.map((order: any) => {
       const nameKey = (order.itemName || "").trim().toUpperCase();
+      const stockInfo = stockMap[order.itemId?.toString()] || { totalQty: 0, reQty: 0 };
       return {
         ...order,
         prQty: prMap[nameKey] || 0,
         opQty: opMap[nameKey] || 0,
+        stockQty: stockInfo.totalQty,
+        stockReQty: stockInfo.reQty
       };
     });
 

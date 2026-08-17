@@ -185,9 +185,8 @@ export default function OrdersListPage() {
       if (companiesCache) setCompanies(companiesCache);
       if (transportersCache) setTransporters(transportersCache);
 
-      const [ordersRes, stockRes, sellerRes, companyRes, transporterRes] = await Promise.all([
+      const [ordersRes, sellerRes, companyRes, transporterRes] = await Promise.all([
         fetch(ordersUrl).catch(() => null),
-        fetch(`/api/stock?t=${timestamp}`).catch(() => null),
         !sellersCache ? fetch(`/api/sellers?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
         !companiesCache ? fetch(`/api/companies?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
         !transportersCache ? fetch(`/api/transporters`).catch(() => null) : Promise.resolve(null),
@@ -197,12 +196,6 @@ export default function OrdersListPage() {
         const data = await ordersRes.json();
         setOrders(Array.isArray(data) ? data : []);
         setOrdersLoadedAll(all);
-      }
-      if (stockRes && stockRes.ok) {
-        const stockData = await stockRes.json();
-        const loadedStock = Array.isArray(stockData) ? stockData : stockData.items || [];
-        setStock(loadedStock);
-        setStocks(loadedStock);
       }
       if (sellerRes && sellerRes.ok) {
         const sellerData = await sellerRes.json();
@@ -1200,11 +1193,11 @@ const shippingLock = useRef(false);
                   <div className="text-[9px] text-slate-800">SKU: {order.sku},
                     <b className="text-green-500">Stock: </b>
                     <span className="font-bold text-slate-700 mr-1">
-                      {stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
+                      {order.stockQty ?? stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
                     </span>
                     <b className="text-amber-500">Re-Qty: </b>
                     <span className="font-bold text-slate-700">
-                      {stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
+                      {order.stockReQty ?? stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
                     </span>
                   </div>
                 </td>
