@@ -94,9 +94,13 @@ export default function AddSellerPage() {
   const handleAddDescName = () => {
     const trimmed = descInput.trim();
     if (!trimmed) return;
-    const namesToAdd = trimmed.split(",").map(n => n.trim()).filter(Boolean);
-    const newNames = Array.from(new Set([...formData.statementDescriptionName, ...namesToAdd]));
-    setFormData({ ...formData, statementDescriptionName: newNames });
+    // The whole typed value is saved as one tag, commas and all — a name like
+    // "teasury,meh" is one bank statement description, not two names to split.
+    if (formData.statementDescriptionName.includes(trimmed)) {
+      setDescInput("");
+      return;
+    }
+    setFormData({ ...formData, statementDescriptionName: [...formData.statementDescriptionName, trimmed] });
     setDescInput("");
   };
 

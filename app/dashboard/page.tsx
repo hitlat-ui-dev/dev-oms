@@ -17,13 +17,6 @@ import {
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 
-interface DashboardStats {
-  today: { todayOrderCount: number };
-  totals: { pendingPaymentValue: number };
-  bidsPendingAction: number;
-  lowStockCount: number;
-}
-
 // Which existing full-page tiles also get a hover "+" quick-add shortcut —
 // matches the reference mockup's card set.
 const QUICKADD_ENABLED = new Set(["Orders", "Purchase", "Stock", "Manage Stock", "GeM Bids"]);
@@ -36,19 +29,9 @@ const SECTIONS = [
   { label: "Admin & Tools", items: ["Summary", "Settings", "Backup"] }
 ];
 
-function StatCard({ label, value, alert }: { label: string; value: string | number; alert?: boolean }) {
-  return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm px-4 py-3.5">
-      <div className={`text-xl font-black ${alert ? "text-red-600" : "text-slate-900"}`}>{value}</div>
-      <div className="text-[11px] font-bold text-slate-500 mt-0.5">{label}</div>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
 
@@ -74,13 +57,6 @@ export default function DashboardPage() {
       })
       .catch(() => {});
   }, [router]);
-
-  useEffect(() => {
-    fetch("/api/dashboard-summary")
-      .then(res => res.json())
-      .then(data => setStats(data))
-      .catch(err => console.error("Failed to load dashboard stats", err));
-  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -205,14 +181,6 @@ export default function DashboardPage() {
   return (
     <div className="p-4 md:p-8">
       <div className="max-w-6xl mx-auto flex flex-col gap-5">
-        {/* Live stats strip */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard label="Orders today" value={stats ? stats.today.todayOrderCount : "—"} />
-          <StatCard label="Bids pending action" value={stats ? stats.bidsPendingAction : "—"} />
-          <StatCard label="Low stock items" value={stats ? stats.lowStockCount : "—"} alert={!!stats && stats.lowStockCount > 0} />
-          <StatCard label="Total Due" value={stats ? `₹${stats.totals.pendingPaymentValue.toLocaleString("en-IN")}` : "—"} />
-        </div>
-
         {/* Grouped icon grid */}
         {SECTIONS.map(section => {
           const visibleItems = menuItems.filter(item => section.items.includes(item.name) && hasMenuItemAccess(item));

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import SellerOrder from "@/models/SellerOrder";
 import mongoose from "mongoose";
@@ -227,18 +227,26 @@ export async function POST(req: Request) {
     }
 
     // --- 5. AUTO PURCHASE REQUEST ---
+    // Runs after the response is sent (via next/server's after()) rather than
+    // blocking it — this does 4+ sequential cross-collection queries, and
+    // awaiting it here before responding was pushing order-save latency past
+    // Vercel's function timeout on the live deployment, which made the client
+    // see a fetch/JSON-parse failure ("Check your server connection.") even
+    // though the order itself had already been written to Mongo.
     if (itemSku && orderQty > 0) {
-      try {
-        await syncPurchaseRequest(db, itemSku, {
-          itemId: data.itemId,
-          itemName: data.itemName,
-          category: data.category,
-          unit: data.unit,
-          orderNo: newOrderNo
-        });
-      } catch (prError) {
-        console.error("[AUTO PR ERROR] Failed to sync purchase request:", prError);
-      }
+      after(async () => {
+        try {
+          await syncPurchaseRequest(db, itemSku, {
+            itemId: data.itemId,
+            itemName: data.itemName,
+            category: data.category,
+            unit: data.unit,
+            orderNo: newOrderNo
+          });
+        } catch (prError) {
+          console.error("[AUTO PR ERROR] Failed to sync purchase request:", prError);
+        }
+      });
     }
 
     return NextResponse.json({ ...newOrder.toObject() }, { status: 201, headers: corsHeaders });

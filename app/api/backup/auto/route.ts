@@ -5,6 +5,14 @@ import BackupLog from "@/models/BackupLog";
 import { uploadFileToGoogleDrive } from "@/lib/googleDrive";
 import { isEmailBackupConfigured, sendBackupEmail } from "@/lib/email";
 
+// Fetching every collection + zipping + emailing routinely runs past Vercel's
+// default 10s function timeout, which was silently killing the automatic
+// (site-visit-triggered) backup before it could write a BackupLog entry —
+// only a manual re-run that happened to land under 10s would succeed. 60s is
+// the max configurable on the Hobby plan; raise further if on Pro and still
+// timing out as the database grows.
+export const maxDuration = 60;
+
 const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // stay under Gmail's ~25MB message ceiling
 
 export async function GET() {

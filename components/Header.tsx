@@ -69,11 +69,11 @@ export default function Header() {
     const resetTimer = () => {
       if (logoutTimer) clearTimeout(logoutTimer);
       
-      // 30 Minutes
+      // 60 Minutes
       logoutTimer = setTimeout(() => {
         handleLogout();
         alert("Session expired due to inactivity.");
-      }, 30 * 60 * 1000); 
+      }, 60 * 60 * 1000);
     };
 
     // 2. Optimized Mobile Events

@@ -308,6 +308,20 @@ export default function FetchGeMOrdersPage() {
 
   const handleVerifySubmit = async () => {
     if (!selectedOrder) return;
+
+    // Institute must come from the dropdown (Seller Directory) and item must
+    // come from the stock suggestions below the search box — the raw text
+    // GeM's page scraped in (order.instituteName / order.itemName) is never
+    // allowed to fall through into a saved order unconfirmed.
+    if (!customInstituteName.trim()) {
+      alert("Buyer / Institute list se select karo — GeM se aaya raw text seedha order me save nahi ho sakta.");
+      return;
+    }
+    if (!selectedStockItem) {
+      alert("Item Name ke suggestions me se ek real stock item select karo — GeM se aaya raw item name seedha order me save nahi ho sakta.");
+      return;
+    }
+
     setVerifying(true);
 
     try {
@@ -528,7 +542,7 @@ export default function FetchGeMOrdersPage() {
                 <select
                   value={customInstituteName}
                   onChange={(e) => setCustomInstituteName(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                  className={`w-full p-2.5 bg-slate-50 border rounded-lg text-slate-800 font-semibold focus:outline-none ${customInstituteName ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
                 >
                   <option value="">-- Select Institute --</option>
                   {buyerOptions.map((b) => (
@@ -536,8 +550,8 @@ export default function FetchGeMOrdersPage() {
                   ))}
                 </select>
                 {!customInstituteName && (
-                  <p className="text-[10px] text-amber-600 font-semibold mt-1">
-                    GeM se aaya raw text: "{selectedOrder?.instituteName}" - upar se sahi institute chuno.
+                  <p className="text-[10px] text-red-600 font-semibold mt-1">
+                    GeM se aaya raw text: "{selectedOrder?.instituteName}" - upar se sahi institute chuno (required).
                   </p>
                 )}
               </div>
@@ -558,11 +572,11 @@ export default function FetchGeMOrdersPage() {
                   onFocus={() => setShowItemSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowItemSuggestions(false), 150)}
                   placeholder="Search stock item..."
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                  className={`w-full p-2.5 bg-slate-50 border rounded-lg text-slate-800 font-semibold focus:outline-none ${selectedStockItem ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
                 />
                 {!selectedStockItem && (
-                  <p className="text-[10px] text-amber-600 font-semibold mt-1">
-                    Pick a real stock item below so Stock/Re-Qty shows correctly on the Main Orders page.
+                  <p className="text-[10px] text-red-600 font-semibold mt-1">
+                    Suggestions me se ek real stock item select karo (required) — GeM ka raw naam seedha save nahi hoga.
                   </p>
                 )}
                 {autoFillHint && (

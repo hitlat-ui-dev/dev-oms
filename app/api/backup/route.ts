@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 
+// Same collection-fetch + zip work as /api/backup/auto — same timeout risk.
+export const maxDuration = 60;
+
 export async function GET() {
   try {
     // 1. Force establish connection pool using your system environment variable

@@ -1,9 +1,10 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { FiArrowLeft, FiBookOpen, FiSearch } from "react-icons/fi";
+import { FiArrowLeft, FiBookOpen, FiSearch, FiDownload } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { matchInstituteFromDescription, SellerLite } from "@/lib/institutMatcher";
+import * as XLSX from "xlsx";
 
 interface Order {
   _id: string;
@@ -213,6 +214,51 @@ export default function BuyerLedgerPage() {
     };
   }, [fullHistory, fromDate, toDate]);
 
+  const handleExportLedger = () => {
+    if (!selectedInstitute || visibleRows.length === 0) {
+      alert("No ledger data available to export with the current filters.");
+      return;
+    }
+
+    const reportData = [
+      {
+        Date: "",
+        Type: "Opening Balance",
+        "Vou/Doc No.": "",
+        "Account Name (Firm)": "",
+        Debit: "",
+        Credit: "",
+        "Closing Balance": openingBalance === 0 ? "NIL" : `${formatMoney(openingBalance)} ${openingBalance >= 0 ? "DB" : "CR"}`,
+      },
+      ...visibleRows.map((row) => ({
+        Date: row.date || "",
+        Type: row.type,
+        "Vou/Doc No.": row.voucherNo || "",
+        "Account Name (Firm)": row.accountName,
+        Debit: row.debit || "",
+        Credit: row.credit || "",
+        "Closing Balance": `${formatMoney(row.balance)} ${row.balance >= 0 ? "DB" : "CR"}`,
+      })),
+      {
+        Date: "",
+        Type: "TOTAL",
+        "Vou/Doc No.": "",
+        "Account Name (Firm)": "",
+        Debit: totals.debit,
+        Credit: totals.credit,
+        "Closing Balance": `${formatMoney(closingBalance)} ${closingBalance >= 0 ? "DB" : "CR"}`,
+      },
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(reportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Buyer Ledger");
+
+    const dateSuffix = fromDate || toDate ? `_${fromDate || "start"}_to_${toDate || "today"}` : "";
+    const safeName = selectedInstitute.replace(/[^a-z0-9]/gi, "_");
+    XLSX.writeFile(wb, `Buyer_Ledger_${safeName}${dateSuffix}.xlsx`);
+  };
+
   return (
     <BlockGuard
       permission="accountStatements"
@@ -231,16 +277,25 @@ export default function BuyerLedgerPage() {
       <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
         <div className="max-w-6xl mx-auto flex flex-col gap-6">
           {/* Header */}
-          <div>
-            <Link href="/dashboard/account" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
-              <FiArrowLeft /> Back to Account
-            </Link>
-            <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
-              <FiBookOpen className="text-blue-600" /> Buyer Ledger
-            </h1>
-            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
-              Institute-wise Running Account Ledger
-            </p>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <Link href="/dashboard/account" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
+                <FiArrowLeft /> Back to Account
+              </Link>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
+                <FiBookOpen className="text-blue-600" /> Buyer Ledger
+              </h1>
+              <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
+                Institute-wise Running Account Ledger
+              </p>
+            </div>
+            <button
+              onClick={handleExportLedger}
+              disabled={!selectedInstitute || visibleRows.length === 0}
+              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 shadow-sm"
+            >
+              <FiDownload size={14} /> Export to Excel
+            </button>
           </div>
 
           {/* Filters */}

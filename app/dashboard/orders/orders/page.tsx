@@ -661,6 +661,128 @@ const shippingLock = useRef(false);
     place?: string;
   }
 
+  // Draws one buyer's challan (header, items table, transporter contact,
+  // footer/terms) onto a given jsPDF doc at its current page.
+  const drawChallanPage = (doc: any, sellerInfo: any, items: any[], companies: any[], formattedDate: string, transporters: any[]) => {
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.text("To,", 14, 35);
+    doc.setFont("helvetica", "bold");
+
+    const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
+    doc.text(`${displayName}`, 14, 42);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text([
+      `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
+      `Address: ${sellerInfo.address || '---'}`,
+      `Place: ${sellerInfo.place || '---'}`,
+      `Mobile: ${sellerInfo.mobile || '---'}`
+    ], 14, 48);
+
+    autoTable(doc, {
+      startY: 75,
+      head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
+      body: items.map((order: any, i: number) => {
+        const company = companies.find(c => c.firmCode === order.firmCode);
+
+        const orderDisplay = `${order.orderNo || 'N/A'}\n${order.createdAt
+          ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
+          : "N/A"}`;
+
+        const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
+          ? `${order.contractNo}\n(${order.contractDate || ''})`
+          : '---';
+
+        const transportDetails = order.transportName
+          ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark || ''}`
+          : 'Direct Delivery';
+
+        return [
+          i + 1,
+          orderDisplay,
+          order.itemName || 'N/A',
+          company?.firmName || order.firm || 'N/A',
+          `${order.reQty || 0} ${order.unit || ''}`,
+          contractDisplay,
+          transportDetails
+        ];
+      }),
+      theme: 'grid',
+      headStyles: { textColor: 20, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+      didDrawCell: (data) => {
+        if (data.section === 'body' && data.column.index === 5) {
+          const order = items[data.row.index];
+          if (order?.contractUrl) {
+            doc.setTextColor(0, 0, 255);
+            doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
+          }
+        }
+      }
+    });
+
+    const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
+
+    const checkPageSpace = (currentY: number, requiredSpace: number) => {
+      if (currentY + requiredSpace > 270) {
+        doc.addPage();
+        return 20;
+      }
+      return currentY;
+    };
+
+    // Transporter used for this delivery (order.transportName), with its
+    // phone number(s) looked up from the Transporter directory.
+    let afterTableY = checkPageSpace(tableBottomY + 10, 20);
+    const transportName = items.find((o: any) => o.transportName)?.transportName;
+    if (transportName) {
+      const transporterDoc = transporters.find((t: any) => t.name === transportName);
+      const contactLines = (transporterDoc?.contacts || [])
+        .filter((c: any) => c.mobile)
+        .map((c: any) => (c.person ? `${c.person}: ${c.mobile}` : c.mobile));
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(`Transporter: ${transportName}`, 14, afterTableY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`Contact: ${contactLines.length > 0 ? contactLines.join(",  ") : "N/A"}`, 14, afterTableY + 5);
+      afterTableY += 12;
+    }
+
+    let footerY = checkPageSpace(afterTableY + 3, 25);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.line(140, footerY + 15, 190, footerY + 15);
+    doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" });
+
+    footerY = checkPageSpace(footerY + 30, 40);
+
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.text("Terms & Conditions:", 14, footerY);
+
+    doc.setFont("helvetica", "normal");
+    const terms = [
+      "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
+      "2. Damage or defects must be reported immediately.",
+      "3. Communication for replacement must be immediate.",
+      "4. Dispatch Dept Contact: +91 8200093336"
+    ];
+
+    doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
+  };
+
   const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[], selectedOrderIds: string[] = []) => {
     // if (!filteredOrders || filteredOrders.length === 0) {
     //   alert("No orders selected to download.");
@@ -705,104 +827,7 @@ const shippingLock = useRef(false);
         fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
       }
 
-      doc.setFontSize(22);
-      doc.setFont("helvetica", "bold");
-      doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Date: ${formattedDate}`, 105, 26, { align: "center" });
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-      doc.text("To,", 14, 35);
-      doc.setFont("helvetica", "bold");
-
-      const displayName = sellerInfo.buyerName || items[0]?.buyerName || 'Valued Customer';
-      doc.text(`${displayName}`, 14, 42);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.text([
-        `Institute: ${sellerInfo.instituteName || items[0]?.instituteName || 'N/A'}`,
-        `Address: ${sellerInfo.address || '---'}`,
-        `Place: ${sellerInfo.place || '---'}`,
-        `Mobile: ${sellerInfo.mobile || '---'}`
-      ], 14, 48);
-
-      autoTable(doc, {
-        startY: 75,
-        head: [['Sr.', 'Order No.', 'Item Name', 'Firm Name', 'Qty', 'Contract Info', 'Transport Details']],
-        body: items.map((order: any, i: number) => {
-          const company = companies.find(c => c.firmCode === order.firmCode);
-
-          const orderDisplay = `${order.orderNo || 'N/A'}\n${order.createdAt
-            ? new Date(order.createdAt).toLocaleDateString('en-GB').replace(/\//g, '-')
-            : "N/A"}`;
-
-          const contractDisplay = order.contractNo && order.contractNo !== 'N/A'
-            ? `${order.contractNo}\n(${order.contractDate || ''})`
-            : '---';
-
-          const transportDetails = order.transportName
-            ? `${order.transportName}\nDate: ${order.deliveryDate || '---'}\nRemark: ${order.transportRemark || ''}`
-            : 'Direct Delivery';
-
-          return [
-            i + 1,
-            orderDisplay,
-            order.itemName || 'N/A',
-            company?.firmName || order.firm || 'N/A',
-            `${order.reQty || 0} ${order.unit || ''}`,
-            contractDisplay,
-            transportDetails
-          ];
-        }),
-        theme: 'grid',
-        headStyles: { textColor: 20, fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
-        didDrawCell: (data) => {
-          if (data.section === 'body' && data.column.index === 5) {
-            const order = items[data.row.index];
-            if (order?.contractUrl) {
-              doc.setTextColor(0, 0, 255);
-              doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: order.contractUrl });
-            }
-          }
-        }
-      });
-
-      const tableBottomY = (doc as any).lastAutoTable.finalY || 75;
-
-      const checkPageSpace = (currentY: number, requiredSpace: number) => {
-        if (currentY + requiredSpace > 270) {
-          doc.addPage();
-          return 20;
-        }
-        return currentY;
-      };
-
-      let footerY = checkPageSpace(tableBottomY + 10, 25);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.line(140, footerY + 15, 190, footerY + 15);
-      doc.text("Sign for Receiver", 165, footerY + 20, { align: "center" });
-
-      footerY = checkPageSpace(footerY + 30, 40);
-
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text("Terms & Conditions:", 14, footerY);
-
-      doc.setFont("helvetica", "normal");
-      const terms = [
-        "1. The goods must be checked compulsorily within 2 days of receipt. Any defect or complaint must be reported within this period.",
-        "2. Damage or defects must be reported immediately.",
-        "3. Communication for replacement must be immediate.",
-        "4. Dispatch Dept Contact: +91 8200093336"
-      ];
-
-      doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
+      drawChallanPage(doc, sellerInfo, items, companies, formattedDate, transporters);
     });
 
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');

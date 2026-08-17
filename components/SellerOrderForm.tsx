@@ -18,6 +18,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   const [stocks, setStocks] = useState<any[]>([]);
   const [firms, setFirms] = useState<any[]>([]);
   const [currentUsername, setCurrentUsername] = useState("");
+  // Guards against a race where Save is clicked before the firms/sellers/stock
+  // reference lists (fetched async below) have loaded — with an edit modal
+  // pre-filled instantly from initialData, that could happen fast enough to
+  // wrongly flag an already-valid firmCode as "invalid" (list was just empty).
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
     try {
@@ -106,6 +111,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
         setFirms(Array.isArray(firmData) ? firmData : []);
       } catch (err) {
         console.error("Load error", err);
+      } finally {
+        setDataLoaded(true);
       }
     };
     loadData();
@@ -416,8 +423,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
             </div>
 
-            <button type="submit" disabled={loading} className=" bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest">
-              {loading ? "Saving..." : "Save Order"}
+            <button type="submit" disabled={loading || !dataLoaded} className="bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">
+              {loading ? "Saving..." : !dataLoaded ? "Loading..." : "Save Order"}
             </button>
           </form>
         </div>
