@@ -32,9 +32,15 @@ export async function PATCH(req: Request) {
       // which is what makes repeated Send Back clicks walk back one genuine hop at a time
       // instead of just looking at the last log row (which, after one reversal, would be
       // the reversal itself and cause it to bounce between two sections).
+      const setDoc: Record<string, any> = { currentSection: toSection, updatedAt: movedAt };
+      // Arriving fresh at Submitted Bids starts life as "Active" until the next
+      // sync's portal status check (or a manual edit) says otherwise.
+      if (toSection === "submitted_bids" && !bid.submittedStatus) {
+        setDoc.submittedStatus = "Active";
+      }
       await bidsCollection.updateOne(
         { bidNo },
-        { $set: { currentSection: toSection, updatedAt: movedAt }, $push: { sectionStack: bid.currentSection } }
+        { $set: setDoc, $push: { sectionStack: bid.currentSection } }
       );
       moveHistoryDocs.push({
         bidNo,

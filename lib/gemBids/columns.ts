@@ -41,17 +41,51 @@ export const HEADER_TO_FIELD: Record<string, string> = Object.fromEntries(
 );
 
 export const SECTIONS = [
+  { key: "new_bids", label: "New Bids" },
   { key: "fetched_bid_data", label: "Fetched Bid Data" },
   { key: "bids_can_be_filled", label: "Bids Can Be Filled" },
   { key: "bids_to_fill", label: "Bids to Fill" },
   { key: "bid_document_maker", label: "Bid Document Maker" },
+  { key: "submitted_bids", label: "Submitted Bids" },
 ] as const;
 
 export type SectionKey = (typeof SECTIONS)[number]["key"];
 export const SECTION_KEYS = SECTIONS.map((s) => s.key) as SectionKey[];
 
+// Sections a bid moves into automatically (New Bids on first sight) or that carry
+// their own dedicated workflow (Submitted Bids status tracking) rather than being
+// a free manual "Send to" target from every other section.
+export const AUTO_ONLY_SECTIONS: SectionKey[] = ["new_bids"];
+
+// Sections where an expired bid (Bid End Date/Time in the past) gets auto-deleted
+// during sync - a bid that's progressed further into real work (Bids to Fill
+// onward, including Submitted) is left for the user to remove manually.
+export const AUTO_DELETE_EXPIRED_SECTIONS: SectionKey[] = ["new_bids", "fetched_bid_data", "bids_can_be_filled"];
+
+export const SUBMITTED_STATUSES = [
+  "Active",
+  "Cancelled",
+  "Technical Evaluation",
+  "Financial Evaluation",
+  "Awarded",
+] as const;
+export type SubmittedStatus = (typeof SUBMITTED_STATUSES)[number];
+
 const HIGHLIGHT_ITEM_TERM = "paper-based printing services";
 /** Mirrors the extension's own yellow-highlight rule exactly (case-insensitive substring on Items). */
 export function computeHighlight(items?: string | null): boolean {
   return (items || "").toLowerCase().includes(HIGHLIGHT_ITEM_TERM);
+}
+
+// Category keywords a bid's Items text is checked against on every sync - matches
+// are dropped before ever reaching gem_bids. Kept in an editable JSON file (not
+// inline) per spec, so the list can be tuned without a code change/deploy.
+import exclusionKeywordsRaw from "./exclusionKeywords.json";
+export const EXCLUSION_KEYWORDS: string[] = exclusionKeywordsRaw as string[];
+
+/** Case-insensitive partial match against the exclusion keyword list. */
+export function isExcludedByCategory(items?: string | null): boolean {
+  const text = (items || "").toLowerCase();
+  if (!text) return false;
+  return EXCLUSION_KEYWORDS.some((kw) => text.includes(kw.toLowerCase()));
 }

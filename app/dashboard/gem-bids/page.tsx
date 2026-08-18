@@ -4,7 +4,17 @@ import Link from "next/link";
 import { FiArrowLeft, FiX, FiLayers, FiFileText } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import GemBidTable, { GemBid } from "@/components/GemBidTable";
-import { SECTIONS, SectionKey } from "@/lib/gemBids/columns";
+import { SECTIONS, SectionKey, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
+
+interface LastRun {
+  runAt: string;
+  newCount: number;
+  updatedCount: number;
+  oldCount: number;
+  excludedCount?: number;
+  promotedCount?: number;
+  expiredDeletedCount?: number;
+}
 
 interface ChangeHistoryRow {
   fieldChanged: string;
@@ -30,6 +40,7 @@ export default function GemBidsPage() {
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryRow[]>([]);
   const [moveHistory, setMoveHistory] = useState<MoveHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
 
   useEffect(() => {
     try {
@@ -52,9 +63,21 @@ export default function GemBidsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
+  const fetchLastRun = useCallback(() => {
+    fetch("/api/gem-bids/last-run")
+      .then((res) => res.json())
+      .then((data) => setLastRun(data || null))
+      .catch((err) => console.error("Failed to load last sync run", err));
+  }, []);
+
+  const refetchAll = useCallback(() => {
     fetchBids();
-  }, [fetchBids]);
+    fetchLastRun();
+  }, [fetchBids, fetchLastRun]);
+
+  useEffect(() => {
+    refetchAll();
+  }, [refetchAll]);
 
   const sectionCounts = useMemo(() => {
     const map: Record<string, number> = {};
@@ -62,6 +85,18 @@ export default function GemBidsPage() {
     bids.forEach((b) => {
       map[b.currentSection] = (map[b.currentSection] || 0) + 1;
     });
+    return map;
+  }, [bids]);
+
+  const submittedStatusCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    SUBMITTED_STATUSES.forEach((s) => (map[s] = 0));
+    bids
+      .filter((b) => b.currentSection === "submitted_bids")
+      .forEach((b) => {
+        const status = b.submittedStatus || "Active";
+        map[status] = (map[status] || 0) + 1;
+      });
     return map;
   }, [bids]);
 
@@ -116,6 +151,48 @@ export default function GemBidsPage() {
             >
               <FiFileText size={13} /> Open Document Maker →
             </Link>
+          </div>
+
+          {/* Dashboard / summary panel */}
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+              {SECTIONS.map((s) => (
+                <div key={s.key} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">{s.label}</span>
+                  <span className="text-lg font-black text-slate-800 block mt-0.5">{sectionCounts[s.key] || 0}</span>
+                </div>
+              ))}
+            </div>
+
+            {sectionCounts["submitted_bids"] > 0 && (
+              <div className="mb-4">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-1.5">Submitted Bids — by status</span>
+                <div className="flex flex-wrap gap-2">
+                  {SUBMITTED_STATUSES.map((s) => (
+                    <span key={s} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[10px] font-bold text-slate-600">
+                      {s}: <span className="text-slate-900 font-black">{submittedStatusCounts[s] || 0}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {lastRun && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-bold text-slate-500 pt-3 border-t border-slate-100">
+                <span>
+                  Last sync: <span className="text-slate-800">{new Date(lastRun.runAt).toLocaleString()}</span>
+                </span>
+                <span>
+                  Excluded: <span className="text-slate-800">{lastRun.excludedCount ?? 0}</span>
+                </span>
+                <span>
+                  Auto-deleted (expired): <span className="text-slate-800">{lastRun.expiredDeletedCount ?? 0}</span>
+                </span>
+                <span>
+                  Promoted to Fetched: <span className="text-slate-800">{lastRun.promotedCount ?? 0}</span>
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit">

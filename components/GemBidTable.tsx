@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
-import { FiChevronUp, FiChevronDown, FiCornerUpLeft } from "react-icons/fi";
-import { BID_COLUMNS, SECTIONS, SectionKey } from "@/lib/gemBids/columns";
+import { FiChevronUp, FiChevronDown, FiCornerUpLeft, FiTrash2 } from "react-icons/fi";
+import { BID_COLUMNS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
 
 export interface GemBid {
   _id: string;
@@ -10,6 +10,9 @@ export interface GemBid {
   isHighlighted: boolean;
   currentSection: SectionKey;
   hasPendingUpdate: boolean;
+  changedFields?: string[];
+  justPromoted?: boolean;
+  submittedStatus?: string | null;
   [key: string]: any;
 }
 
@@ -36,7 +39,9 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
   const [busy, setBusy] = useState(false);
 
   const currentSectionKey = bids[0]?.currentSection;
-  const otherSections = SECTIONS.filter((s) => s.key !== currentSectionKey);
+  // New Bids is system-populated only (a bid lands there on first sight, never
+  // via a manual "Send to") - never offered as a manual move target.
+  const otherSections = SECTIONS.filter((s) => s.key !== currentSectionKey && !AUTO_ONLY_SECTIONS.includes(s.key));
   const otherColumns = useMemo(() => BID_COLUMNS.filter((c) => c.key !== "bidNo"), []);
 
   const dropdownOptions = useMemo(() => {
@@ -145,6 +150,50 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
     }
   };
 
+  const deleteBids = async (bidNos: string[]) => {
+    if (bidNos.length === 0) return;
+    const label = bidNos.length === 1 ? `bid ${bidNos[0]}` : `${bidNos.length} bids`;
+    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/gem-bids", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidNos }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      setSelected((prev) => {
+        const next = new Set(prev);
+        bidNos.forEach((b) => next.delete(b));
+        return next;
+      });
+      onMoved();
+    } catch (err: any) {
+      alert(err.message || "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSubmittedStatus = async (bidNo: string, status: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/gem-bids/submitted-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates: [{ bidNo, status }] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Status update failed");
+      onMoved();
+    } catch (err: any) {
+      alert(err.message || "Status update failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const selectedList = [...selected];
 
   return (
@@ -172,6 +221,13 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
               <FiCornerUpLeft size={11} /> Send Back
             </button>
           )}
+          <button
+            disabled={busy}
+            onClick={() => deleteBids(selectedList)}
+            className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ml-auto"
+          >
+            <FiTrash2 size={11} /> Delete
+          </button>
         </div>
       )}
 
@@ -190,6 +246,7 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
                 Bid No {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
               </th>
               <th className="py-2 px-2 whitespace-nowrap">Tag</th>
+              {currentSectionKey === "submitted_bids" && <th className="py-2 px-2 whitespace-nowrap">Status</th>}
               {otherColumns.map((col) => (
                 <th key={col.key} className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort(col.key)}>
                   {col.header} {sort?.key === col.key && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
@@ -208,6 +265,7 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
                 />
               </th>
               <th className="py-1.5 px-2"></th>
+              {currentSectionKey === "submitted_bids" && <th className="py-1.5 px-2"></th>}
               {otherColumns.map((col) => (
                 <th key={col.key} className="py-1.5 px-2">
                   {col.filterType === "text" && (
@@ -256,13 +314,21 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
           <tbody className="divide-y divide-slate-100">
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={otherColumns.length + 4} className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                <td colSpan={otherColumns.length + (currentSectionKey === "submitted_bids" ? 5 : 4)} className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
                   No bids here
                 </td>
               </tr>
             ) : (
-              visible.map((b) => (
-                <tr key={b.bidNo} className={`hover:bg-blue-50/40 transition-colors ${b.isHighlighted ? "bg-yellow-50" : ""}`}>
+              visible.map((b) => {
+                const changedSet = new Set(b.changedFields || []);
+                return (
+                <tr
+                  key={b.bidNo}
+                  // justPromoted (blue background, New Bids -> Fetched Bid Data arrival) and
+                  // isHighlighted (yellow, the extension's own "paper-based printing" rule) are
+                  // deliberately different colors so the two never look the same.
+                  className={`hover:bg-blue-50/40 transition-colors ${b.justPromoted ? "bg-blue-50" : b.isHighlighted ? "bg-yellow-50" : ""}`}
+                >
                   <td className="py-2 px-2">
                     <input type="checkbox" checked={selected.has(b.bidNo)} onChange={() => toggleSelectOne(b.bidNo)} />
                   </td>
@@ -282,8 +348,31 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
                       {b.tag}
                     </button>
                   </td>
+                  {currentSectionKey === "submitted_bids" && (
+                    <td className="py-2 px-2">
+                      <select
+                        value={b.submittedStatus || "Active"}
+                        disabled={busy}
+                        onChange={(e) => updateSubmittedStatus(b.bidNo, e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold"
+                      >
+                        {SUBMITTED_STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                   {otherColumns.map((col) => (
-                    <td key={col.key} className="py-2 px-2 max-w-[200px] truncate text-slate-600" title={String(b[col.key] || "")}>
+                    <td
+                      key={col.key}
+                      // Blue text = this specific field changed on the most recent sync
+                      // (existing bid, stayed in place) - visually distinct from the blue
+                      // row background above, which only ever means "just promoted".
+                      className={`py-2 px-2 max-w-[200px] truncate ${changedSet.has(col.key) ? "text-blue-700 font-bold" : "text-slate-600"}`}
+                      title={String(b[col.key] || "")}
+                    >
                       {LINK_COLUMNS.has(col.key) ? (
                         b[col.key] ? (
                           <a href={b[col.key]} target="_blank" rel="noreferrer" className="text-blue-600 underline">
@@ -298,19 +387,30 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
                     </td>
                   ))}
                   <td className="py-2 px-2">
-                    {currentSectionKey !== "fetched_bid_data" && (
+                    <div className="flex items-center gap-1">
+                      {currentSectionKey !== "fetched_bid_data" && (
+                        <button
+                          disabled={busy}
+                          onClick={() => sendBack([b.bidNo])}
+                          title="Send Back"
+                          className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-40"
+                        >
+                          <FiCornerUpLeft size={12} />
+                        </button>
+                      )}
                       <button
                         disabled={busy}
-                        onClick={() => sendBack([b.bidNo])}
-                        title="Send Back"
-                        className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-40"
+                        onClick={() => deleteBids([b.bidNo])}
+                        title="Delete"
+                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors disabled:opacity-40"
                       >
-                        <FiCornerUpLeft size={12} />
+                        <FiTrash2 size={12} />
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
