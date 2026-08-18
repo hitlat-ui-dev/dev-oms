@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiDownload, FiPlus } from "react-icons/fi";
+import { FiDownload, FiPlus, FiRefreshCw } from "react-icons/fi";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import ReceivedQtyModal from "@/components/ReceivedQtyModal";
 import PurchaseRequestTable from "@/components/purchase/PurchaseRequestTable";
@@ -301,6 +301,14 @@ export default function PurchaseLogisticsPage() {
 
           {/* Action Buttons Container */}
           <div className="flex items-center gap-2 w-full lg:w-auto">
+            <button
+              onClick={fetchTabData}
+              disabled={loading}
+              title="Refresh"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-3 rounded-2xl font-black shadow-sm transition-all active:scale-95 disabled:opacity-50"
+            >
+              <FiRefreshCw className={`text-sm ${loading ? "animate-spin" : ""}`} />
+            </button>
             <button
               onClick={handleExportExcel}
               className="flex-1 lg:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-4 lg:px-6 py-3 rounded-2xl font-black text-[10px] flex items-center justify-center gap-2 tracking-widest shadow-xl shadow-emerald-100 transition-all active:scale-95 uppercase"
