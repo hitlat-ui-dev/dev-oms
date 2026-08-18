@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus } from "react-icons/fi";
+import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus, FiTrash2 } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -45,6 +45,21 @@ export default function AddSellerPage() {
       const data = await res.json();
       if (Array.isArray(data)) setSellers(data);
     } catch (err) { console.error("Fetch error"); }
+  };
+
+  const handleDeleteSeller = async (seller: Seller) => {
+    if (!confirm(`Delete "${seller.instituteName}" from the Seller Directory? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/sellers/${seller._id}`, { method: "DELETE" });
+      if (res.ok) {
+        setSellers(prev => prev.filter(s => s._id !== seller._id));
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to delete seller");
+      }
+    } catch (err) {
+      alert("Error deleting seller");
+    }
   };
 
   useEffect(() => { fetchSellers(); }, []);
@@ -338,28 +353,51 @@ export default function AddSellerPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50">
-                  <th onClick={() => handleSort('instituteName')} className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors">
+                  <th onClick={() => handleSort('instituteName')} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors">
                     <div className="flex items-center gap-1">Institute {sortConfig?.key === 'instituteName' && (sortConfig.direction === 'asc' ? <FiChevronUp /> : <FiChevronDown />)}</div>
                   </th>
-                  <th onClick={() => handleSort('buyerName')} className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors">
-                    <div className="flex items-center gap-1">Buyer {sortConfig?.key === 'buyerName' && (sortConfig.direction === 'asc' ? <FiChevronUp /> : <FiChevronDown />)}</div>
+                  <th onClick={() => handleSort('buyerName')} className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:text-blue-600 transition-colors">
+                    <div className="flex items-center gap-1">Buyer / Bill Name {sortConfig?.key === 'buyerName' && (sortConfig.direction === 'asc' ? <FiChevronUp /> : <FiChevronDown />)}</div>
                   </th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Bill Name</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Statement Descriptions</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Address</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Location</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">GeM Location</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
+                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact & Address</th>
+                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">GeM Match Location</th>
+                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Statement Descriptions</th>
+                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sortedSellers.map((seller) => (
-                  <tr key={seller._id} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="p-5 font-black text-slate-700 text-xs">{seller.instituteName}</td>
-                    <td className="p-5 font-bold text-slate-500 text-xs">{seller.buyerName || "---"}</td>
-                    <td className="p-5 font-bold text-slate-600 text-xs">{seller.sellerBillName || "---"}</td>
-                    <td className="p-5">
+                {sortedSellers.map((seller) => {
+                  const isIncomplete = !seller.buyerName && !seller.mobile && !seller.address && !seller.place && !seller.sellerBillName;
+                  return (
+                  <tr key={seller._id} className="hover:bg-slate-50/50 transition-colors group align-top">
+                    <td className="p-4 text-xs">
+                      <div className="font-black text-slate-700">{seller.instituteName}</div>
+                      {isIncomplete && (
+                        <span className="inline-block mt-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-black uppercase tracking-wider rounded-md">
+                          Incomplete
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-4 text-xs">
+                      <div className="font-bold text-slate-600">{seller.buyerName || "---"}</div>
+                      {seller.sellerBillName && <div className="text-slate-400 text-[10px] font-semibold mt-0.5">{seller.sellerBillName}</div>}
+                    </td>
+                    <td className="p-4 text-xs">
+                      <div className="font-bold text-slate-600">{seller.mobile || "---"}</div>
+                      <div
+                        className="text-slate-400 text-[10px] font-medium mt-0.5 max-w-56 truncate cursor-help"
+                        title={[seller.address, seller.place].filter(Boolean).join(", ")}
+                      >
+                        {[seller.address, seller.place].filter(Boolean).join(", ") || "---"}
+                      </div>
+                    </td>
+                    <td
+                      className="p-4 font-medium text-slate-500 text-[11px] max-w-64 truncate cursor-help"
+                      title={seller.gemLocationText}
+                    >
+                      {seller.gemLocationText || "---"}
+                    </td>
+                    <td className="p-4">
                       {seller.statementDescriptionName && seller.statementDescriptionName.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-xs">
                           {seller.statementDescriptionName.map((name, i) => (
@@ -372,27 +410,19 @@ export default function AddSellerPage() {
                         <span className="text-xs font-bold text-slate-400">---</span>
                       )}
                     </td>
-                    <td className="p-5 font-bold text-slate-500 text-xs">{seller.mobile || "---"}</td>
-                    <td
-                      className="p-5 font-medium text-slate-500 text-[11px] max-w-52 truncate cursor-help"
-                      title={seller.address}
-                    >
-                      {seller.address || "---"}
-                    </td>
-                    <td className="p-5 font-bold text-slate-400 text-[10px]">{seller.place || "---"}</td>
-                    <td
-                      className="p-5 font-medium text-slate-500 text-[11px] max-w-52 truncate cursor-help"
-                      title={seller.gemLocationText}
-                    >
-                      {seller.gemLocationText || "---"}
-                    </td>
-                    <td className="p-5 text-right">
-                      <button onClick={() => handleEdit(seller)} className="p-2 bg-slate-100 text-slate-400 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm">
-                        <FiEdit3 size={16} />
-                      </button>
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => handleEdit(seller)} className="p-2 bg-slate-100 text-slate-400 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm">
+                          <FiEdit3 size={16} />
+                        </button>
+                        <button onClick={() => handleDeleteSeller(seller)} className="p-2 bg-slate-100 text-slate-400 rounded-lg hover:bg-rose-600 hover:text-white transition-all shadow-sm">
+                          <FiTrash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
