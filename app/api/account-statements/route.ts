@@ -31,10 +31,26 @@ export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 10
 export const txnKey = (t: Transaction) =>
   `${t.date}|${t.description.trim().toLowerCase()}|${round2(t.debit)}|${round2(t.credit)}|${round2(t.balance)}`;
 
+// Converts a date string into a YYYYMMDD number so transactions sort
+// chronologically regardless of which format the source bank used - plain
+// string comparison only happens to work for YYYY-MM-DD (Mehsana); banks
+// that print DD/MM/YY (HDFC) sort by day-of-month first under a raw string
+// compare, which silently scrambles the order.
+const parseDateForSort = (dateStr: string): number => {
+  const s = dateStr.trim();
+  let m = s.match(/^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/); // YYYY-MM-DD
+  if (m) return Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
+  m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/); // DD-MM-YYYY
+  if (m) return Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]);
+  m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2})$/); // DD-MM-YY
+  if (m) return (2000 + Number(m[3])) * 10000 + Number(m[2]) * 100 + Number(m[1]);
+  return 0;
+};
+
 // Sort by date, then by numeric S.No (when present) as a tiebreaker for same-day entries.
 const sortTransactions = (list: Transaction[]) =>
   [...list].sort((a, b) => {
-    const dateCompare = a.date.localeCompare(b.date);
+    const dateCompare = parseDateForSort(a.date) - parseDateForSort(b.date);
     if (dateCompare !== 0) return dateCompare;
     const snoA = parseInt(a.sno, 10);
     const snoB = parseInt(b.sno, 10);

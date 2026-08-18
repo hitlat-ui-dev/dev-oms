@@ -99,44 +99,77 @@ const parseAmount = (v: any): number => {
 const formatMoney = (n: number) =>
   n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// Column headers to look for in the transaction table row
+// Column headers to look for in the transaction table row. Debit/Credit and
+// Balance also match the wording some banks use instead (HDFC exports
+// "Withdrawal Amt." / "Deposit Amt." / "Closing Balance" rather than plain
+// "Debit" / "Credit" / "Balance").
 const COLUMN_HEADERS: Record<string, RegExp> = {
   sno: /^s\.?\s*no\.?$/i,
   date: /^date$/i,
   description: /description|narration|particulars/i,
-  debit: /^debit/i,
-  credit: /^credit/i,
-  chequeNo: /cheque/i,
-  balance: /^balance/i,
+  debit: /^debit|withdrawal/i,
+  credit: /^credit|deposit/i,
+  chequeNo: /cheque|chq/i,
+  balance: /balance/i,
 };
 
-// Finds a labelled row (e.g. "Account Number") and returns the N non-empty cells that follow it
+// Finds a labelled row (e.g. "Account Number") and returns the N non-empty cells that follow it.
+// Handles two layouts: label and value(s) in separate cells (e.g. "Account
+// Number" | "1234"), or both packed into one cell (HDFC: "Account No
+// :99997600016442   OTHER") - tried first since it's the more specific match.
 const findLabelValues = (rows: any[][], labelRegex: RegExp, count = 1): string[] => {
   for (const row of rows) {
     for (let c = 0; c < row.length; c++) {
-      if (labelRegex.test(normalizeCell(row[c]))) {
-        const values: string[] = [];
-        for (let k = c + 1; k < row.length && values.length < count; k++) {
-          const val = normalizeCell(row[k]);
-          if (val) values.push(val);
-        }
-        if (values.length > 0) return values;
+      const cellText = normalizeCell(row[c]);
+      const inlineMatch = cellText.match(labelRegex);
+      if (!inlineMatch) continue;
+
+      if (count === 1) {
+        const rest = cellText.slice(inlineMatch.index! + inlineMatch[0].length).replace(/^[\s:]+/, "").trim();
+        const inlineValue = rest.split(/\s+/)[0];
+        if (inlineValue) return [inlineValue];
       }
+
+      const values: string[] = [];
+      for (let k = c + 1; k < row.length && values.length < count; k++) {
+        const val = normalizeCell(row[k]);
+        if (val) values.push(val);
+      }
+      if (values.length > 0) return values;
     }
   }
   return [];
+};
+
+// Some banks (HDFC) print the statement period as "Statement From :
+// 01/05/2026   To : 31/07/2026" in one cell instead of a "Statement Period"
+// label followed by two date cells - findLabelValues' generic label:value
+// shape doesn't cover a two-value inline pair, so this is a dedicated fallback.
+const findStatementFromTo = (rows: any[][]): [string, string] => {
+  for (const row of rows) {
+    for (const cell of row) {
+      const text = normalizeCell(cell);
+      const m = text.match(/from\s*:?\s*([\d/.-]+)\s*to\s*:?\s*([\d/.-]+)/i);
+      if (m) return [m[1], m[2]];
+    }
+  }
+  return ["", ""];
 };
 
 // Parses a generic Indian bank-statement Excel export: a label:value header block
 // followed by a transaction table (Date / Description / Debit / Credit / Balance).
 function parseStatementRows(rows: any[][]): ParsedStatement {
   const firstRow = rows[0] || [];
-  const bankName = normalizeCell(firstRow.find((c: any) => normalizeCell(c))) || "";
+  // Some banks (HDFC) cram "<Bank Name>    Page No .: 1    Statement of accounts"
+  // into a single cell - the bank name itself is just the text before the
+  // first big run of whitespace.
+  const bankName = (normalizeCell(firstRow.find((c: any) => normalizeCell(c))) || "").split(/\s{2,}/)[0];
 
   const accountHolderName = findLabelValues(rows, /^name$/i, 1)[0] || "";
-  const accountNumber = findLabelValues(rows, /account\s*number/i, 1)[0] || "";
+  const accountNumber = findLabelValues(rows, /account\s*(no\.?|number)\b/i, 1)[0] || "";
   const ifscCode = findLabelValues(rows, /ifsc/i, 1)[0] || "";
-  const period = findLabelValues(rows, /statement\s*period/i, 2);
+  const periodLabelled = findLabelValues(rows, /statement\s*period/i, 2);
+  const period = periodLabelled.length === 2 ? periodLabelled : findStatementFromTo(rows);
 
   // Locate the transaction table header row by matching column names
   let headerRowIdx = -1;
@@ -165,9 +198,15 @@ function parseStatementRows(rows: any[][]): ParsedStatement {
       const dateCell = normalizeCell(row[colMap.date]);
 
       if (/^total$/i.test(firstCell) || /^total$/i.test(dateCell)) break;
-      if (!dateCell) {
+      // A "***..." border/separator row, or trailing footer content (summary
+      // table, "Generated On", GSTIN notice, "End of Statement" etc.) never
+      // has a real date in the date column - only rows that actually look
+      // like a date get treated as transactions, everything else is skipped
+      // rather than blindly accepted (HDFC's footer rows aren't blank, they
+      // just don't have anything in the date column that's a real date).
+      if (!/^\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}$/.test(dateCell)) {
         if (/opening balance|closing balance|total debit|total credit|end of statement/i.test(firstCell)) break;
-        continue; // blank spacer row inside the table
+        continue; // blank spacer / separator / footer row inside the table
       }
 
       transactions.push({
