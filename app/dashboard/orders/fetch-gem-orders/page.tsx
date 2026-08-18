@@ -15,7 +15,8 @@ import {
   FiCheck,
   FiAlertCircle,
   FiChevronUp,
-  FiChevronDown
+  FiChevronDown,
+  FiZap
 } from "react-icons/fi";
 
 interface RawGeMOrder {
@@ -94,6 +95,12 @@ export default function FetchGeMOrdersPage() {
   const [verifying, setVerifying] = useState(false);
   const [currentUsername, setCurrentUsername] = useState("");
 
+  // Sheet Library auto-match results, keyed by raw order id - only populated
+  // when the "Auto-Match Items" button below is clicked (never runs on its
+  // own), then reused to pre-fill the Verify modal when it's opened.
+  const [matchResults, setMatchResults] = useState<Record<string, { instituteName?: string; itemId?: string; itemName?: string; remark?: string; hint?: string }>>({});
+  const [matchingAll, setMatchingAll] = useState(false);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem("oms_user");
@@ -126,25 +133,40 @@ export default function FetchGeMOrdersPage() {
     });
   };
 
-  // Sheet Library auto-match: once Buyer (Institute) is picked, find the row
-  // in that buyer's uploaded rate sheet whose Rate/Qty matches what the order
-  // actually placed on GeM at (the buyer ordered at the quoted rate/qty), then
-  // pull the real stock item (via that row's mappedItemId) and the item name
-  // as originally written in the buyer's Excel sheet (into Remark) from it.
-  useEffect(() => {
-    if (!customInstituteName.trim() || !selectedOrder) {
-      setAutoFillHint(null);
-      return;
-    }
-
-    const candidateSheets = resolveBuyerSheets(customInstituteName);
-    const orderRate = Number(selectedOrder.rate);
-    const orderQty = Number(selectedOrder.qty);
+  // Sheet Library match lookup: given a buyer and an order, find the row in
+  // that buyer's uploaded rate sheet whose Rate/Qty matches what the order
+  // actually placed on GeM at (the buyer ordered at the quoted rate/qty).
+  // /api/gem-sync's bulk response never carries uploadedRows (moved to R2,
+  // loaded lazily per-sheet - see route.ts) so each candidate sheet's rows
+  // are fetched on demand here via ?sheetContent=, through sheetRowsCache so
+  // the same sheet is never re-fetched twice in one bulk run. Only ever
+  // called from runBulkAutoMatch below (the "Auto-Match Items" button),
+  // never on its own, so Institute/Item Name/Remark never silently change
+  // under the user.
+  const findSheetMatch = async (
+    buyerName: string,
+    order: RawGeMOrder,
+    sheetRowsCache: Map<string, UploadedSheetRow[]>
+  ): Promise<{ row: UploadedSheetRow; sheet: SheetRecord } | null> => {
+    const candidateSheets = resolveBuyerSheets(buyerName);
+    const orderRate = Number(order.rate);
+    const orderQty = Number(order.qty);
 
     let rateOnlyMatch: { row: UploadedSheetRow; sheet: SheetRecord } | null = null;
 
     outer: for (const sheet of candidateSheets) {
-      for (const row of sheet.uploadedRows || []) {
+      let rows = sheetRowsCache.get(sheet.id);
+      if (!rows) {
+        try {
+          const res = await fetch(`/api/gem-sync?sheetContent=${sheet.id}`);
+          rows = res.ok ? ((await res.json()).uploadedRows || []) : [];
+        } catch {
+          rows = [];
+        }
+        sheetRowsCache.set(sheet.id, rows);
+      }
+
+      for (const row of rows) {
         if (Number(row.rate) !== orderRate) continue;
         if (Number(row.qty) === orderQty) {
           rateOnlyMatch = { row, sheet };
@@ -154,21 +176,8 @@ export default function FetchGeMOrdersPage() {
       }
     }
 
-    if (!rateOnlyMatch) {
-      setAutoFillHint(null);
-      return;
-    }
-
-    const { row, sheet } = rateOnlyMatch;
-    const stockItem = row.mappedItemId ? stockItems.find(s => s._id === row.mappedItemId) : null;
-    if (stockItem) {
-      setSelectedStockItem(stockItem);
-      setCustomItemName(stockItem.itemName);
-      setItemQuery(stockItem.itemName);
-    }
-    if (row.originalName) setCustomRemark(row.originalName);
-    setAutoFillHint(`Auto-matched from Sheet Library "${sheet.fileName}" (rate ₹${row.rate}, qty ${row.qty})`);
-  }, [customInstituteName, selectedOrder, sheets, buyerOptions, stockItems]);
+    return rateOnlyMatch;
+  };
 
   const fetchRawOrders = async () => {
     try {
@@ -267,6 +276,41 @@ export default function FetchGeMOrdersPage() {
     );
   };
 
+  // Bulk "Auto-Match Items" button (top of page) - the only trigger for the
+  // Institute + Sheet Library rate/qty matching. Runs once across every
+  // pending order and caches results in matchResults, keyed by order id;
+  // openVerifyModal reads from that cache instead of computing it itself.
+  const runBulkAutoMatch = async () => {
+    setMatchingAll(true);
+    try {
+      const sheetRowsCache = new Map<string, UploadedSheetRow[]>();
+      const results: typeof matchResults = {};
+      for (const order of rawOrders) {
+        const guessedBuyer = guessBuyerForOrder(order);
+        if (!guessedBuyer) continue;
+
+        const match = await findSheetMatch(guessedBuyer.name, order, sheetRowsCache);
+        if (!match) continue;
+
+        const { row, sheet } = match;
+        const stockItem = row.mappedItemId ? stockItems.find(s => s._id === row.mappedItemId) : null;
+
+        results[order._id] = {
+          instituteName: guessedBuyer.name,
+          itemId: stockItem?._id,
+          itemName: stockItem?.itemName,
+          remark: row.originalName || "",
+          hint: `Auto-matched from Sheet Library "${sheet.fileName}" (rate ₹${row.rate}, qty ${row.qty})`
+        };
+      }
+      setMatchResults(results);
+      const matchedCount = Object.keys(results).length;
+      alert(`✓ ${matchedCount} of ${rawOrders.length} orders auto-matched from Sheet Library. Open Verify on a matched order to see it filled in.`);
+    } finally {
+      setMatchingAll(false);
+    }
+  };
+
   const handleSort = (key: "firmCode" | "instituteName" | "itemName") => {
     setSortConfig((prev) => {
       if (prev && prev.key === key) {
@@ -296,20 +340,29 @@ export default function FetchGeMOrdersPage() {
     setSelectedOrder(order);
     const firmMatch = order.firmCode && companies.some(c => c.firmCode === order.firmCode);
     setSelectedFirmCode(firmMatch ? order.firmCode! : (companies.length > 0 ? companies[0].firmCode : "GeM"));
-    // Try to pre-select a matching Institute from the Seller Directory (same
-    // guess already shown in the list itself - see guessBuyerForOrder).
+
+    // Pre-fill only from the cached "Auto-Match Items" result (if that button
+    // was run for this order) or the simple Institute name guess - never runs
+    // the Sheet Library rate/qty match itself here.
+    const match = matchResults[order._id];
     const guessedBuyer = guessBuyerForOrder(order);
-    setCustomInstituteName(guessedBuyer ? guessedBuyer.name : "");
-    setCustomItemName(order.itemName);
-    setItemQuery(order.itemName || "");
-    setSelectedStockItem(null);
+    setCustomInstituteName(match?.instituteName || (guessedBuyer ? guessedBuyer.name : ""));
+
+    const matchedStockItem = match?.itemId ? stockItems.find(s => s._id === match.itemId) : null;
+    if (matchedStockItem) {
+      setSelectedStockItem(matchedStockItem);
+      setCustomItemName(matchedStockItem.itemName);
+      setItemQuery(matchedStockItem.itemName);
+    } else {
+      setSelectedStockItem(null);
+      setCustomItemName(order.itemName);
+      setItemQuery(order.itemName || "");
+    }
     setShowItemSuggestions(false);
     setCustomQty(order.qty || 1);
     setCustomRate(order.rate || 0);
-    // Left blank until (if) the Sheet Library auto-match below fills it in
-    // with the item name from the buyer's own Excel sheet - no location text.
-    setCustomRemark("");
-    setAutoFillHint(null);
+    setCustomRemark(match?.remark || "");
+    setAutoFillHint(match?.hint || null);
   };
 
   const handleSelectStockItem = (item: StockItemOption) => {
@@ -429,13 +482,23 @@ export default function FetchGeMOrdersPage() {
         >
           <FiArrowLeft size={16} /> Back to Orders Dashboard
         </button>
-        <button
-          onClick={fetchRawOrders}
-          disabled={refreshing}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
-        >
-          <FiRefreshCw className={refreshing ? "animate-spin" : ""} size={14} /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={runBulkAutoMatch}
+            disabled={matchingAll || rawOrders.length === 0}
+            title="Match Institute + Item from the Sheet Library for all pending orders below"
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
+          >
+            <FiZap className={matchingAll ? "animate-pulse" : ""} size={14} /> {matchingAll ? "Matching..." : "Auto-Match Items"}
+          </button>
+          <button
+            onClick={fetchRawOrders}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
+          >
+            <FiRefreshCw className={refreshing ? "animate-spin" : ""} size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Page Title */}
