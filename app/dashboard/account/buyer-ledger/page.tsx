@@ -33,12 +33,21 @@ interface StatementRecord {
 interface LedgerEntry {
   key: string;
   date: string;
-  type: "Sale" | "Receipt";
+  type: "Sale" | "Receipt" | "TDS" | "TDS+GST" | "Kasar";
   voucherNo: string;
   accountName: string;
   debit: number;
   credit: number;
   isPaid?: boolean;
+}
+
+interface ReconciliationMatch {
+  transactionDate: string;
+  billNos?: string[];
+  firmCode?: string;
+  deductionAmount?: number;
+  deductionType?: string | null;
+  correctedType?: string | null;
 }
 
 interface PartySummary {
@@ -67,6 +76,7 @@ export default function BuyerLedgerPage() {
   const [statements, setStatements] = useState<StatementRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [partySummary, setPartySummary] = useState<PartySummary | null>(null);
+  const [confirmedMatches, setConfirmedMatches] = useState<ReconciliationMatch[]>([]);
 
   useEffect(() => {
     fetch("/api/companies")
@@ -123,6 +133,23 @@ export default function BuyerLedgerPage() {
       .catch((err) => console.error("Failed to load party summary", err));
   }, [selectedInstitute, firmFilter]);
 
+  // Confirmed reconciliation matches carry the actual TDS/TDS+GST/Kasar cut
+  // against each settled bill - the raw bank statement scan below only ever
+  // sees the cash portion, so without this a deduction-settled bill would
+  // show as permanently pending in this ledger.
+  useEffect(() => {
+    if (!selectedInstitute) {
+      setConfirmedMatches([]);
+      return;
+    }
+    const params = new URLSearchParams({ instituteName: selectedInstitute, status: "confirmed" });
+    if (firmFilter) params.set("firmCode", firmFilter);
+    fetch(`/api/reconciliation/matches?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => setConfirmedMatches(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load confirmed reconciliation matches", err));
+  }, [selectedInstitute, firmFilter]);
+
   const firmNameByCode = useMemo(() => {
     const map: Record<string, string> = {};
     companies.forEach((c) => {
@@ -169,6 +196,30 @@ export default function BuyerLedgerPage() {
     return entries;
   }, [selectedInstitute, selectedSeller, statements, firmFilter, firmNameByCode]);
 
+  // One ledger line per confirmed match that actually had something deducted -
+  // this is what lets the running balance reflect the bill as fully settled
+  // (cash + deduction) instead of showing the deducted portion as still owed.
+  const deductionEntries = useMemo<LedgerEntry[]>(
+    () =>
+      confirmedMatches
+        .map((m, idx) => {
+          const type = (m.correctedType || m.deductionType || "") as LedgerEntry["type"];
+          const amount = Number(m.deductionAmount) || 0;
+          if (!amount || (type !== "TDS" && type !== "TDS+GST" && type !== "Kasar")) return null;
+          return {
+            key: `deduction-${idx}-${m.transactionDate}-${amount}`,
+            date: m.transactionDate || "",
+            type,
+            voucherNo: (m.billNos || []).join(", "),
+            accountName: firmNameByCode[m.firmCode || ""] || m.firmCode || "—",
+            debit: 0,
+            credit: amount,
+          } as LedgerEntry;
+        })
+        .filter((e): e is LedgerEntry => e !== null),
+    [confirmedMatches, firmNameByCode]
+  );
+
   const saleEntries = useMemo<LedgerEntry[]>(
     () =>
       orders.map((o) => ({
@@ -186,8 +237,8 @@ export default function BuyerLedgerPage() {
 
   // Full chronological history (unbounded) so the running balance carries forward correctly
   const fullHistory = useMemo(
-    () => [...saleEntries, ...matchedReceipts].sort((a, b) => a.date.localeCompare(b.date)),
-    [saleEntries, matchedReceipts]
+    () => [...saleEntries, ...matchedReceipts, ...deductionEntries].sort((a, b) => a.date.localeCompare(b.date)),
+    [saleEntries, matchedReceipts, deductionEntries]
   );
 
   const { openingBalance, visibleRows, closingBalance, totals } = useMemo(() => {
@@ -462,6 +513,12 @@ export default function BuyerLedgerPage() {
                                 className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
                                   row.type === "Receipt"
                                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    : row.type === "TDS"
+                                    ? "bg-orange-50 text-orange-700 border border-orange-200"
+                                    : row.type === "TDS+GST"
+                                    ? "bg-purple-50 text-purple-700 border border-purple-200"
+                                    : row.type === "Kasar"
+                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
                                     : "bg-blue-50 text-blue-700 border border-blue-200"
                                 }`}
                               >
@@ -504,9 +561,12 @@ export default function BuyerLedgerPage() {
 
           <p className="text-[10px] text-slate-400 leading-relaxed px-1">
             "Receipt" rows come from actual bank statement credits matched to this institute via its "Statement
-            Description Name" tags (set on the Update Seller page) — real dates and amounts, not estimated. Orders
-            still marked "Paid" but with no matching bank receipt yet are flagged "✓ paid" for reference but don't
-            reduce the balance until a matching receipt is found, so Closing Balance always reflects real cash received.
+            Description Name" tags (set on the Update Seller page) — real dates and amounts, not estimated. "TDS" /
+            "TDS+GST" / "Kasar" rows come from confirmed Bank Reconciliation matches for the same bills — added
+            alongside the Receipt so a bill settled with a deduction shows as fully cleared here too, instead of the
+            deducted portion looking permanently pending. Orders still marked "Paid" but with no matching bank receipt
+            yet are flagged "✓ paid" for reference but don't reduce the balance until a matching receipt is found, so
+            Closing Balance always reflects real cash + confirmed deductions received.
           </p>
         </div>
       </div>
