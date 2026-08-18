@@ -36,7 +36,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   }, []);
 
-  const [formData, setFormData] = useState({
+  const blankFormData = {
     firmCode: "",
     sellerId: "",
     instituteName: "",
@@ -52,7 +52,12 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     reQty: 0,
     rate: "" as any,
     remark: ""
-  });
+  };
+  const [formData, setFormData] = useState(blankFormData);
+  // Brief inline confirmation shown after "Save & Add Another" instead of a
+  // blocking alert() - a blocking dialog on every entry would defeat the
+  // point of typing several orders back-to-back without leaving the modal.
+  const [savedFlash, setSavedFlash] = useState("");
 
   // Tracks which record (by _id/contractNo) has already been loaded into the
   // form, so this effect populates formData exactly once per "open for
@@ -172,27 +177,28 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   //   }
   // };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    //console.log("Data being sent to DB:", formData);
+  // Shared validate+save core. Returns true on success so the two submit
+  // buttons (Save & Close vs Save & Add Another) can each decide what to do
+  // afterwards without duplicating the validation/POST logic.
+  const saveOrder = async (): Promise<boolean> => {
     if (!dataLoaded) {
       alert("Still loading firm/institute/item lists — please wait a second and press Save again.");
-      return;
+      return false;
     }
     const isValidFirm = firms.some((f: any) => f.firmCode === formData.firmCode);
     if (!isValidFirm) {
       alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
-      return; // Block database submit action pipeline completely
+      return false; // Block database submit action pipeline completely
     }
     const isValidItem = stocks.some((x: any) => x.itemName === formData.itemName);
     if (!isValidItem) {
       alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
-      return;
+      return false;
     }
 
     if (!formData.reQty || formData.reQty <= 0) {
       alert("Please enter a quantity more than 0");
-      return; // STOP the function here
+      return false; // STOP the function here
     }
     setLoading(true);
     try {
@@ -212,26 +218,44 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
         const result = await res.json();
         if (result?.mergeWarning) {
           alert(`⚠ ${result.mergeWarning}`);
-        } else {
-          alert(isEditing ? "Order Updated Successfully!" : "Order Saved Successfully!");
         }
-        if (onClose) {
-          onClose();
-        }
-        if (isModal && onClose) {
-          onClose(); // This will trigger fetchOrders() in your main page
-        } else {
-          window.location.reload();
-        }
+        return true;
       } else {
         const err = await res.json();
         alert(`Error: ${err.error || "Failed to save"}`);
+        return false;
       }
     } catch (error) {
       alert("Check your server connection.");
+      return false;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await saveOrder();
+    if (!ok) return;
+
+    alert(initialData?._id ? "Order Updated Successfully!" : "Order Saved Successfully!");
+    if (isModal && onClose) {
+      onClose(); // This will trigger fetchOrders() in your main page
+    } else {
+      window.location.reload();
+    }
+  };
+
+  // Saves the current order but keeps the modal open with a blank form for
+  // the next one - firms/institutes/stock are already loaded, so there's no
+  // refetch, and there's no reopen-"Add Order" round trip between entries.
+  const handleSaveAndAddAnother = async () => {
+    const ok = await saveOrder();
+    if (!ok) return;
+
+    setFormData(blankFormData);
+    setSavedFlash("✓ Order saved — add the next one");
+    setTimeout(() => setSavedFlash(""), 2500);
   };
 
   return (
@@ -427,9 +451,26 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
             </div>
 
-            <button type="submit" disabled={loading} className="bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? "Saving..." : "Save Order"}
-            </button>
+            <div className="md:col-span-3 flex flex-col sm:flex-row gap-3 items-center">
+              <button type="submit" disabled={loading} className="flex-1 w-full bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? "Saving..." : initialData?._id ? "Update Order" : "Save & Close"}
+              </button>
+              {isModal && !initialData?._id && (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handleSaveAndAddAnother}
+                  className="flex-1 w-full bg-emerald-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? "Saving..." : "Save & Add Another"}
+                </button>
+              )}
+            </div>
+            {savedFlash && (
+              <div className="md:col-span-3 text-center text-emerald-600 font-black text-xs uppercase tracking-widest animate-in fade-in">
+                {savedFlash}
+              </div>
+            )}
           </form>
         </div>
       </div>
