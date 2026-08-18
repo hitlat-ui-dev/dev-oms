@@ -3,11 +3,11 @@
 // GeM page's CORS policy (extensions bypass CORS for hosts listed in
 // "host_permissions" in manifest.json).
 //
-// Pointed at local dev server for now, since that's where you're testing
-// (localhost:3000/dashboard/orders/fetch-gem-orders). Switch this to
-// "https://dev-oms-blush.vercel.app" once the latest code is deployed there
-// (and you're reviewing orders on the live site instead of localhost):
-const API_BASE = "http://localhost:3000";
+// Points at the deployed OMS since that's what's used when testing the
+// extension on the live GeM site. Switch back to "http://localhost:3000"
+// only when running the OMS dev server locally
+// (localhost:3000/dashboard/orders/fetch-gem-orders):
+const API_BASE = "https://dev-oms-blush.vercel.app";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
