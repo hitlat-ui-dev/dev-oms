@@ -15,6 +15,11 @@ const TABS = [
   "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
+// Module level cache for static directories so navigation stays instant
+let sellersCache: any[] | null = null;
+let companiesCache: any[] | null = null;
+let transportersCache: any[] | null = null;
+
 export default function OrdersListPage() {
   const router = useRouter();
   const [orders, setOrders] = useState<any[]>([]);
@@ -175,12 +180,16 @@ export default function OrdersListPage() {
       const timestamp = Date.now();
       const ordersUrl = all ? `/api/seller-orders?all=1&t=${timestamp}` : `/api/seller-orders?t=${timestamp}`;
 
-      const [ordersRes, stockRes, sellerRes, companyRes, transporterRes] = await Promise.all([
+      // Fast path: reuse cached static directories if already loaded in component session
+      if (sellersCache) setSellers(sellersCache);
+      if (companiesCache) setCompanies(companiesCache);
+      if (transportersCache) setTransporters(transportersCache);
+
+      const [ordersRes, sellerRes, companyRes, transporterRes] = await Promise.all([
         fetch(ordersUrl).catch(() => null),
-        fetch(`/api/stock?t=${timestamp}`).catch(() => null),
-        fetch(`/api/sellers?t=${timestamp}`).catch(() => null),
-        fetch(`/api/companies?t=${timestamp}`).catch(() => null),
-        fetch(`/api/transporters`).catch(() => null),
+        !sellersCache ? fetch(`/api/sellers?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
+        !companiesCache ? fetch(`/api/companies?t=${timestamp}`).catch(() => null) : Promise.resolve(null),
+        !transportersCache ? fetch(`/api/transporters`).catch(() => null) : Promise.resolve(null),
       ]);
 
       if (ordersRes && ordersRes.ok) {
@@ -188,23 +197,23 @@ export default function OrdersListPage() {
         setOrders(Array.isArray(data) ? data : []);
         setOrdersLoadedAll(all);
       }
-      if (stockRes && stockRes.ok) {
-        const stockData = await stockRes.json();
-        const loadedStock = Array.isArray(stockData) ? stockData : stockData.items || [];
-        setStock(loadedStock);
-        setStocks(loadedStock);
-      }
       if (sellerRes && sellerRes.ok) {
         const sellerData = await sellerRes.json();
-        setSellers(Array.isArray(sellerData) ? sellerData : []);
+        const arr = Array.isArray(sellerData) ? sellerData : [];
+        sellersCache = arr;
+        setSellers(arr);
       }
       if (companyRes && companyRes.ok) {
         const companyData = await companyRes.json();
-        setCompanies(Array.isArray(companyData) ? companyData : []);
+        const arr = Array.isArray(companyData) ? companyData : [];
+        companiesCache = arr;
+        setCompanies(arr);
       }
       if (transporterRes && transporterRes.ok) {
         const transporterData = await transporterRes.json();
-        setTransporters(Array.isArray(transporterData) ? transporterData : []);
+        const arr = Array.isArray(transporterData) ? transporterData : [];
+        transportersCache = arr;
+        setTransporters(arr);
       }
     } catch (err) {
       console.error("Fetch error", err);
@@ -922,7 +931,7 @@ const shippingLock = useRef(false);
 
         {!ordersLoadedAll && (
           <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[11px] text-amber-800 font-bold">
-            <span>Showing the {orders.length} most recent orders. Search/filters here only look within these — older orders need Load All.</span>
+            <span>Showing orders from the last 45 days ({orders.length} orders loaded). Search/filters look within these — older history needs Load All.</span>
             <button
               onClick={() => fetchOrders(true)}
               disabled={loadingAllOrders}
@@ -1184,11 +1193,11 @@ const shippingLock = useRef(false);
                   <div className="text-[9px] text-slate-800">SKU: {order.sku},
                     <b className="text-green-500">Stock: </b>
                     <span className="font-bold text-slate-700 mr-1">
-                      {stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
+                      {order.stockQty ?? stocks.find(s => s._id === order.itemId)?.totalQty ?? 0}
                     </span>
                     <b className="text-amber-500">Re-Qty: </b>
                     <span className="font-bold text-slate-700">
-                      {stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
+                      {order.stockReQty ?? stocks.find(s => s._id === order.itemId)?.reQty ?? 0}
                     </span>
                   </div>
                 </td>
@@ -1391,7 +1400,6 @@ const shippingLock = useRef(false);
               setShowOrderModal(false);
               setEditingOrder(null);
               fetchOrders();
-              fetchStocks();
             }}
             initialData={editingOrder}
           />
