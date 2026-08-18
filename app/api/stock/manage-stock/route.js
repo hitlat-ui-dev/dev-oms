@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { syncPurchaseRequest } from "@/lib/syncPurchaseRequest";
 
 export async function PUT(request) {
   try {
@@ -67,6 +68,13 @@ export async function PUT(request) {
         }
       ]
     );
+
+    // Recompute this SKU's Purchase Request (create/update/delete as needed) -
+    // otherwise a manual stock add/remove here never reaches the same
+    // deficit-check that order create/verify/delete already trigger, and PRs
+    // go stale (still open after stock is replenished, or missing after a
+    // manual removal creates a new deficit).
+    await syncPurchaseRequest(db, sku);
 
     return NextResponse.json({
       success: true,
