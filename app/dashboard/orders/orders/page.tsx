@@ -6,10 +6,11 @@ import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft } from "react-icons/fi";
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
-import * as XLSX from 'xlsx';
+// jspdf, jspdf-autotable and xlsx are all heavy (500KB+) and only ever needed
+// when the user actually clicks an Export/Download button - dynamically
+// imported inside those handlers below instead of bundled into every load
+// of this page.
 
 const TABS = [
   "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
@@ -100,55 +101,60 @@ export default function OrdersListPage() {
     });
   }, [stock]);
 
-  const filteredOrders = orders.filter(order => {
-    // 1. Tab Status must match
-    const matchesTab = activeTab === "ALL" || (activeTab === "CANCEL" && order.status === "CANCELL ORDER") || order.status === activeTab;
+  // Filters + sorts the whole orders array (up to 2,500 with "Load All") - memoized
+  // so it only re-runs when orders/filters/tab actually change, not on every render
+  // this large component does (opening a modal, toggling a row, etc. all re-render it).
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      // 1. Tab Status must match
+      const matchesTab = activeTab === "ALL" || (activeTab === "CANCEL" && order.status === "CANCELL ORDER") || order.status === activeTab;
 
-    // 2. Safe and Trimmed Search Logic
-    const matchesItem = (order.itemName || "").toLowerCase().trim()
-      .includes(filters.itemName.toLowerCase().trim());
+      // 2. Safe and Trimmed Search Logic
+      const matchesItem = (order.itemName || "").toLowerCase().trim()
+        .includes(filters.itemName.toLowerCase().trim());
 
-    const matchesCategory = (order.category || "").toLowerCase().trim()
-      .includes(filters.category.toLowerCase().trim());
+      const matchesCategory = (order.category || "").toLowerCase().trim()
+        .includes(filters.category.toLowerCase().trim());
 
-    // Check both 'firmName' and 'firm' fields just in case
-    const matchesFirm = (order.firmCode || "").toLowerCase().trim()
-      .includes(filters.firm.toLowerCase().trim());
+      // Check both 'firmName' and 'firm' fields just in case
+      const matchesFirm = (order.firmCode || "").toLowerCase().trim()
+        .includes(filters.firm.toLowerCase().trim());
 
-    const matchesBuyer = (order.instituteName || "").toLowerCase().trim()
-      .includes(filters.buyerName.toLowerCase().trim());
+      const matchesBuyer = (order.instituteName || "").toLowerCase().trim()
+        .includes(filters.buyerName.toLowerCase().trim());
 
-    // 3. Date check
-    const orderDateStr = order.orderDate || order.createdAt || "";
-    const orderTime = orderDateStr ? new Date(orderDateStr).setHours(0, 0, 0, 0) : null;
+      // 3. Date check
+      const orderDateStr = order.orderDate || order.createdAt || "";
+      const orderTime = orderDateStr ? new Date(orderDateStr).setHours(0, 0, 0, 0) : null;
 
-    // Convert filter inputs to timestamps for comparison
-    const start = filters.startDate ? new Date(filters.startDate).setHours(0, 0, 0, 0) : null;
-    const end = filters.endDate ? new Date(filters.endDate).setHours(23, 59, 59, 999) : null;
+      // Convert filter inputs to timestamps for comparison
+      const start = filters.startDate ? new Date(filters.startDate).setHours(0, 0, 0, 0) : null;
+      const end = filters.endDate ? new Date(filters.endDate).setHours(23, 59, 59, 999) : null;
 
-    let matchesDate = true;
-    if (orderTime) {
-      if (start && end) {
-        matchesDate = orderTime >= start && orderTime <= end;
-      } else if (start) {
-        matchesDate = orderTime >= start;
-      } else if (end) {
-        matchesDate = orderTime <= end;
+      let matchesDate = true;
+      if (orderTime) {
+        if (start && end) {
+          matchesDate = orderTime >= start && orderTime <= end;
+        } else if (start) {
+          matchesDate = orderTime >= start;
+        } else if (end) {
+          matchesDate = orderTime <= end;
+        }
+      } else if (start || end) {
+        // If user is filtering by date but order has no date, hide it
+        matchesDate = false;
       }
-    } else if (start || end) {
-      // If user is filtering by date but order has no date, hide it
-      matchesDate = false;
-    }
 
-    return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
-  })
-    .sort((a, b) => {
-      // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
-      const numA = parseInt(a.orderNumber || a.orderNo || 0, 10) || 0;
-      const numB = parseInt(b.orderNumber || b.orderNo || 0, 10) || 0;
+      return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
+    })
+      .sort((a, b) => {
+        // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
+        const numA = parseInt(a.orderNumber || a.orderNo || 0, 10) || 0;
+        const numB = parseInt(b.orderNumber || b.orderNo || 0, 10) || 0;
 
-      return numB - numA; // High numbers first (e.g. 098, 097...)
-    });
+        return numB - numA; // High numbers first (e.g. 098, 097...)
+      });
+  }, [orders, activeTab, filters]);
 
   // Reset display limit when filters or tab change
   useEffect(() => {
@@ -265,25 +271,16 @@ export default function OrdersListPage() {
     if (!orderToUpdate) return;
     //console.log(orderToUpdate.instituteName);
 
-    // --- NEW LOGIC FOR PARTIAL SHIPMENT CHECK ---
+    // Ready-to-ship always goes through the Partial Ship modal so the user
+    // picks/confirms the exact ship qty themselves - never silently falls
+    // through to the generic window.confirm below, regardless of stock level.
     if (newStatus === "READY TO SHIP" && activeTab === "TO CHECK") {
-      try {
-        // Fetch current stock for this item
-        const stockRes = await fetch(`/api/stock?search=${orderToUpdate.itemName}`);
-        const stocks = await stockRes.json();
-        const currentStock = stocks.find((s: any) => s.itemName === orderToUpdate.itemName)?.quantity || 0;
-
-
-        if (currentStock < orderToUpdate.reQty) {
-          setSelectedOrderId(orderId);
-          setAvailableStock(currentStock);
-          setShipQty(currentStock); // Pre-fill with what we have
-          setShowPartialShipModal(true);
-          return; // Stop standard update and wait for modal
-        }
-      } catch (err) {
-        console.error("Stock check failed", err);
-      }
+      const currentStock = orderToUpdate.stockQty ?? 0;
+      setSelectedOrderId(orderId);
+      setAvailableStock(currentStock);
+      setShipQty(Math.min(currentStock, orderToUpdate.reQty)); // Pre-fill with what we have
+      setShowPartialShipModal(true);
+      return; // Stop standard update and wait for modal
     }
 
     // Standard Logic remains below...
@@ -321,7 +318,11 @@ export default function OrdersListPage() {
 
 
       if (res.ok) {
-        fetchOrders();
+        // Patch just this row locally instead of re-fetching the whole
+        // ~250-order list + sellers/companies/transporters from scratch -
+        // that full re-fetch on every status click was what looked like the
+        // whole page reloading.
+        setOrders(prev => prev.map(o => o._id === orderId ? { ...o, status: newStatus } : o));
       } else {
         const errorData = await res.json();
         alert(errorData.error || "Something went wrong");
@@ -352,8 +353,7 @@ const shippingLock = useRef(false);
       return;
     }
 
-    const stockData = stocks.find(s => s._id === orderToUpdate.itemId);
-    const avStock = stockData?.totalQty ?? 0;
+    const avStock = orderToUpdate.stockQty ?? 0;
 
     if (shipQty > orderToUpdate.reQty) {
       alert("Quantity exceeds order limit");
@@ -450,12 +450,7 @@ const shippingLock = useRef(false);
       return;
     }
 
-    const stockList = stocks.length > 0 ? stocks : stock;
-    const stockData = stockList.find(s =>
-      (orderToUpdate.itemId && String(s._id) === String(orderToUpdate.itemId)) ||
-      (orderToUpdate.sku && s.sku && s.sku.trim().toLowerCase() === orderToUpdate.sku.trim().toLowerCase())
-    );
-    const avStock = stockData?.totalQty ?? (stockData as any)?.quantity ?? 0;
+    const avStock = orderToUpdate.stockQty ?? 0;
 
     if (shipQty > orderToUpdate.reQty) {
       alert("Quantity exceeds order limit");
@@ -671,8 +666,10 @@ const shippingLock = useRef(false);
   }
 
   // Draws one buyer's challan (header, items table, transporter contact,
-  // footer/terms) onto a given jsPDF doc at its current page.
-  const drawChallanPage = (doc: any, sellerInfo: any, items: any[], companies: any[], formattedDate: string, transporters: any[]) => {
+  // footer/terms) onto a given jsPDF doc at its current page. autoTable is
+  // passed in rather than imported here since it's loaded on demand by the
+  // caller (downloadDeliveryChallan) to keep it out of the page's main bundle.
+  const drawChallanPage = (doc: any, autoTable: any, sellerInfo: any, items: any[], companies: any[], formattedDate: string, transporters: any[]) => {
     doc.setFontSize(22);
     doc.setFont("helvetica", "bold");
     doc.text("DELIVERY CHALLAN", 105, 20, { align: "center" });
@@ -792,7 +789,7 @@ const shippingLock = useRef(false);
     doc.text(terms, 14, footerY + 5, { maxWidth: 180 });
   };
 
-  const downloadDeliveryChallan = (filteredOrders: any[], sellers: any[], companies: any[], selectedOrderIds: string[] = []) => {
+  const downloadDeliveryChallan = async (filteredOrders: any[], sellers: any[], companies: any[], selectedOrderIds: string[] = []) => {
     // if (!filteredOrders || filteredOrders.length === 0) {
     //   alert("No orders selected to download.");
     //   return;
@@ -806,6 +803,11 @@ const shippingLock = useRef(false);
       alert("No orders selected to download.");
       return;
     }
+
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
 
     const doc = new jsPDF();
     const today = new Date();
@@ -836,14 +838,14 @@ const shippingLock = useRef(false);
         fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
       }
 
-      drawChallanPage(doc, sellerInfo, items, companies, formattedDate, transporters);
+      drawChallanPage(doc, autoTable, sellerInfo, items, companies, formattedDate, transporters);
     });
 
     const safeName = fileNameBase.replace(/[^a-z0-9]/gi, '_');
     doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
   };
 
-  const handleExportSellingReport = () => {
+  const handleExportSellingReport = async () => {
     const reportData = filteredOrders.map((order) => {
       return {
         "Order No": order.orderNo,
@@ -872,6 +874,7 @@ const shippingLock = useRef(false);
       return;
     }
 
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(reportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Selling Report");
@@ -1558,18 +1561,7 @@ const shippingLock = useRef(false);
               <div className="bg-blue-50 p-3 rounded-2xl">
                 <p className="text-[9px] font-black text-blue-400 uppercase mb-1">In Stock</p>
                 <p className="font-black text-blue-800 text-lg">
-                  {(() => {
-                    const currentOrder = orders.find(o => o._id === selectedOrderId);
-                    if (currentOrder) {
-                      const stockList = stocks.length > 0 ? stocks : stock;
-                      const sDoc = stockList.find(s =>
-                        (currentOrder.itemId && String(s._id) === String(currentOrder.itemId)) ||
-                        (currentOrder.sku && s.sku && s.sku.trim().toLowerCase() === currentOrder.sku.trim().toLowerCase())
-                      );
-                      return sDoc?.totalQty ?? (sDoc as any)?.quantity ?? 0;
-                    }
-                    return 0;
-                  })()}
+                  {orders.find(o => o._id === selectedOrderId)?.stockQty ?? 0}
                 </p>
               </div>
             </div>
