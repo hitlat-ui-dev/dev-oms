@@ -70,6 +70,26 @@ export interface CombinationMatchResult {
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+// A payment is never credited for MORE than the bill - only equal or short
+// (short meaning a deduction was cut). This tiny buffer only absorbs float/
+// paisa rounding noise, not a real overpayment allowance.
+export const OVERPAY_ROUNDING_BUFFER = 1;
+
+// TDS is always exactly 2% of the bill, cut alone; TDS+GST is always 2% TDS
+// + 2% GST cut together (GST is never deducted on its own) - real confirmed
+// data confirms this precisely (samples land within 1.98%-2.01%, not a loose
+// "roughly 2%"). ±0.25% only absorbs paisa-level rounding, not real variance.
+export const TDS_PERCENT = 2;
+export const TDS_GST_PERCENT = 4;
+export const DEDUCTION_PERCENT_TOLERANCE = 0.25;
+
+// Real deduction history shows a payment is short-paid on only a small
+// minority of bills, and even then never by more than TDS+GST's own ceiling
+// - so the search window for "this might be a deduction" is capped just
+// above that rather than the old blanket 20%, which routinely misclassified
+// unrelated shortfalls as a deduction against the wrong bill.
+export const MAX_DEDUCTION_FRACTION = (TDS_GST_PERCENT + DEDUCTION_PERCENT_TOLERANCE) / 100;
+
 // ============================================================
 // KEYWORD EXTRACTION (ported from the provided learning-engine.js)
 // ============================================================
@@ -353,9 +373,10 @@ export const withRemainingAmounts = (bills: any[]) =>
   }));
 
 /**
- * Step 2: match a credited amount to a single open bill, within ±tolerance for a full
- * settlement, or — if the credited amount is somewhat short (up to 20%) — the closest
- * bill by deduction size, so Step 3 can classify what was deducted.
+ * Step 2: match a credited amount to a single open bill, within tolerance for a full
+ * settlement (never more than the bill, only equal or short), or — if the credited
+ * amount is short by up to MAX_DEDUCTION_FRACTION — the closest bill by deduction
+ * size, so Step 3 can classify what was deducted.
  */
 export function findAmountMatch(
   bills: any[],
@@ -364,13 +385,21 @@ export function findAmountMatch(
 ): BillMatchResult | null {
   const candidates = withRemainingAmounts(bills);
 
-  const exact = candidates.find((b) => Math.abs(b.remainingAmount - creditedAmount) <= tolerance);
+  // Credited can be up to `tolerance` short and still count as fully settled
+  // (rounding-level), but never more than the bill by more than a paisa-level buffer.
+  const exact = candidates.find(
+    (b) => creditedAmount <= b.remainingAmount + OVERPAY_ROUNDING_BUFFER && creditedAmount >= b.remainingAmount - tolerance
+  );
   if (exact) {
     return { bill: exact, remainingAmount: exact.remainingAmount, deductionAmount: 0, matchType: "exact" };
   }
 
   const shortPaid = candidates
-    .filter((b) => creditedAmount < b.remainingAmount - tolerance && creditedAmount >= b.remainingAmount * 0.8)
+    .filter(
+      (b) =>
+        creditedAmount < b.remainingAmount - tolerance &&
+        creditedAmount >= b.remainingAmount * (1 - MAX_DEDUCTION_FRACTION)
+    )
     .map((b) => ({ ...b, deductionAmount: round2(b.remainingAmount - creditedAmount) }))
     .sort((a, b) => a.deductionAmount - b.deductionAmount);
 
@@ -404,7 +433,11 @@ export function findCombinationMatch(
 
   const search = (startIdx: number, chosen: any[], sum: number) => {
     if (found) return;
-    if (chosen.length > 0 && Math.abs(sum - creditedAmount) <= tolerance) {
+    // Same never-more-than-the-bill rule as the single-bill matcher: the
+    // combined bill total (sum) can be up to `tolerance` more than what was
+    // credited (short-paid, rounding-level), but credited can only exceed
+    // the total by the tiny paisa-rounding buffer, not the full tolerance.
+    if (chosen.length > 0 && sum >= creditedAmount - OVERPAY_ROUNDING_BUFFER && sum <= creditedAmount + tolerance) {
       found = [...chosen];
       return;
     }
@@ -446,13 +479,34 @@ export function suggestDeductionTypeFromHistory(
     kasarRange?.min !== null &&
     kasarRange?.min !== undefined &&
     deductionPercent >= kasarRange.min - 0.5 &&
-    deductionPercent <= (kasarRange.max ?? kasarRange.min) + 0.5
+    deductionPercent <= (kasarRange.max ?? kasarRange.min) + 0.5 &&
+    // Even an institute's own learned history can't push Kasar outside the
+    // hard 0.1%-3% business rule - a stray bad historical entry shouldn't be
+    // able to teach the system to suggest an implausible deduction.
+    deductionPercent >= 0.1 &&
+    deductionPercent <= 3
   ) {
     return "Kasar";
   }
 
-  if (tdsGstCount >= 3 && tdsGstCount > tdsOnlyCount) return "TDS+GST";
-  if (tdsOnlyCount >= 3 && tdsOnlyCount >= tdsGstCount) return "TDS";
+  // Same guard as Kasar above: history only overrides when the current
+  // deduction is actually near TDS's fixed 2% (or TDS+GST's fixed 4%) - an
+  // institute having 3+ past TDS deductions doesn't mean every future
+  // deduction is TDS regardless of its size.
+  if (
+    tdsGstCount >= 3 &&
+    tdsGstCount > tdsOnlyCount &&
+    deductionPercent >= TDS_GST_PERCENT - DEDUCTION_PERCENT_TOLERANCE &&
+    deductionPercent <= TDS_GST_PERCENT + DEDUCTION_PERCENT_TOLERANCE
+  )
+    return "TDS+GST";
+  if (
+    tdsOnlyCount >= 3 &&
+    tdsOnlyCount >= tdsGstCount &&
+    deductionPercent >= TDS_PERCENT - DEDUCTION_PERCENT_TOLERANCE &&
+    deductionPercent <= TDS_PERCENT + DEDUCTION_PERCENT_TOLERANCE
+  )
+    return "TDS";
 
   return null;
 }
@@ -466,7 +520,14 @@ export interface DeductionClassification {
   usedHistory: boolean;
 }
 
-/** Step 3: classify a deduction as TDS (~2%), TDS+GST (~4%), or Kasar (anything else). */
+/**
+ * Step 3: classify a deduction as TDS (~2%), TDS+GST (~4%), or Kasar (0.1%-3%,
+ * outside the TDS/TDS+GST bands). Real Kasar deductions never run wider than
+ * 3% of the bill - anything larger (or a sub-0.1% sliver too small to be a
+ * real deduction) isn't a plausible deduction at all and is left unclassified
+ * (null) rather than guessed, so it surfaces for manual review instead of a
+ * bad auto-suggestion.
+ */
 export function classifyDeduction(
   billAmount: number,
   creditedAmount: number,
@@ -480,9 +541,14 @@ export function classifyDeduction(
   const historySuggestion = suggestDeductionTypeFromHistory(seller, percent);
   if (historySuggestion) return { type: historySuggestion, percent, usedHistory: true };
 
-  if (percent >= 1.25 && percent <= 2.75) return { type: "TDS", percent, usedHistory: false };
-  if (percent >= 3.25 && percent <= 4.75) return { type: "TDS+GST", percent, usedHistory: false };
-  return { type: "Kasar", percent, usedHistory: false };
+  if (percent >= TDS_PERCENT - DEDUCTION_PERCENT_TOLERANCE && percent <= TDS_PERCENT + DEDUCTION_PERCENT_TOLERANCE) {
+    return { type: "TDS", percent, usedHistory: false };
+  }
+  if (percent >= TDS_GST_PERCENT - DEDUCTION_PERCENT_TOLERANCE && percent <= TDS_GST_PERCENT + DEDUCTION_PERCENT_TOLERANCE) {
+    return { type: "TDS+GST", percent, usedHistory: false };
+  }
+  if (percent >= 0.1 && percent <= 3) return { type: "Kasar", percent, usedHistory: false };
+  return { type: null, percent, usedHistory: false };
 }
 
 // ============================================================

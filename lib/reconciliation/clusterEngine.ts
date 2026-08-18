@@ -5,6 +5,7 @@ import {
   round2,
   SellerForMatching,
   DeductionType,
+  MAX_DEDUCTION_FRACTION,
 } from "./matchingEngine";
 
 // ============================================================
@@ -127,9 +128,9 @@ export interface ClusterCombinationMatchResult {
 /**
  * Extends findCombinationMatch (exact-sum only) with a deduction pass: when no
  * subset of bills sums exactly to the credited amount, search for a subset whose
- * sum is somewhat larger (up to ~20%, mirroring findAmountMatch's single-bill
- * tolerance) and classify the shortfall ONCE against the combined total — a
- * deduction is never split/recomputed per individual order in the combo.
+ * sum is somewhat larger (up to MAX_DEDUCTION_FRACTION, mirroring findAmountMatch's
+ * single-bill window) and classify the shortfall ONCE against the combined total —
+ * a deduction is never split/recomputed per individual order in the combo.
  */
 export function findClusterCombinationMatch(
   bills: any[],
@@ -156,8 +157,9 @@ export function findClusterCombinationMatch(
   const n = candidates.length;
   if (n < 2) return null;
 
-  // Even a ~20% deduction can't come from a combined total bigger than this.
-  const upperBound = creditedAmount / 0.8;
+  // A combined bill total can't be inflated by more than MAX_DEDUCTION_FRACTION
+  // and still be a plausible deduction against this payment.
+  const upperBound = creditedAmount / (1 - MAX_DEDUCTION_FRACTION);
   let found: any[] | null = null;
 
   const search = (startIdx: number, chosen: any[], sum: number) => {
