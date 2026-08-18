@@ -615,23 +615,12 @@ export default function GeMSyncPage() {
 
         setOriginalExcelData(data);
 
-        // Auto-extract buyer name from sheet file name
-        const defaultBuyerName = file.name.replace(/\.[^/.]+$/, "");
-        let buyerId = "";
-        const existingBuyer = buyers.find(b => b.name.toLowerCase() === defaultBuyerName.toLowerCase());
-        if (existingBuyer) {
-          buyerId = existingBuyer.id;
-        } else {
-          const newBuyer: Buyer = {
-            id: "buyer_" + Date.now(),
-            name: defaultBuyerName,
-            createdAt: new Date().toISOString()
-          };
-          saveBuyers([...buyers, newBuyer]);
-          buyerId = newBuyer.id;
-        }
-        setSelectedBuyerId(buyerId);
-        setBuyerSearchQuery(defaultBuyerName);
+        // Buyer is left unassigned here - the file name must never be used
+        // as/to auto-create an Institute. User picks the real Buyer/Institute
+        // manually from the Associated Buyer dropdown (sourced from the
+        // Sellers/Institute directory).
+        setSelectedBuyerId("");
+        setBuyerSearchQuery("");
 
         // Try to parse rows and match headers
         const parsedRows: UploadedRow[] = data.map((row: any, index) => {
