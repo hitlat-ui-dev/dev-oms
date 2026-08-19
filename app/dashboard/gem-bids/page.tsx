@@ -30,6 +30,15 @@ interface MoveHistoryRow {
   isReversal: boolean;
 }
 
+interface SyncRun {
+  _id: string;
+  status: "scraping" | "stopped" | "discarded" | "applying" | "completed";
+  progressPercent: number;
+  phase?: string;
+  startedAt: string;
+  finishedAt?: string | null;
+}
+
 export default function GemBidsPage() {
   const [bids, setBids] = useState<GemBid[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +50,10 @@ export default function GemBidsPage() {
   const [moveHistory, setMoveHistory] = useState<MoveHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [lastRun, setLastRun] = useState<LastRun | null>(null);
+
+  const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
+  const [syncActionLoading, setSyncActionLoading] = useState(false);
+  const [resumePrompt, setResumePrompt] = useState<SyncRun | null>(null);
 
   useEffect(() => {
     try {
@@ -70,14 +83,83 @@ export default function GemBidsPage() {
       .catch((err) => console.error("Failed to load last sync run", err));
   }, []);
 
+  const fetchSyncStatus = useCallback(() => {
+    fetch("/api/gem-bids/sync/status")
+      .then((res) => res.json())
+      .then((data) => setSyncRun(data?.run || null))
+      .catch((err) => console.error("Failed to load sync status", err));
+  }, []);
+
   const refetchAll = useCallback(() => {
     fetchBids();
     fetchLastRun();
-  }, [fetchBids, fetchLastRun]);
+    fetchSyncStatus();
+  }, [fetchBids, fetchLastRun, fetchSyncStatus]);
 
   useEffect(() => {
     refetchAll();
   }, [refetchAll]);
+
+  // Poll every ~2s while a run is actively scraping/applying so the
+  // progress bar below moves live; stop polling once it settles into a
+  // terminal state, and pull fresh bids + last-run stats the moment it
+  // completes so newly-synced bids show up without a manual refresh.
+  useEffect(() => {
+    if (syncRun?.status !== "scraping" && syncRun?.status !== "applying") return;
+    const interval = setInterval(() => {
+      fetch("/api/gem-bids/sync/status?runId=" + syncRun._id)
+        .then((res) => res.json())
+        .then((data) => {
+          const run: SyncRun | null = data?.run || null;
+          setSyncRun(run);
+          if (run?.status === "completed") {
+            fetchBids();
+            fetchLastRun();
+          }
+        })
+        .catch((err) => console.error("Failed to poll sync status", err));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [syncRun?.status, syncRun?._id, fetchBids, fetchLastRun]);
+
+  const handleStartSync = async (resolution?: "keep" | "discard") => {
+    setSyncActionLoading(true);
+    try {
+      const res = await fetch("/api/gem-bids/sync/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startedBy: currentUsername, resolution }),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data.needsResolution) {
+        setResumePrompt(data.previousRun);
+        return;
+      }
+      setResumePrompt(null);
+      fetchSyncStatus();
+    } catch (err) {
+      console.error("Failed to start sync", err);
+    } finally {
+      setSyncActionLoading(false);
+    }
+  };
+
+  const handleStopSync = async () => {
+    if (!syncRun) return;
+    setSyncActionLoading(true);
+    try {
+      await fetch("/api/gem-bids/sync/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: syncRun._id }),
+      });
+      fetchSyncStatus();
+    } catch (err) {
+      console.error("Failed to stop sync", err);
+    } finally {
+      setSyncActionLoading(false);
+    }
+  };
 
   const sectionCounts = useMemo(() => {
     const map: Record<string, number> = {};
@@ -145,12 +227,31 @@ export default function GemBidsPage() {
                 Fetch, Track & Work GeM Bid Listings
               </p>
             </div>
-            <Link
-              href="/dashboard/gem-bids/document-maker"
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
-            >
-              <FiFileText size={13} /> Open Document Maker →
-            </Link>
+            <div className="flex items-center gap-2">
+              {syncRun?.status === "scraping" || syncRun?.status === "applying" ? (
+                <button
+                  onClick={handleStopSync}
+                  disabled={syncActionLoading}
+                  className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                >
+                  Stop Sync
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleStartSync()}
+                  disabled={syncActionLoading}
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                >
+                  Start Sync
+                </button>
+              )}
+              <Link
+                href="/dashboard/gem-bids/document-maker"
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+              >
+                <FiFileText size={13} /> Open Document Maker →
+              </Link>
+            </div>
           </div>
 
           {/* Dashboard / summary panel */}
@@ -174,6 +275,28 @@ export default function GemBidsPage() {
                     </span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {(syncRun?.status === "scraping" || syncRun?.status === "applying") && (
+              <div className="mb-4 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider">
+                    {syncRun.status === "applying" ? "Applying..." : "Syncing..."}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-500">{syncRun.progressPercent ?? 0}%</span>
+                </div>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 transition-all"
+                    style={{ width: `${syncRun.progressPercent ?? 0}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5">
+                  {syncRun.phase === "starting"
+                    ? "Waiting for the extension to pick this up — keep the GeM Advance Search results tab open."
+                    : syncRun.phase}
+                </p>
               </div>
             )}
 
@@ -218,6 +341,38 @@ export default function GemBidsPage() {
           )}
         </div>
       </div>
+
+      {resumePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5">
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 mb-2">Resume previous run?</h3>
+            <p className="text-[11px] text-slate-500 mb-4">
+              A sync run was stopped mid-way at {resumePrompt.progressPercent ?? 0}% (started{" "}
+              {new Date(resumePrompt.startedAt).toLocaleString()}). Keep resuming it, or discard it and start fresh?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setResumePrompt(null);
+                  handleStartSync("discard");
+                }}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              >
+                Discard, Start Fresh
+              </button>
+              <button
+                onClick={() => {
+                  setResumePrompt(null);
+                  handleStartSync("keep");
+                }}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+              >
+                Keep, Resume
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {historyBidNo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

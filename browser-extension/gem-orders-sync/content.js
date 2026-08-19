@@ -12,7 +12,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function showToast(message, isError) {
+function showToast(message, isError, durationMs = 5000) {
   let toast = document.getElementById("gem-oms-toast");
   if (!toast) {
     toast = document.createElement("div");
@@ -25,7 +25,135 @@ function showToast(message, isError) {
   clearTimeout(toast._hideTimer);
   toast._hideTimer = setTimeout(() => {
     toast.style.display = "none";
-  }, 5000);
+  }, durationMs);
+}
+
+// ===== Firm picker =====
+// Shows a dropdown of firms pulled from Dev OMS (companies collection) instead
+// of a free-text prompt, so typos can't send orders in under the wrong firm.
+
+function getFirmsFromBackground() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "GEM_GET_FIRMS" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.ok) {
+        resolve([]);
+        return;
+      }
+      resolve(response.firms);
+    });
+  });
+}
+
+function showFirmPickerModal(firms, lastFirmCode) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.id = "gem-oms-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.id = "gem-oms-modal";
+
+    const title = document.createElement("h3");
+    title.textContent = "Ye orders kis Firm ke liye fetch ho rahe hain?";
+    modal.appendChild(title);
+
+    const select = document.createElement("select");
+    firms.forEach((f) => {
+      const opt = document.createElement("option");
+      opt.value = f.firmCode;
+      opt.textContent = f.firmName ? `${f.firmCode} - ${f.firmName}` : f.firmCode;
+      if (f.firmCode === lastFirmCode) opt.selected = true;
+      select.appendChild(opt);
+    });
+    modal.appendChild(select);
+
+    const actions = document.createElement("div");
+    actions.className = "gem-oms-modal-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "gem-oms-btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "gem-oms-btn-confirm";
+    confirmBtn.textContent = "Confirm";
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+    cancelBtn.addEventListener("click", () => close(null));
+    confirmBtn.addEventListener("click", () => close(select.value));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(null);
+    });
+  });
+}
+
+// Result summary needs to stay on screen until the user reads it and closes
+// it themselves - a toast timer isn't good enough here since the fetch can
+// finish while they're not looking at the tab.
+function showResultModal(title, message, isError) {
+  const overlay = document.createElement("div");
+  overlay.id = "gem-oms-modal-overlay";
+
+  const modal = document.createElement("div");
+  modal.id = "gem-oms-modal";
+  modal.className = "gem-oms-modal-lg";
+
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  if (isError) heading.style.color = "#b3261e";
+  modal.appendChild(heading);
+
+  const body = document.createElement("p");
+  body.id = "gem-oms-modal-message";
+  body.textContent = message;
+  modal.appendChild(body);
+
+  const actions = document.createElement("div");
+  actions.className = "gem-oms-modal-actions";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "gem-oms-btn-confirm";
+  closeBtn.textContent = "Close";
+
+  actions.appendChild(closeBtn);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  closeBtn.addEventListener("click", () => overlay.remove());
+  closeBtn.focus();
+}
+
+async function pickFirmCode() {
+  const stored = await chrome.storage.local.get(["lastFirmCode"]);
+  const firms = await getFirmsFromBackground();
+
+  let firmCode;
+  if (firms.length) {
+    firmCode = await showFirmPickerModal(firms, stored.lastFirmCode || "");
+  } else {
+    // Backend list fetch failed - fall back to the old free-text prompt.
+    const typed = prompt(
+      "Firm list load nahi ho payi. Firm Code likho (jaise MK, VARSH, SS):",
+      stored.lastFirmCode || ""
+    );
+    firmCode = typed ? typed.trim().toUpperCase() : null;
+  }
+
+  if (!firmCode) return null;
+  await chrome.storage.local.set({ lastFirmCode: firmCode });
+  return firmCode;
 }
 
 // ===== Order card discovery =====
@@ -50,6 +178,22 @@ function findOrderCards() {
 
 function isOrdersPage() {
   return findOrderCards().length > 0;
+}
+
+// Orders dated before this are never fetched or saved (per firm's request -
+// anything older than 01/04/2026 is out of scope for this sync).
+const CUTOFF_DATE = new Date(2026, 3, 1); // month is 0-indexed: 3 = April
+
+function parseContractDate(ddmmyyyy) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((ddmmyyyy || "").trim());
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+}
+
+function isBeforeCutoff(contractDate) {
+  const parsed = parseContractDate(contractDate);
+  return parsed !== null && parsed < CUTOFF_DATE;
 }
 
 // ===== Field extraction =====
@@ -136,11 +280,26 @@ async function extractItemDetails(card) {
 // ===== Pagination =====
 
 function findNextPageLink() {
-  const links = Array.from(document.querySelectorAll(".pagination a, ul.pagination a"));
+  const links = Array.from(document.querySelectorAll(".pagination a, ul.pagination a, nav[aria-label*='age'] a"));
   for (const a of links) {
+    const li = a.closest("li");
+    if (li && (li.classList.contains("disabled") || li.classList.contains("active"))) continue;
+
     const txt = a.textContent.trim();
-    if (txt === "›" || txt.toLowerCase() === "next") {
-      const li = a.closest("li");
+    const aria = (a.getAttribute("aria-label") || "").toLowerCase();
+    const title = (a.getAttribute("title") || "").toLowerCase();
+    const rel = (a.getAttribute("rel") || "").toLowerCase();
+    const hasNextIcon = !!a.querySelector("i.fa-angle-right, i.fa-chevron-right, .glyphicon-chevron-right");
+
+    const isNext =
+      txt === "›" || txt === "»" || txt === ">" ||
+      txt.toLowerCase() === "next" ||
+      aria.includes("next") || title.includes("next") ||
+      rel === "next" ||
+      (li && (li.classList.contains("next") || li.classList.contains("pagination-next"))) ||
+      hasNextIcon;
+
+    if (isNext) {
       if (li && li.classList.contains("disabled")) return null;
       return a;
     }
@@ -191,30 +350,31 @@ async function debugDumpFirstOrderCard() {
 
 let isFetching = false;
 
+// Orders tab is sorted "Contract Date: Latest First", so scanning this many
+// pages on every run is enough to catch any order added since the last run -
+// no need to ask the user each time or make them re-run with "all".
+const PAGES_TO_SCAN = 8;
+
+function sendOneOrder(order, firmCode) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "GEM_SEND_ONE_ORDER", order, firmCode }, (response) => {
+      if (chrome.runtime.lastError || !response) {
+        resolve({ status: "error", error: chrome.runtime.lastError?.message || "no response" });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
 async function fetchAllOrders() {
   if (isFetching) return;
 
-  const stored = await chrome.storage.local.get(["lastFirmCode"]);
-  const firmCodeInput = prompt(
-    "Ye orders kis Firm ke liye fetch ho rahe hain? (Firm Code likho, jaise MK, VARSH, SS)",
-    stored.lastFirmCode || ""
-  );
-  if (!firmCodeInput || !firmCodeInput.trim()) {
-    showToast("Firm code diye bina cancel ho gaya.", true);
+  const firmCode = await pickFirmCode();
+  if (!firmCode) {
+    showToast("Firm select kiye bina cancel ho gaya.", true);
     return;
   }
-  const firmCode = firmCodeInput.trim().toUpperCase();
-  await chrome.storage.local.set({ lastFirmCode: firmCode });
-
-  const pageLimitInput = prompt(
-    "Kitne pages process karne hain?\n\n" +
-    "Pehli baar TEST karne ke liye '1' likho (sirf is current page ke orders).\n" +
-    "Jab test se satisfy ho jao, sab orders ke liye 'all' likho.",
-    "1"
-  );
-  if (pageLimitInput === null) return;
-  const trimmedLimit = pageLimitInput.trim().toLowerCase();
-  const pageLimit = trimmedLimit === "all" ? Infinity : (parseInt(trimmedLimit, 10) || 1);
 
   isFetching = true;
   const btn = document.getElementById("gem-oms-fetchall-btn");
@@ -225,8 +385,9 @@ async function fetchAllOrders() {
 
   try {
     let allOrders = [];
+    let skippedOld = 0;
     let pageCount = 0;
-    const maxPages = Math.min(100, pageLimit);
+    const maxPages = PAGES_TO_SCAN;
 
     while (pageCount < maxPages) {
       const cards = findOrderCards();
@@ -236,6 +397,13 @@ async function fetchAllOrders() {
         const { link, card } = cards[i];
         const fields = extractOrderFields(card.innerText || "", link);
         if (!fields.contractNo) continue;
+
+        // 01/04/2026 se pehle ke order fetch/save nahi karne - skip before
+        // even expanding the card (avoids the ~800ms expand wait for these).
+        if (isBeforeCutoff(fields.contractDate)) {
+          skippedOld++;
+          continue;
+        }
 
         if (btn) btn.textContent = `⏳ Page ${pageCount + 1}, order ${i + 1}/${cards.length}...`;
         const { itemName, unitPrice } = await extractItemDetails(card);
@@ -248,43 +416,56 @@ async function fetchAllOrders() {
       }
 
       pageCount++;
+      if (pageCount >= maxPages) break;
+
       const previousFirst = cards[0].link.innerText.trim();
       const nextLink = findNextPageLink();
-      if (!nextLink) break;
+      if (!nextLink) {
+        log(`Stopped after page ${pageCount}: no "next" link found (pagination markup may have changed).`);
+        break;
+      }
 
       nextLink.click();
       const changed = await waitForPageChange(previousFirst);
-      if (!changed) break;
+      if (!changed) {
+        log(`Stopped after page ${pageCount}: page content didn't change after clicking next.`);
+        break;
+      }
     }
 
     if (!allOrders.length) {
-      showToast("Koi orders nahi mile", true);
+      showToast(
+        skippedOld
+          ? `Koi orders nahi mile (${skippedOld} order 01/04/2026 se pehle ke the, skip kar diye)`
+          : "Koi orders nahi mile",
+        true
+      );
       return;
     }
 
-    if (btn) btn.textContent = `📤 ${allOrders.length} orders bhej rahe hain...`;
+    let saved = 0;
+    let duplicate = 0;
+    let error = 0;
 
-    chrome.runtime.sendMessage(
-      { type: "GEM_SEND_ORDERS", firmCode, orders: allOrders },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          showToast("Extension error: " + chrome.runtime.lastError.message, true);
-          return;
-        }
-        if (response && response.done) {
-          showToast(
-            `✓ ${response.saved} saved, ${response.duplicate} already fetched, ${response.error} error (${pageCount} page${pageCount > 1 ? "s" : ""})`
-          );
-        } else {
-          showToast("Bhejne me fail: " + (response && response.error ? response.error : "unknown error"), true);
-        }
-      }
+    for (let i = 0; i < allOrders.length; i++) {
+      if (btn) btn.textContent = `📤 Bhej rahe hain ${i + 1}/${allOrders.length}...`;
+      const result = await sendOneOrder(allOrders[i], firmCode);
+      if (result.status === "saved") saved++;
+      else if (result.status === "duplicate") duplicate++;
+      else error++;
+      await sleep(150); // gentle gap between requests
+    }
+
+    showResultModal(
+      "Fetch complete",
+      `${saved} naye order saved hue.\n${duplicate} order pehle se fetch/verified the (skip ho gaye).\n${error} order me error aayi.\n${skippedOld} order 01/04/2026 se pehle ke the (fetch/save nahi kiye).\n\n(${pageCount} page${pageCount > 1 ? "s" : ""} scan hui, total ${allOrders.length} order process hue.)`,
+      error > 0 && saved === 0 && duplicate === 0
     );
   } finally {
     isFetching = false;
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "⬇ Fetch GeM Orders";
+      btn.textContent = "⬇ Fetch GeM Orders (8 pages)";
     }
   }
 }
@@ -298,7 +479,7 @@ function injectButton() {
     const btn = document.createElement("button");
     btn.id = "gem-oms-fetchall-btn";
     btn.type = "button";
-    btn.textContent = "⬇ Fetch GeM Orders";
+    btn.textContent = "⬇ Fetch GeM Orders (8 pages)";
     btn.addEventListener("click", fetchAllOrders);
     document.body.appendChild(btn);
     log("Fetch button injected");

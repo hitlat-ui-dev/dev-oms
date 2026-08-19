@@ -62,3 +62,77 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   display: none;
 }
+
+#gem-oms-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#gem-oms-modal {
+  background: #fff;
+  border-radius: 10px;
+  padding: 22px;
+  width: 360px;
+  max-width: 90vw;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+#gem-oms-modal.gem-oms-modal-lg {
+  width: 460px;
+  padding: 28px;
+}
+
+#gem-oms-modal h3 {
+  margin: 0 0 14px;
+  font-size: 17px;
+  color: #202124;
+}
+
+#gem-oms-modal-message {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #3c4043;
+  white-space: pre-line;
+}
+
+#gem-oms-modal select {
+  width: 100%;
+  padding: 9px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+}
+
+#gem-oms-modal .gem-oms-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+#gem-oms-modal button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#gem-oms-modal .gem-oms-btn-cancel {
+  background: #eee;
+  color: #333;
+}
+
+#gem-oms-modal .gem-oms-btn-confirm {
+  background: #1a73e8;
+  color: #fff;
+}

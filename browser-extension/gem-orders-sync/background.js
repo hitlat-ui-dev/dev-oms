@@ -9,10 +9,6 @@
 // (localhost:3000/dashboard/orders/fetch-gem-orders):
 const API_BASE = "https://dev-oms-blush.vercel.app";
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
 
@@ -26,14 +22,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type !== "GEM_SEND_ORDERS") return;
+  // Fetches the firm list for the "select your firm" dropdown shown before scanning.
+  if (message.type === "GEM_GET_FIRMS") {
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/companies`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const companies = await res.json();
+        const firms = (Array.isArray(companies) ? companies : [])
+          .map((c) => ({ firmCode: (c.firmCode || "").trim().toUpperCase(), firmName: c.firmName || "" }))
+          .filter((f) => f.firmCode)
+          .sort((a, b) => a.firmCode.localeCompare(b.firmCode));
+        sendResponse({ ok: true, firms });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
 
-  (async () => {
-    let saved = 0;
-    let duplicate = 0;
-    let error = 0;
-
-    for (const order of message.orders) {
+  // Sends a single scraped order to the staging endpoint. Orders are sent one
+  // at a time (content.js loops and awaits each call) instead of one giant
+  // batch loop in here - MV3 service workers can get killed by Chrome after
+  // ~30s of no extension-API activity, which was silently swallowing the
+  // "done" response (and the final saved/duplicate summary) on bigger scans.
+  if (message.type === "GEM_SEND_ONE_ORDER") {
+    (async () => {
+      const order = message.order;
       try {
         const res = await fetch(`${API_BASE}/api/gem-orders`, {
           method: "POST",
@@ -55,18 +70,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })
         });
 
-        if (res.status === 409) duplicate++;
-        else if (res.ok) saved++;
-        else error++;
+        if (res.status === 409) sendResponse({ status: "duplicate" });
+        else if (res.ok) sendResponse({ status: "saved" });
+        else sendResponse({ status: "error", error: `HTTP ${res.status}` });
       } catch (err) {
-        error++;
+        sendResponse({ status: "error", error: err.message });
       }
-
-      await sleep(250); // gentle gap between requests
-    }
-
-    sendResponse({ done: true, saved, duplicate, error, total: message.orders.length });
-  })();
-
-  return true; // keep the message channel open for the async sendResponse above
+    })();
+    return true;
+  }
 });
