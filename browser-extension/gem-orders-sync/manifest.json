@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GeM Orders → OMS Sync",
-  "version": "1.9",
+  "version": "1.10",
   "description": "GeM ke Orders tab se latest 8 pages ke contracts fetch karke seedha Dev OMS ke GeM Orders staging console me bhejta hai. 01/04/2026 se pehle ke orders fetch/save nahi hote. Firm dropdown se select karo, saved/duplicate summary milta hai.",
   "permissions": ["storage"],
   "host_permissions": [

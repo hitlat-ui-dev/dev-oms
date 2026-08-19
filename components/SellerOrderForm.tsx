@@ -6,7 +6,11 @@ import BlockGuard from "./BlockGuard";
 import Link from "next/link";
 
 interface SellerOrderFormProps {
-  onClose?: () => void; // Used for Modal
+  // Called on every way the modal closes (X, or after a successful save).
+  // Passes back every order created/updated during this session (usually
+  // one, but "Save & Add Another" can accumulate several) so the parent can
+  // merge them into its own list locally instead of refetching everything.
+  onClose?: (savedOrders?: any[]) => void;
   isModal?: boolean;
   initialData?: any;
 }
@@ -23,6 +27,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   // pre-filled instantly from initialData, that could happen fast enough to
   // wrongly flag an already-valid firmCode as "invalid" (list was just empty).
   const [dataLoaded, setDataLoaded] = useState(false);
+  // Accumulates every order saved in this modal session (handles "Save &
+  // Add Another" saving several before the modal actually closes) so
+  // whichever close path fires can hand all of them back at once.
+  const savedOrdersRef = useRef<any[]>([]);
 
   useEffect(() => {
     try {
@@ -219,6 +227,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
         if (result?.mergeWarning) {
           alert(`⚠ ${result.mergeWarning}`);
         }
+        if (result?._id) savedOrdersRef.current.push(result);
         return true;
       } else {
         const err = await res.json();
@@ -240,7 +249,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
     alert(initialData?._id ? "Order Updated Successfully!" : "Order Saved Successfully!");
     if (isModal && onClose) {
-      onClose(); // This will trigger fetchOrders() in your main page
+      onClose(savedOrdersRef.current); // parent merges these locally - no refetch/reload
     } else {
       window.location.reload();
     }
@@ -286,7 +295,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
           <div className="bg-[#1e293b] p-4 text-white flex justify-between items-center">
             <h1 className="text-2xl font-black uppercase tracking-tight pl-5">Seller Order Entry</h1>
             {isModal && (
-              <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+              <button
+                onClick={() => onClose?.(savedOrdersRef.current)}
+                className="text-white/50 hover:text-white transition-colors"
+              >
                 <FiX size={24} />
               </button>
             )}

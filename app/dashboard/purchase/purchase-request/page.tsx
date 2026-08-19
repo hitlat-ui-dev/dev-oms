@@ -14,8 +14,11 @@ export default function ViewPurchaseRequests() {
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
 
-  const fetchRequests = async () => {
-    setLoading(true);
+  // silent=true skips the full-page loading state - used by the background
+  // auto-refresh below so a periodic re-fetch doesn't flash the whole page,
+  // only the initial load and manual actions show it.
+  const fetchRequests = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch("/api/purchase-requests");
       const data = await res.json();
@@ -23,11 +26,18 @@ export default function ViewPurchaseRequests() {
     } catch (err) {
       console.error("Fetch error:", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => { fetchRequests(); }, []);
+
+  // Background refresh every 15 minutes so newly auto-generated Purchase
+  // Requests (e.g. from a low-stock order) show up without a manual reload.
+  useEffect(() => {
+    const interval = setInterval(() => fetchRequests(true), 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const filteredRequests = requests.filter((req: any) => req.status === activeTab);
 

@@ -3,19 +3,29 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import { getPageTitle } from "@/lib/pageTitles";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginPage = pathname === "/login";
-  
+
   const [isLoading, setIsLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false); // Prevents Hydration Error
 
+  // Root layout is a client component (see hydration-guard comment below),
+  // so the Next.js Metadata API (Server Component-only) can't set <title>
+  // per route here - set document.title imperatively instead, on every
+  // pathname change, so each dashboard section gets its own Chrome tab
+  // title instead of every tab reading the same URL-derived text.
+  useEffect(() => {
+    document.title = getPageTitle(pathname);
+  }, [pathname]);
+
   useEffect(() => {
     setIsMounted(true); // Tell React we are now safely in the browser
-    
+
     const user = localStorage.getItem("oms_user");
 
     if (isLoginPage) {

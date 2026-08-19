@@ -98,7 +98,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     doc.text(`Generated on: ${new Date().toLocaleDateString('en-GB')}`, pageWidth / 2, 28, { align: 'center' });
 
     // 2. Table Data
-    const tableColumn = ["Order ID", "Date", "SKU", "Item Name", "Category", "Order Qty", "Vendor"];
+    const tableColumn = ["Order ID", "Date", "Item Name", "Order Qty"];
 
     const dataToExport = selectedIds.length > 0
       ? filteredData.filter(item => selectedIds.includes(item._id))
@@ -107,11 +107,8 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     const tableRows = dataToExport.map(item => [
       item.orderNumber || "N/A",
       new Date(item.orderedAt || item.createdAt).toLocaleDateString('en-GB'),
-      item.sku || "N/A",
       item.itemName,
-      item.category || "General",
-      `${item.orderQty} ${item.unit}`,
-      item.vendor
+      `${item.orderQty} ${item.unit}`
     ]);
 
     // 3. Render Table - All Left Aligned
@@ -133,7 +130,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
       // Ensuring no overrides interfere
       columnStyles: {
         0: { halign: 'left' },
-        5: { halign: 'left' }
+        3: { halign: 'left' }
       }
     });
 

@@ -425,6 +425,15 @@ async function fetchAllOrders() {
         break;
       }
 
+      // GeM's pagination anchors use href="javascript:void(0)" - the actual
+      // page-advance happens in a JS click handler, but .click() also makes
+      // the browser try to "navigate" to that javascript: URL, which GeM's
+      // Content-Security-Policy blocks and logs as an error (harmless to the
+      // click handler itself, but noisy/worth avoiding). Swap it for a
+      // no-op "#" href first so there's nothing CSP-unsafe to navigate to.
+      if (/^javascript:/i.test(nextLink.getAttribute("href") || "")) {
+        nextLink.setAttribute("href", "#");
+      }
       nextLink.click();
       const changed = await waitForPageChange(previousFirst);
       if (!changed) {

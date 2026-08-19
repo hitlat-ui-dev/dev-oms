@@ -253,7 +253,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           deliveryDate: updateData.deliveryDate || new Date().toISOString().split('T')[0]
         })
       };
-      await SellerOrder.create(shippedOrderData);
+      const shippedOrder = await SellerOrder.create(shippedOrderData);
 
       // 2. Update Original Order (Keep in TO CHECK with leftover qty)
       const updatedOriginal = await SellerOrder.findOneAndUpdate(
@@ -306,7 +306,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ]
       );
 
-      return NextResponse.json(updatedOriginal, { status: 200 });
+      // Two documents changed here (the leftover TO CHECK order, and the
+      // brand-new "-P" shipped order) - hand both back so the client can
+      // patch its local list directly instead of refetching everything.
+      return NextResponse.json({ updatedOriginal, newShippedOrder: shippedOrder }, { status: 200 });
     }
 
     // ================================================================

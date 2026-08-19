@@ -238,6 +238,15 @@ export default function OrdersListPage() {
     await fetchOrders(ordersLoadedAll);
   }, [fetchOrders, ordersLoadedAll]);
 
+  // Background refresh every 15 minutes so orders/status changes made by
+  // someone else show up without a manual reload. fetchOrders already only
+  // toggles the small `reloading` spinner (not the full-page `loading`
+  // state) past the first load, so this doesn't flash the page.
+  useEffect(() => {
+    const interval = setInterval(() => fetchOrders(ordersLoadedAll), 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchOrders, ordersLoadedAll]);
+
   useEffect(() => {
     setSelectedOrderIds([]);
   }, [activeTab]);
@@ -392,9 +401,28 @@ const shippingLock = useRef(false);
       });
 
       if (res.ok) {
+        const result = await res.json();
         setShowPartialShipModal(false);
         setSelectedOrderId(null);
-        fetchOrders();
+
+        if (result?.newShippedOrder?._id) {
+          // Partial ship: the original order's reQty shrank to the leftover
+          // amount, and a new "-P1"/"-P2" READY TO SHIP order was created
+          // for the shipped qty (see LOGIC C in the PATCH route) - patch
+          // both locally instead of refetching the whole list.
+          const updatedOriginal = result.updatedOriginal;
+          setOrders(prev => {
+            const withOriginalPatched = updatedOriginal
+              ? prev.map(o => (o._id === updatedOriginal._id ? { ...o, ...updatedOriginal } : o))
+              : prev;
+            return [{ prQty: 0, opQty: 0, stockQty: 0, ...result.newShippedOrder }, ...withOriginalPatched];
+          });
+        } else if (result?._id) {
+          // Full ship: same order flips straight to READY TO SHIP, no split.
+          setOrders(prev => prev.map(o => (o._id === result._id ? { ...o, ...result } : o)));
+        } else {
+          fetchOrders(); // unexpected response shape - fall back to a full refresh
+        }
       }
       else {
         const errorData = await res.json();
@@ -430,7 +458,7 @@ const shippingLock = useRef(false);
       if (res.ok) {
         const result = await res.json();
         alert(result.message || "Order deleted successfully.");
-        fetchOrders();
+        setOrders(prev => prev.filter(o => o._id !== orderId));
       } else {
         const errorData = await res.json();
         alert(errorData.error || "Failed to delete order.");
@@ -1399,10 +1427,27 @@ const shippingLock = useRef(false);
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <SellerOrderForm
             isModal={true}
-            onClose={() => {
+            onClose={(savedOrders) => {
               setShowOrderModal(false);
               setEditingOrder(null);
-              fetchOrders();
+              if (savedOrders && savedOrders.length > 0) {
+                setOrders(prev => {
+                  let next = prev;
+                  for (const saved of savedOrders) {
+                    const exists = next.some(o => o._id === saved._id);
+                    // Spread the previous row first so computed/joined columns
+                    // this response doesn't carry (stockQty/prQty/opQty - only
+                    // ever set by the list GET's cross-collection aggregation,
+                    // see app/api/seller-orders/route.ts) keep showing their
+                    // last-known value instead of going blank until the next
+                    // natural refresh, rather than refetching the whole list.
+                    next = exists
+                      ? next.map(o => (o._id === saved._id ? { ...o, ...saved } : o))
+                      : [{ prQty: 0, opQty: 0, stockQty: 0, ...saved }, ...next];
+                  }
+                  return next;
+                });
+              }
             }}
             initialData={editingOrder}
           />

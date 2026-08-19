@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "GEM-LINK-FETCH",
-  "version": "3.2",
-  "description": "GeM Invoice ke fixed fields ko automate karta hai, Catalogue links ko sync karta hai, aur ek click me saare products ka Stock/Min Qty background tabs me fetch karke Dev OMS GeM Sync Console me bhejta hai.",
+  "version": "4.0",
+  "description": "GeM Invoice ke fixed fields ko automate karta hai, aur ek hi button se Catalogue listing + har product ka Stock/Min Qty ek saath scan karke Dev OMS GeM Sync Console me bhejta hai (firm dropdown, page-range, live progress box).",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
     "http://localhost:3000/*",

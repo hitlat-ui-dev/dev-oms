@@ -240,79 +240,246 @@ async function waitForPageChange(previousFirstId, maxWaitMs = 6000, intervalMs =
   return false;
 }
 
-// Scrapes every page of the catalogue, then hands the rows off to the
-// background service worker, which POSTs them to the Dev OMS GeM Sync
-// Console (app/api/gem-sync?action=save_catalogue_links).
-async function syncCatalogueToConsole() {
-  // Ask which firm/seller account this catalogue belongs to, since one person
-  // may run this across 10+ different GeM seller accounts. Pre-fills the last
-  // value used so switching back to the same firm is a single click.
-  const stored = await chrome.storage.local.get(["lastFirmCode"]);
-  const firmCodeInput = prompt(
-    "Ye catalogue kis Firm/Seller account ka hai? (Firm Code likho, jaise MK, VARSH, SS)",
-    stored.lastFirmCode || ""
-  );
-  if (!firmCodeInput || !firmCodeInput.trim()) {
-    showToast("Firm code diye bina sync cancel ho gaya.", true);
-    return;
-  }
-  const firmCode = firmCodeInput.trim().toUpperCase();
-  await chrome.storage.local.set({ lastFirmCode: firmCode });
+// ===== Firm picker (dropdown sourced from Dev OMS, not a free-text prompt) =====
 
-  isScanning = true;
-  const btn = document.getElementById("gem-autofill-btn");
-  let allRows = [];
-  let pageCount = 0;
-  const maxPages = 100; // safety cap
-
-  while (pageCount < maxPages) {
-    const table = findCatalogueTable();
-    if (!table) {
-      showToast("Catalogue table nahi mila", true);
-      isScanning = false;
-      return;
-    }
-    if (btn) btn.textContent = `⏳ Page ${pageCount + 1} scan ho raha hai...`;
-
-    const rows = extractCatalogueRows(table);
-    allRows = allRows.concat(rows);
-    pageCount++;
-
-    const previousFirstId = getFirstRowProductId(table);
-    const nextLink = findNextPageLink();
-    if (!nextLink) break;
-
-    nextLink.click();
-    const changed = await waitForPageChange(previousFirstId);
-    if (!changed) break; // couldn't confirm page changed, stop to avoid duplicate/incomplete data
-  }
-
-  if (!allRows.length) {
-    showToast("Koi rows nahi mile - sync cancel", true);
-    isScanning = false;
-    if (btn) btn.textContent = buttonLabelFor("catalogue");
-    return;
-  }
-
-  if (btn) btn.textContent = "📤 Sync Console ko bheja ja raha hai...";
-
-  chrome.runtime.sendMessage(
-    { type: "GEM_SEND_CATALOGUE", rows: allRows, firmCode },
-    (response) => {
-      isScanning = false;
-      if (btn) btn.textContent = buttonLabelFor("catalogue");
-
-      if (chrome.runtime.lastError) {
-        showToast("Extension error: " + chrome.runtime.lastError.message, true);
+function getFirmsFromBackground() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "GEM_GET_FIRMS" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.ok) {
+        resolve([]);
         return;
       }
-      if (response && response.success) {
-        showToast(`✓ ${firmCode}: ${allRows.length} products Sync Console me bhej diye (${pageCount} pages)`);
-      } else {
-        showToast("Bhejne me fail: " + (response && response.error ? response.error : "unknown error"), true);
+      resolve(response.firms);
+    });
+  });
+}
+
+function showFirmPickerModal(firms, lastFirmCode) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.id = "gem-cat-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.id = "gem-cat-modal";
+
+    const title = document.createElement("h3");
+    title.textContent = "Ye catalogue kis Firm/Seller account ka hai?";
+    modal.appendChild(title);
+
+    const select = document.createElement("select");
+    firms.forEach((f) => {
+      const opt = document.createElement("option");
+      opt.value = f.firmCode;
+      opt.textContent = f.firmName ? `${f.firmCode} - ${f.firmName}` : f.firmCode;
+      if (f.firmCode === lastFirmCode) opt.selected = true;
+      select.appendChild(opt);
+    });
+    modal.appendChild(select);
+
+    const actions = document.createElement("div");
+    actions.className = "gem-cat-modal-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "gem-cat-btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "gem-cat-btn-confirm";
+    confirmBtn.textContent = "Next →";
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+    cancelBtn.addEventListener("click", () => close(null));
+    confirmBtn.addEventListener("click", () => close(select.value));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(null);
+    });
+  });
+}
+
+async function pickFirmCode() {
+  const stored = await chrome.storage.local.get(["lastFirmCode"]);
+  const firms = await getFirmsFromBackground();
+
+  let firmCode;
+  if (firms.length) {
+    firmCode = await showFirmPickerModal(firms, stored.lastFirmCode || "");
+  } else {
+    const typed = prompt(
+      "Firm list load nahi ho payi. Firm Code likho (jaise MK, VARSH, SS):",
+      stored.lastFirmCode || ""
+    );
+    firmCode = typed ? typed.trim().toUpperCase() : null;
+  }
+
+  if (!firmCode) return null;
+  await chrome.storage.local.set({ lastFirmCode: firmCode });
+  return firmCode;
+}
+
+// ===== Page-range picker =====
+// Returns a positive integer, Infinity (for "All"), or null if cancelled.
+
+function showPageRangeModal() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.id = "gem-cat-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.id = "gem-cat-modal";
+
+    const title = document.createElement("h3");
+    title.textContent = "Kitne catalogue pages process karne hain?";
+    modal.appendChild(title);
+
+    const row = document.createElement("div");
+    row.className = "gem-cat-page-row";
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.value = "1";
+    row.appendChild(input);
+
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "gem-cat-all-btn";
+    allBtn.textContent = "All Pages";
+    row.appendChild(allBtn);
+    modal.appendChild(row);
+
+    let useAll = false;
+    allBtn.addEventListener("click", () => {
+      useAll = !useAll;
+      allBtn.classList.toggle("active", useAll);
+      input.disabled = useAll;
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "gem-cat-modal-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "gem-cat-btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "gem-cat-btn-confirm";
+    confirmBtn.textContent = "Start Sync";
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+    cancelBtn.addEventListener("click", () => close(null));
+    confirmBtn.addEventListener("click", () => {
+      if (useAll) {
+        close(Infinity);
+        return;
       }
+      const n = parseInt(input.value, 10);
+      close(n > 0 ? n : 1);
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(null);
+    });
+    input.focus();
+  });
+}
+
+// ===== Progress box (stays visible for the whole run, updated live) =====
+
+function showProgressModal(initialText) {
+  const overlay = document.createElement("div");
+  overlay.id = "gem-cat-modal-overlay";
+
+  const modal = document.createElement("div");
+  modal.id = "gem-cat-modal";
+  modal.className = "gem-cat-modal-lg";
+
+  const title = document.createElement("h3");
+  title.textContent = "Sync chal raha hai...";
+  modal.appendChild(title);
+
+  const track = document.createElement("div");
+  track.className = "gem-cat-progress-track";
+  const fill = document.createElement("div");
+  fill.className = "gem-cat-progress-fill";
+  track.appendChild(fill);
+  modal.appendChild(track);
+
+  const body = document.createElement("p");
+  body.id = "gem-cat-modal-message";
+  body.textContent = initialText;
+  modal.appendChild(body);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  return {
+    update(text, percent) {
+      body.textContent = text;
+      if (typeof percent === "number") fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    },
+    close() {
+      overlay.remove();
     }
-  );
+  };
+}
+
+// Result summary needs to stay on screen until the user reads it and closes
+// it themselves - a toast timer isn't good enough here since a big sync can
+// finish while they're not looking at the tab.
+function showResultModal(title, message, isError) {
+  const overlay = document.createElement("div");
+  overlay.id = "gem-cat-modal-overlay";
+
+  const modal = document.createElement("div");
+  modal.id = "gem-cat-modal";
+  modal.className = "gem-cat-modal-lg";
+
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  if (isError) heading.style.color = "#b3261e";
+  modal.appendChild(heading);
+
+  const body = document.createElement("p");
+  body.id = "gem-cat-modal-message";
+  body.textContent = message;
+  modal.appendChild(body);
+
+  const actions = document.createElement("div");
+  actions.className = "gem-cat-modal-actions";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "gem-cat-btn-confirm";
+  closeBtn.textContent = "Close";
+
+  actions.appendChild(closeBtn);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  closeBtn.addEventListener("click", () => overlay.remove());
+  closeBtn.focus();
 }
 
 function isCataloguePage() {
@@ -345,136 +512,177 @@ function debugDumpActionCells() {
   showToast("Debug info service worker console me bhej diya - wahan check karo.");
 }
 
-let isFetchingStock = false;
+// Wraps the GEM_FETCH_ALL_STOCK message + the GEM_STOCK_PROGRESS/GEM_STOCK_DONE
+// event pair (background.js reports progress via separate runtime messages,
+// not the sendMessage callback, since the whole scan can take minutes) as a
+// single awaitable promise, so runMergedSync() below can just `await` the
+// stock-fetch phase like any other async step.
+let activeStockFetchResolve = null;
+let activeProgressModal = null;
 
-// Scans every page of the catalogue (same pagination logic as syncCatalogueToConsole,
-// without re-prompting for firm code), then hands the rows off to the background
-// service worker, which opens each product's page in a hidden tab one at a time,
-// scrapes its stock/min-qty fields, and saves them - no manual per-product click needed.
-async function fetchAllStockToConsole() {
-  if (isFetchingStock) return;
+function fetchStockForRows(firmCode, rows) {
+  return new Promise((resolve, reject) => {
+    activeStockFetchResolve = resolve;
+    chrome.runtime.sendMessage(
+      { type: "GEM_FETCH_ALL_STOCK", firmCode, rows },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          activeStockFetchResolve = null;
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response || !response.started) {
+          activeStockFetchResolve = null;
+          reject(new Error((response && response.error) || "unknown error"));
+        }
+        // else: resolves later, when GEM_STOCK_DONE arrives below.
+      }
+    );
+  });
+}
+
+// Progress updates from the background service worker while a stock fetch runs.
+chrome.runtime.onMessage.addListener((message) => {
+  if (!message) return;
+
+  if (message.type === "GEM_STOCK_PROGRESS" && activeProgressModal) {
+    // Stock-fetch is the second half of the merged flow's progress bar (the
+    // catalogue-scan phase already used the first 0-50%).
+    const pct = 50 + Math.round((message.index / message.total) * 50);
+    activeProgressModal.update(`Stock fetch: ${message.index}/${message.total} - ${(message.name || "").slice(0, 40)}`, pct);
+  }
+
+  if (message.type === "GEM_STOCK_DONE") {
+    log(`STOCK FETCH DONE: ${message.successCount}/${message.total} updated, ${message.failedCount} failed, ${message.invalidCount} invalid-skipped`);
+    if (activeStockFetchResolve) {
+      const resolve = activeStockFetchResolve;
+      activeStockFetchResolve = null;
+      resolve(message);
+    }
+  }
+});
+
+let isMergedSyncRunning = false;
+
+// Merged flow: scans the catalogue listing (Name/Category/Brand/etc, sent to
+// save_catalogue_links) AND fetches every scanned product's Current Stock /
+// Min Qty (sent to save_stock_fields) in one pass. Previously two separate
+// buttons that could each scan a different subset of products on different
+// runs - combined with a since-fixed id-matching bug, that's what created
+// the "No link" / missing-info duplicate rows seen on the OMS Catalogue page.
+// Doing both in one pass over the SAME scanned rows avoids that entirely.
+async function runMergedSync() {
+  if (isMergedSyncRunning) return;
   if (!isExtensionContextValid()) {
     warnContextInvalidated();
     return;
   }
 
-  try {
-    await fetchAllStockToConsoleInner();
-  } catch (err) {
-    isFetchingStock = false;
-    isScanning = false;
-    const stockBtn = document.getElementById("gem-fetch-stock-btn");
-    if (stockBtn) stockBtn.textContent = "📥 Fetch All Stock";
-    if (!isExtensionContextValid()) warnContextInvalidated();
-    else showToast("Fetch All Stock me error: " + (err && err.message ? err.message : err), true);
-  }
-}
-
-async function fetchAllStockToConsoleInner() {
-  const stored = await chrome.storage.local.get(["lastFirmCode"]);
-  let firmCode = stored.lastFirmCode;
+  const firmCode = await pickFirmCode();
   if (!firmCode) {
-    const firmCodeInput = prompt("Ye catalogue kis Firm/Seller account ka hai? (Firm Code likho, jaise MK, VARSH, SS)");
-    if (!firmCodeInput || !firmCodeInput.trim()) {
-      showToast("Firm code diye bina cancel ho gaya.", true);
-      return;
-    }
-    firmCode = firmCodeInput.trim().toUpperCase();
-    await chrome.storage.local.set({ lastFirmCode: firmCode });
-  }
-
-  const pageLimitInput = prompt(
-    "Kitne catalogue pages process karne hain?\n\n" +
-    "Pehli baar TEST karne ke liye '1' likho (sirf is current page ke products - jaldi result mil jayega).\n" +
-    "Jab test se satisfy ho jao, sab products ke liye 'all' likho.",
-    "1"
-  );
-  if (pageLimitInput === null) return; // cancelled
-  const trimmedLimit = pageLimitInput.trim().toLowerCase();
-  const pageLimit = trimmedLimit === "all" ? Infinity : (parseInt(trimmedLimit, 10) || 1);
-
-  const confirmed = confirm(
-    `Ye ${pageLimit === Infinity ? "SAARE" : pageLimit} page(s) ke har product ka page ek hidden tab me kholkar Current Stock aur Min Qty scrape karega, phir tab band karke agle product par jayega.\n\n` +
-    "Products jitne zyada honge utna time lagega (~5-10 sec/product). Is dauraan ye GeM tab aur browser band mat karna.\n\nContinue karein?"
-  );
-  if (!confirmed) return;
-
-  isFetchingStock = true;
-  isScanning = true;
-  const stockBtn = document.getElementById("gem-fetch-stock-btn");
-  if (stockBtn) stockBtn.textContent = "⏳ Products scan ho rahe hain...";
-
-  let allRows = [];
-  let pageCount = 0;
-  const maxPages = Math.min(100, pageLimit);
-
-  while (pageCount < maxPages) {
-    const table = findCatalogueTable();
-    if (!table) break;
-    allRows = allRows.concat(extractCatalogueRows(table));
-    pageCount++;
-
-    const previousFirstId = getFirstRowProductId(table);
-    const nextLink = findNextPageLink();
-    if (!nextLink) break;
-
-    nextLink.click();
-    const changed = await waitForPageChange(previousFirstId);
-    if (!changed) break;
-  }
-
-  if (!allRows.length) {
-    showToast("Koi rows nahi mile - cancel", true);
-    isFetchingStock = false;
-    isScanning = false;
-    if (stockBtn) stockBtn.textContent = "📥 Fetch All Stock";
+    showToast("Firm select kiye bina cancel ho gaya.", true);
     return;
   }
 
-  chrome.runtime.sendMessage(
-    { type: "GEM_FETCH_ALL_STOCK", firmCode, rows: allRows },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        showToast("Extension error: " + chrome.runtime.lastError.message, true);
-        isFetchingStock = false;
-        isScanning = false;
-        if (stockBtn) stockBtn.textContent = "📥 Fetch All Stock";
-        return;
+  const pageLimit = await showPageRangeModal();
+  if (pageLimit === null) return; // cancelled
+
+  isMergedSyncRunning = true;
+  isScanning = true;
+  const progress = showProgressModal("Catalogue scan shuru ho raha hai...");
+  activeProgressModal = progress;
+
+  try {
+    // Phase 1 (0-40%): scan the catalogue listing pages.
+    let allRows = [];
+    let pageCount = 0;
+    const maxPages = Math.min(100, pageLimit);
+
+    while (pageCount < maxPages) {
+      const table = findCatalogueTable();
+      if (!table) break;
+      progress.update(`Catalogue page ${pageCount + 1} scan ho raha hai...`, Math.round((pageCount / maxPages) * 40));
+
+      allRows = allRows.concat(extractCatalogueRows(table));
+      pageCount++;
+
+      const previousFirstId = getFirstRowProductId(table);
+      const nextLink = findNextPageLink();
+      if (!nextLink) break;
+
+      // GeM's pagination anchors use href="javascript:void(0)" - .click() also
+      // makes the browser try to "navigate" to that URL, which GeM's CSP
+      // blocks and logs as an error. Swap it for a no-op "#" href first.
+      if (/^javascript:/i.test(nextLink.getAttribute("href") || "")) {
+        nextLink.setAttribute("href", "#");
       }
-      if (!response || !response.started) {
-        showToast("Shuru nahi ho paya: " + (response && response.error ? response.error : "unknown error"), true);
-        isFetchingStock = false;
-        isScanning = false;
-        if (stockBtn) stockBtn.textContent = "📥 Fetch All Stock";
-      }
-      // On success, progress/completion arrive via GEM_STOCK_PROGRESS / GEM_STOCK_DONE below.
+      nextLink.click();
+      const changed = await waitForPageChange(previousFirstId);
+      if (!changed) break;
     }
-  );
-}
 
-// Progress updates from the background service worker while fetchAllStockToConsole runs.
-chrome.runtime.onMessage.addListener((message) => {
-  if (!message) return;
+    if (!allRows.length) {
+      progress.close();
+      activeProgressModal = null;
+      showResultModal("Sync Failed", "Koi products nahi mile - catalogue table detect nahi hua ya khali tha.", true);
+      return;
+    }
 
-  if (message.type === "GEM_STOCK_PROGRESS") {
-    const stockBtn = document.getElementById("gem-fetch-stock-btn");
-    if (stockBtn) stockBtn.textContent = `⏳ ${message.index}/${message.total}: ${(message.name || "").slice(0, 20)}`;
-  }
+    // Phase 2 (~45%): send catalogue listing info (Name/Category/Brand/etc).
+    progress.update(
+      `${allRows.length} products mile (${pageCount} page${pageCount > 1 ? "s" : ""}). Catalogue info Sync Console ko bhej rahe hain...`,
+      45
+    );
+    const catalogueResult = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "GEM_SEND_CATALOGUE", rows: allRows, firmCode }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(response || { success: false, error: "no response" });
+      });
+    });
 
-  if (message.type === "GEM_STOCK_DONE") {
-    isFetchingStock = false;
+    // Phase 3 (50-100%): fetch Current Stock / Min Qty for every product just
+    // scanned - the SAME rows array, so the two never drift out of sync.
+    progress.update("Ab har product ka Current Stock / Min Qty fetch ho raha hai... (~5-10 sec/product)", 50);
+    let stockResult = null;
+    try {
+      stockResult = await fetchStockForRows(firmCode, allRows);
+    } catch (err) {
+      log("Stock fetch phase failed to start: " + (err && err.message ? err.message : err));
+    }
+
+    progress.close();
+    activeProgressModal = null;
+
+    const lines = [
+      `${allRows.length} products scan hue (${pageCount} page${pageCount > 1 ? "s" : ""}).`,
+      catalogueResult.success
+        ? `Catalogue info: ${catalogueResult.count ?? allRows.length} products Sync Console me save hue.`
+        : `Catalogue info save karne me error: ${catalogueResult.error || "unknown"}`
+    ];
+    if (stockResult) {
+      const extras = [];
+      if (stockResult.invalidCount) extras.push(`${stockResult.invalidCount} invalid-marked skipped`);
+      lines.push(
+        `Stock/Min Qty: ${stockResult.successCount}/${stockResult.total} updated, ${stockResult.failedCount} failed${extras.length ? ` (${extras.join(", ")})` : ""}.`
+      );
+    } else {
+      lines.push("Stock/Min Qty fetch shuru nahi ho paya (extension error).");
+    }
+
+    showResultModal("Sync Complete", lines.join("\n"), !catalogueResult.success && !stockResult);
+  } catch (err) {
+    progress.close();
+    activeProgressModal = null;
+    if (!isExtensionContextValid()) warnContextInvalidated();
+    else showResultModal("Sync Failed", "Error: " + (err && err.message ? err.message : err), true);
+  } finally {
+    isMergedSyncRunning = false;
     isScanning = false;
-    const stockBtn = document.getElementById("gem-fetch-stock-btn");
-    if (stockBtn) stockBtn.textContent = "📥 Fetch All Stock";
-    const extras = [];
-    if (message.invalidCount) extras.push(`${message.invalidCount} invalid-marked skipped`);
-    if (message.failedCount) extras.push(`${message.failedCount} failed`);
-    // Logged (not just toasted) so it doesn't disappear after 4s - check the
-    // Console tab (F12) on this GeM page if you missed the toast.
-    log(`STOCK FETCH DONE: ${message.successCount}/${message.total} updated, ${message.failedCount} failed, ${message.invalidCount} invalid-skipped`);
-    showToast(`✓ Stock fetch complete: ${message.successCount}/${message.total} products updated${extras.length ? ` (${extras.join(", ")})` : ""}`);
   }
-});
+}
 
 // ===== Stock Fields Sync (product edit page -> Dev OMS GeM Sync Console) =====
 
@@ -495,7 +703,14 @@ function isStockMarkedInvalid() {
 // Walks up from each input a few levels looking for a small (non-giant)
 // text block that matches, since GeM doesn't give these fields stable IDs.
 function findLabeledInputValue(labelRegex) {
-  const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+  // Current Stock / Min Qty Per Consignee are numeric fields - GeM renders
+  // them as <input type="number">, which the old text-only selector below
+  // silently excluded (found the label text fine, "isReady" passed, but
+  // never found a matching input to read .value from). Match any real text
+  // input regardless of type, just excluding non-data input kinds.
+  const inputs = document.querySelectorAll(
+    'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="file"])'
+  );
   for (const input of inputs) {
     let el = input.closest("tr") || input.parentElement;
     let hops = 0;
@@ -512,16 +727,22 @@ function findLabeledInputValue(labelRegex) {
 }
 
 // GeM's ProductID looks like "2929237-59245266636" and its Gem Catalogue Id
-// looks like "5116877-63572645409-cat". Pull whichever we can find from the
-// URL (hash-routed SPA, so the id is usually there) or the page text.
+// looks like "5116877-63572645409-cat" (different prefix, different number -
+// two separate ids). The product-edit page's own URL is
+// "...catalog/new?id=<ProductID>-cat&bnid=..." - the id param LOOKS like a
+// catalogue id (same "-cat" suffix shape) but is actually the ProductID with
+// a literal "-cat" appended by GeM's own routing convention, not the real
+// Gem Catalogue Id. Confirmed by comparing scraped values against the
+// listing table: the id found here always carries the ProductID prefix
+// (matches ProductID.text already stored from the catalogue scan), never
+// the Gem Catalogue Id prefix - so it must be matched against ProductID,
+// not catalogueId, or save_stock_fields never finds the row it should
+// update and silently creates a duplicate/orphan row instead.
 function extractProductIdentifiers() {
   const haystack = window.location.href + " " + document.body.textContent;
-  const catalogueIdMatch = haystack.match(/\d{5,}-\d{6,}-cat\b/);
-  const productIdMatch = haystack.match(/\b\d{6,}-\d{8,}\b(?!-cat)/);
-  return {
-    catalogueId: catalogueIdMatch ? catalogueIdMatch[0] : null,
-    productId: productIdMatch ? productIdMatch[0] : null
-  };
+  const idMatch = haystack.match(/\d{5,}-\d{6,}-cat\b/);
+  const productId = idMatch ? idMatch[0].replace(/-cat$/, "") : null;
+  return { catalogueId: null, productId };
 }
 
 async function syncStockToConsole() {
@@ -656,13 +877,13 @@ function handleAutoFillClick() {
   const formType = detectFormType();
   if (formType === "invoice") fillInvoiceForm();
   else if (formType === "product") fillProductForm();
-  else if (formType === "catalogue") syncCatalogueToConsole();
+  else if (formType === "catalogue") runMergedSync();
   else if (formType === "stock") syncStockToConsole();
   else showToast("Ye page recognize nahi hua", true);
 }
 
 function buttonLabelFor(formType) {
-  if (formType === "catalogue") return "📤 Send to Sync Console";
+  if (formType === "catalogue") return "🔄 Sync Catalogue + Stock";
   if (formType === "stock") return "📤 Send Stock to Console";
   return "⚡ Auto Fill";
 }
@@ -683,18 +904,9 @@ function injectButton() {
   }
   if (!isScanning) btn.textContent = buttonLabelFor(formType);
 
-  // Second button, catalogue page only: bulk-fetch stock/min-qty for every product.
-  let stockBtn = document.getElementById("gem-fetch-stock-btn");
+  // Debug button, catalogue page only.
   let debugBtn = document.getElementById("gem-debug-btn");
   if (formType === "catalogue") {
-    if (!stockBtn) {
-      stockBtn = document.createElement("button");
-      stockBtn.id = "gem-fetch-stock-btn";
-      stockBtn.type = "button";
-      stockBtn.textContent = "📥 Fetch All Stock";
-      stockBtn.addEventListener("click", fetchAllStockToConsole);
-      document.body.appendChild(stockBtn);
-    }
     if (!debugBtn) {
       debugBtn = document.createElement("button");
       debugBtn.id = "gem-debug-btn";
@@ -703,22 +915,17 @@ function injectButton() {
       debugBtn.addEventListener("click", debugDumpActionCells);
       document.body.appendChild(debugBtn);
     }
-  } else {
-    if (stockBtn && !isFetchingStock) stockBtn.remove();
-    if (debugBtn) debugBtn.remove();
+  } else if (debugBtn) {
+    debugBtn.remove();
   }
 }
 
 function removeButtonIfFormGone() {
   const formType = detectFormType();
   const btn = document.getElementById("gem-autofill-btn");
-  if (btn && !formType) {
+  if (btn && !formType && !isScanning) {
     btn.remove();
     btnInjected = false;
-  }
-  const stockBtn = document.getElementById("gem-fetch-stock-btn");
-  if (stockBtn && formType !== "catalogue" && !isFetchingStock) {
-    stockBtn.remove();
   }
   const debugBtn = document.getElementById("gem-debug-btn");
   if (debugBtn && formType !== "catalogue") {

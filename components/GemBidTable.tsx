@@ -19,7 +19,11 @@ export interface GemBid {
 interface Props {
   bids: GemBid[];
   currentUsername: string;
-  onMoved: () => void;
+  // Patches the parent's full bids array directly (functional update) so a
+  // move/delete/status-change reflects instantly - no full refetch, which
+  // used to flip the parent's `loading` flag and replace this whole table
+  // with a full-page spinner on every single action.
+  onBidsUpdated: (updater: (prev: GemBid[]) => GemBid[]) => void;
   onViewHistory: (bidNo: string) => void;
 }
 
@@ -31,7 +35,7 @@ const TAG_STYLES: Record<string, string> = {
 
 const LINK_COLUMNS = new Set(["bidLink", "buyerAddedBidSpecificAtcUrl"]);
 
-export default function GemBidTable({ bids, currentUsername, onMoved, onViewHistory }: Props) {
+export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onViewHistory }: Props) {
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -118,7 +122,8 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Move failed");
       setSelected(new Set());
-      onMoved();
+      const bidNoSet = new Set(bidNos);
+      onBidsUpdated((prev) => prev.map((b) => (bidNoSet.has(b.bidNo) ? { ...b, currentSection: toSection } : b)));
     } catch (err: any) {
       alert(err.message || "Move failed");
     } finally {
@@ -142,7 +147,16 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
         bidNos.forEach((b) => next.delete(b));
         return next;
       });
-      onMoved();
+      // Each bid pops back to whatever its own sectionStack had (not
+      // necessarily the same section for every bid in a bulk send-back), so
+      // apply the server's per-bid movedTo rather than a single toSection.
+      const movedToByBidNo = new Map<string, SectionKey>();
+      (data.results || []).forEach((r: any) => {
+        if (r.movedTo) movedToByBidNo.set(r.bidNo, r.movedTo);
+      });
+      onBidsUpdated((prev) =>
+        prev.map((b) => (movedToByBidNo.has(b.bidNo) ? { ...b, currentSection: movedToByBidNo.get(b.bidNo)! } : b))
+      );
     } catch (err: any) {
       alert(err.message || "Send back failed");
     } finally {
@@ -168,7 +182,8 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
         bidNos.forEach((b) => next.delete(b));
         return next;
       });
-      onMoved();
+      const bidNoSet = new Set(bidNos);
+      onBidsUpdated((prev) => prev.filter((b) => !bidNoSet.has(b.bidNo)));
     } catch (err: any) {
       alert(err.message || "Delete failed");
     } finally {
@@ -186,7 +201,7 @@ export default function GemBidTable({ bids, currentUsername, onMoved, onViewHist
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Status update failed");
-      onMoved();
+      onBidsUpdated((prev) => prev.map((b) => (b.bidNo === bidNo ? { ...b, submittedStatus: status } : b)));
     } catch (err: any) {
       alert(err.message || "Status update failed");
     } finally {

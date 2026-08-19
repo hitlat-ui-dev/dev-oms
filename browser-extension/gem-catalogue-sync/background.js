@@ -10,6 +10,25 @@ const API_BASE = "https://dev-oms-blush.vercel.app";
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
 
+  // Fetches the firm list for the "select your firm" dropdown, sourced from
+  // Dev OMS's own companies collection instead of a free-text prompt.
+  if (message.type === "GEM_GET_FIRMS") {
+    fetch(`${API_BASE}/api/companies`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const companies = await res.json();
+        const firms = (Array.isArray(companies) ? companies : [])
+          .map((c) => ({ firmCode: (c.firmCode || "").trim().toUpperCase(), firmName: c.firmName || "" }))
+          .filter((f) => f.firmCode)
+          .sort((a, b) => a.firmCode.localeCompare(b.firmCode));
+        sendResponse({ ok: true, firms });
+      })
+      .catch((err) => {
+        sendResponse({ ok: false, error: err.message });
+      });
+    return true;
+  }
+
   if (message.type === "GEM_SEND_CATALOGUE") {
     fetch(`${API_BASE}/api/gem-sync?action=save_catalogue_links`, {
       method: "POST",
@@ -102,7 +121,13 @@ function waitForTabComplete(tabId, timeoutMs = 20000) {
 // over outer scope) since chrome.scripting.executeScript serializes it.
 function scrapeStockFieldsInPage() {
   function findLabeledInputValue(labelRegex) {
-    const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+    // Current Stock / Min Qty Per Consignee are numeric fields - GeM renders
+    // them as <input type="number">, which the old text-only selector
+    // silently excluded (label text found fine, "isReady" passed, but no
+    // matching input to read .value from). Match any real data input.
+    const inputs = document.querySelectorAll(
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="file"])'
+    );
     for (const input of inputs) {
       let el = input.closest("tr") || input.parentElement;
       let hops = 0;
@@ -136,15 +161,23 @@ function scrapeStockFieldsInPage() {
     return { ready: true, invalid: true };
   }
 
+  // The product-edit page's own URL is "...catalog/new?id=<ProductID>-cat&...".
+  // That id LOOKS like a Gem Catalogue Id (same "-cat" suffix shape) but is
+  // actually the ProductID with a literal "-cat" appended by GeM's routing -
+  // its prefix always matches ProductID.text already stored from the
+  // catalogue scan, never the real (differently-prefixed) Gem Catalogue Id.
+  // Matching it against catalogueId instead of productId is what made
+  // save_stock_fields never find the row to update, silently creating a
+  // duplicate/orphan row every time instead.
   const haystack = window.location.href + " " + bodyText;
-  const catalogueIdMatch = haystack.match(/\d{5,}-\d{6,}-cat\b/);
-  const productIdMatch = haystack.match(/\b\d{6,}-\d{8,}\b(?!-cat)/);
+  const idMatch = haystack.match(/\d{5,}-\d{6,}-cat\b/);
+  const productId = idMatch ? idMatch[0].replace(/-cat$/, "") : null;
 
   return {
     ready: true,
     invalid: false,
-    catalogueId: catalogueIdMatch ? catalogueIdMatch[0] : null,
-    productId: productIdMatch ? productIdMatch[0] : null,
+    catalogueId: null,
+    productId,
     currentStock: findLabeledInputValue(/current\s*stock.*maximum\s*quantity/i),
     minQtyPerConsignee: findLabeledInputValue(/minimum\s*quantity\s*per\s*consignee/i)
   };
@@ -221,7 +254,26 @@ async function fetchAllStock(firmCode, rows, sourceTabId) {
         if (res.ok) successCount++;
         else failedCount++;
       } else {
-        console.warn(`[GeM Stock ${i + 1}/${rows.length}] "${name}" FAILED - page never became ready or no fields found (loaded=${loaded}).`);
+        // Print the diagnostic fields as plain top-level lines (not nested
+        // inside a collapsed object) so they're visible without needing to
+        // expand anything in DevTools. scrapeStockFieldsInPage() returns a
+        // different shape depending on whether the labels were found at all
+        // (ready:false -> url/title/bodySample) or found but the input
+        // values weren't (ready:true -> catalogueId/currentStock/etc), so
+        // report whichever fields the actual result has.
+        console.warn(`[GeM Stock ${i + 1}/${rows.length}] "${name}" FAILED (loaded=${loaded}).`);
+        if (!data) {
+          console.warn("  no data returned at all (script injection or tab access failed)");
+        } else if (!data.ready) {
+          console.warn(`  labels never found on page. url: ${data.url}`);
+          console.warn(`  page title: ${data.title}`);
+          console.warn(`  body text length: ${data.bodyTextLength}`);
+          console.warn(`  body text sample: ${data.bodySample}`);
+        } else {
+          console.warn(`  labels WERE found (page ready), but no input value matched near them.`);
+          console.warn(`  catalogueId: ${data.catalogueId}, productId: ${data.productId}`);
+          console.warn(`  currentStock: ${data.currentStock}, minQtyPerConsignee: ${data.minQtyPerConsignee}`);
+        }
         failedCount++;
       }
     } catch (err) {

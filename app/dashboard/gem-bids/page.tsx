@@ -337,7 +337,7 @@ export default function GemBidsPage() {
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
             </div>
           ) : (
-            <GemBidTable bids={bidsInActiveSection} currentUsername={currentUsername} onMoved={fetchBids} onViewHistory={openHistory} />
+            <GemBidTable bids={bidsInActiveSection} currentUsername={currentUsername} onBidsUpdated={setBids} onViewHistory={openHistory} />
           )}
         </div>
       </div>
