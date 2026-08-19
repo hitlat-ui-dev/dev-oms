@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { syncPurchaseRequest } from "@/lib/syncPurchaseRequest";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -116,6 +117,32 @@ export async function POST(
 
     // 5. Remove from raw_gem_orders collection
     await db.collection("raw_gem_orders").deleteOne({ _id: new ObjectId(id) });
+
+    // 6. Bump reQty on the linked item's stock, then resync its Auto Purchase
+    // Request - same two steps app/api/seller-orders/route.ts does for a
+    // manually-added order, just missing here before. Fire-and-forget after
+    // the response so a slow deficit scan can't push this past a function
+    // timeout the way it would if awaited inline.
+    const itemSku = (body.sku || "").trim();
+    if (itemSku && orderQty > 0) {
+      const skuFilter = { sku: itemSku };
+      await db.collection("stock").updateOne(skuFilter, { $inc: { reQty: orderQty } }, { upsert: false });
+      await db.collection("items").updateOne(skuFilter, { $inc: { reQty: orderQty } }, { upsert: false });
+
+      after(async () => {
+        try {
+          await syncPurchaseRequest(db, itemSku, {
+            itemId: body.itemId,
+            itemName: verifiedOrder.itemName,
+            category: verifiedOrder.category,
+            unit: verifiedOrder.unit,
+            orderNo: newOrderNo
+          });
+        } catch (prError) {
+          console.error("[AUTO PR ERROR] Failed to sync purchase request for verified GeM order:", prError);
+        }
+      });
+    }
 
     return NextResponse.json({ success: true, message: "Order verified and moved to Main Orders", orderNo: newOrderNo }, { status: 200, headers: corsHeaders });
   } catch (error: any) {
