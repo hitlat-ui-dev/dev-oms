@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiPhone, FiSearch, FiX } from "react-icons/fi";
+import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiPhone, FiSearch, FiX, FiCreditCard, FiMail, FiFileText } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -12,8 +12,33 @@ interface Company {
   sellerRegisterAddress?: string;
   dispatchAddress?: string;
   mobile?: string;
+  state?: string;
+  gstin?: string | null;
+  pan?: string | null;
+  isCompositionDealer?: boolean;
+  bank?: { bankName?: string; accountNo?: string; ifsc?: string; branch?: string };
+  contactEmail?: string;
+  gmailAccountEmail?: string;
+  invoiceNumbering?: { prefix?: string; history?: { fy: string; lastNumber: number }[] };
   createdAt: string;
 }
+
+const emptyForm = {
+  _id: "",
+  firmName: "",
+  firmCode: "",
+  sellerRegisterAddress: "",
+  dispatchAddress: "",
+  mobile: "",
+  state: "",
+  gstin: "",
+  pan: "",
+  isCompositionDealer: false,
+  bank: { bankName: "", accountNo: "", ifsc: "", branch: "" },
+  contactEmail: "",
+  gmailAccountEmail: "",
+  invoiceNumbering: { prefix: "" },
+};
 
 export default function CompaniesPage() {
   const router = useRouter();
@@ -21,14 +46,7 @@ export default function CompaniesPage() {
   const [status, setStatus] = useState("");
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
-  const [formData, setFormData] = useState({
-    _id: "",
-    firmName: "",
-    firmCode: "",
-    sellerRegisterAddress: "",
-    dispatchAddress: "",
-    mobile: ""
-  });
+  const [formData, setFormData] = useState(emptyForm);
 
   // 1. Fetch existing companies
   const fetchCompanies = async () => {
@@ -55,23 +73,23 @@ export default function CompaniesPage() {
       c.firmCode?.toLowerCase().includes(q) ||
       c.sellerRegisterAddress?.toLowerCase().includes(q) ||
       c.dispatchAddress?.toLowerCase().includes(q) ||
-      c.mobile?.toLowerCase().includes(q)
+      c.mobile?.toLowerCase().includes(q) ||
+      c.gstin?.toLowerCase().includes(q) ||
+      c.pan?.toLowerCase().includes(q) ||
+      c.state?.toLowerCase().includes(q)
     );
   }, [companies, search]);
 
   const resetForm = () => {
-    setFormData({
-      _id: "",
-      firmName: "",
-      firmCode: "",
-      sellerRegisterAddress: "",
-      dispatchAddress: "",
-      mobile: ""
-    });
+    setFormData(emptyForm);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.gstin.trim() && !formData.pan.trim()) {
+      setStatus("PAN is compulsory when GSTIN is not provided.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/companies", {
@@ -79,11 +97,14 @@ export default function CompaniesPage() {
         body: JSON.stringify(formData),
         headers: { "Content-Type": "application/json" }
       });
+      const result = await res.json();
       if (res.ok) {
         setStatus(formData._id ? "Company Info Updated!" : "Company Registered!");
         resetForm();
         fetchCompanies();
         setTimeout(() => setStatus(""), 3000);
+      } else {
+        setStatus(result.error || "Error saving company.");
       }
     } catch (err) {
       setStatus("Error saving company.");
@@ -99,7 +120,20 @@ export default function CompaniesPage() {
       firmCode: company.firmCode,
       sellerRegisterAddress: company.sellerRegisterAddress || "",
       dispatchAddress: company.dispatchAddress || "",
-      mobile: company.mobile || ""
+      mobile: company.mobile || "",
+      state: company.state || "",
+      gstin: company.gstin || "",
+      pan: company.pan || "",
+      isCompositionDealer: !!company.isCompositionDealer,
+      bank: {
+        bankName: company.bank?.bankName || "",
+        accountNo: company.bank?.accountNo || "",
+        ifsc: company.bank?.ifsc || "",
+        branch: company.bank?.branch || "",
+      },
+      contactEmail: company.contactEmail || "",
+      gmailAccountEmail: company.gmailAccountEmail || "",
+      invoiceNumbering: { prefix: company.invoiceNumbering?.prefix || "" },
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -215,7 +249,7 @@ export default function CompaniesPage() {
               </div>
             </div>
 
-            <div className="space-y-2 md:col-span-2">
+            <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mobile No.</label>
               <div className="relative">
                 <FiPhone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -225,6 +259,175 @@ export default function CompaniesPage() {
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
                   placeholder="+91 00000 00000"
                   onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">State</label>
+              <div className="relative">
+                <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.state}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="E.G. GUJARAT (for CGST/SGST vs IGST)"
+                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* ---- Billing Details ---- */}
+            <div className="md:col-span-2 pt-2 border-t border-slate-100">
+              <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Billing Details</h3>
+              <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">GSTIN optional — PAN compulsory if GSTIN blank</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">GSTIN (optional)</label>
+              <div className="relative">
+                <FiFileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.gstin}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all uppercase"
+                  placeholder="24XXXXX0000X1Z0"
+                  onChange={(e) => setFormData({ ...formData, gstin: e.target.value.toUpperCase() })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                PAN {!formData.gstin.trim() && <span className="text-rose-500">(required)</span>}
+              </label>
+              <div className="relative">
+                <FiFileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  required={!formData.gstin.trim()}
+                  value={formData.pan}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all uppercase"
+                  placeholder="ABCDE1234F"
+                  onChange={(e) => setFormData({ ...formData, pan: e.target.value.toUpperCase() })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 flex items-center gap-3 md:col-span-2">
+              <input
+                type="checkbox"
+                id="isCompositionDealer"
+                checked={formData.isCompositionDealer}
+                className="w-5 h-5 accent-orange-600"
+                onChange={(e) => setFormData({ ...formData, isCompositionDealer: e.target.checked })}
+              />
+              <label htmlFor="isCompositionDealer" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                Composition Dealer (always issues Bill of Supply, even with GSTIN)
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Invoice Number Prefix</label>
+              <div className="relative">
+                <FiHash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.invoiceNumbering.prefix}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all uppercase"
+                  placeholder="E.G. DEV/24-25/"
+                  onChange={(e) => setFormData({ ...formData, invoiceNumbering: { prefix: e.target.value.toUpperCase() } })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Contact Email</label>
+              <div className="relative">
+                <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="email"
+                  value={formData.contactEmail}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="firm@example.com"
+                  onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+                <span>GeM OTP Gmail Account</span>
+                <span className="text-slate-400 font-normal lowercase">(used by the Chrome extension for silent/pre-filled login)</span>
+              </label>
+              <div className="relative">
+                <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="email"
+                  value={formData.gmailAccountEmail}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="firm.otp@gmail.com"
+                  onChange={(e) => setFormData({ ...formData, gmailAccountEmail: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Bank Details</h3>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Bank Name</label>
+              <div className="relative">
+                <FiCreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.bank.bankName}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="E.G. STATE BANK OF INDIA"
+                  onChange={(e) => setFormData({ ...formData, bank: { ...formData.bank, bankName: e.target.value } })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Branch</label>
+              <div className="relative">
+                <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.bank.branch}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="Branch name"
+                  onChange={(e) => setFormData({ ...formData, bank: { ...formData.bank, branch: e.target.value } })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Account No.</label>
+              <div className="relative">
+                <FiCreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.bank.accountNo}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="Account number"
+                  onChange={(e) => setFormData({ ...formData, bank: { ...formData.bank, accountNo: e.target.value } })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">IFSC</label>
+              <div className="relative">
+                <FiHash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.bank.ifsc}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all uppercase"
+                  placeholder="SBIN0000000"
+                  onChange={(e) => setFormData({ ...formData, bank: { ...formData.bank, ifsc: e.target.value.toUpperCase() } })}
                 />
               </div>
             </div>
@@ -260,8 +463,8 @@ export default function CompaniesPage() {
               <thead>
                 <tr className="bg-slate-50/50">
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Registered Companies</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Seller Register Address</th>
-                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispatch Address</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">GSTIN / PAN</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">State</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
@@ -270,13 +473,20 @@ export default function CompaniesPage() {
               <tbody className="divide-y divide-slate-100">
                 {filteredCompanies.map((company) => (
                   <tr key={company._id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 font-black text-slate-700 uppercase">{company.firmName}</td>
-                    <td className="p-5 font-medium text-slate-600 text-xs max-w-xs truncate" title={company.sellerRegisterAddress}>
-                      {company.sellerRegisterAddress || "---"}
+                    <td className="p-5 font-black text-slate-700 uppercase">
+                      {company.firmName}
+                      {company.isCompositionDealer && (
+                        <span className="ml-2 bg-purple-50 text-purple-600 px-2 py-0.5 rounded-md font-black text-[9px] tracking-widest border border-purple-100 normal-case">Composition</span>
+                      )}
                     </td>
-                    <td className="p-5 font-medium text-slate-600 text-xs max-w-xs truncate" title={company.dispatchAddress}>
-                      {company.dispatchAddress || "---"}
+                    <td className="p-5 font-medium text-slate-600 text-xs">
+                      {company.gstin ? (
+                        <span className="font-bold text-slate-700">{company.gstin}</span>
+                      ) : (
+                        <span className="text-amber-600 font-bold">Unregistered — PAN: {company.pan || "---"}</span>
+                      )}
                     </td>
+                    <td className="p-5 font-medium text-slate-600 text-xs">{company.state || "---"}</td>
                     <td className="p-5 font-bold text-slate-600 text-xs">{company.mobile || "---"}</td>
                     <td className="p-5">
                       <span className="bg-orange-50 text-orange-600 px-3 py-1 rounded-lg font-black text-xs tracking-widest border border-orange-100">

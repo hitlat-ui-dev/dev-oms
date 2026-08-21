@@ -21,6 +21,10 @@ const ItemSchema = new Schema({
   unit: { type: String, required: true },
   currentStock: { type: Number, default: 0 },
   location: { type: String, required: false, default: "" },
+  // Billing: default HSN/SAC + GST% for this item, used when generating a
+  // Tax Invoice. Overridable per line on the Generate Bill screen.
+  hsnSac: { type: String, required: false, default: "" },
+  gstPercent: { type: Number, required: false, default: 0 },
   history: [HistorySchema]
 }, { timestamps: true });
 

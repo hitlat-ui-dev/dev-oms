@@ -78,7 +78,18 @@ export async function POST(req: Request) {
       updatedAt: new Date()
     };
 
-    await db.collection("raw_gem_orders").insertOne(rawOrderDoc);
+    try {
+      await db.collection("raw_gem_orders").insertOne(rawOrderDoc);
+    } catch (insertErr: any) {
+      // The findOne check above is a race, not a guarantee (two overlapping
+      // extension runs could both pass it for the same contractNo) - the
+      // unique index on contractNo is the real backstop, so a duplicate-key
+      // error here just means someone else won the race a moment ago.
+      if (insertErr?.code === 11000) {
+        return NextResponse.json({ error: "Duplicate order already fetched", duplicate: true }, { status: 409, headers: corsHeaders });
+      }
+      throw insertErr;
+    }
 
     return NextResponse.json(rawOrderDoc, { status: 201, headers: corsHeaders });
   } catch (error: any) {

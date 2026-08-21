@@ -21,6 +21,7 @@
     "next": "^16.1.6",
     "nodemailer": "^9.0.5",
     "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-icons": "^5.5.0",

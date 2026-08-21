@@ -19,12 +19,16 @@ export async function GET() {
     await sellerorders.createIndex({ sku: 1, status: 1 });
     await sellerorders.createIndex({ paymentStatus: 1, firmCode: 1 });
     await sellerorders.createIndex({ createdAt: -1 });
+    await sellerorders.createIndex({ contractNo: 1, firmCode: 1 });
+    await sellerorders.createIndex({ billId: 1 });
     indexResults["sellerorders"] = [
       "{ firmCode: 1, createdAt: -1 }",
       "{ sellerId: 1, createdAt: -1 }",
       "{ sku: 1, status: 1 }",
       "{ paymentStatus: 1, firmCode: 1 }",
-      "{ createdAt: -1 }"
+      "{ createdAt: -1 }",
+      "{ contractNo: 1, firmCode: 1 }",
+      "{ billId: 1 }"
     ];
 
     // 2. Received purchase collection
@@ -71,12 +75,29 @@ export async function GET() {
     const items = db.collection("items");
     await items.createIndex({ sku: 1 }, { unique: true, sparse: true });
     await items.createIndex({ category: 1 });
-    await items.createIndex({ itemName: 1 });
+    // Case-insensitive uniqueness on itemName, scoped to non-hidden items -
+    // 16 duplicate-name groups (33 items) were found across the live
+    // inventory before this existed, created via manual "Add New Item"
+    // entries with no dedup check at all. A hidden item is a retired
+    // duplicate on purpose, so it's excluded (partialFilterExpression) -
+    // otherwise merging two duplicates into one visible + one hidden would
+    // itself violate the constraint. $in:[false,null] matches hidden=false,
+    // hidden=null, and a missing field alike ($ne isn't a supported partial-
+    // index operator).
+    await items.createIndex(
+      { itemName: 1 },
+      {
+        unique: true,
+        collation: { locale: "en", strength: 2 },
+        partialFilterExpression: { hidden: { $in: [false, null] } },
+        name: "itemName_unique_visible_ci",
+      }
+    );
     // Multikey index on the per-item audit-log array - the Summary dashboard's
     // "today's activity" query now $elemMatch-filters on history.date before
     // unwinding, which needs this to avoid scanning every item's full history.
     await items.createIndex({ "history.date": 1 });
-    indexResults["items"] = ["{ sku: 1 }", "{ category: 1 }", "{ itemName: 1 }", "{ history.date: 1 }"];
+    indexResults["items"] = ["{ sku: 1 } (unique)", "{ category: 1 }", "{ itemName: 1 } (unique, case-insensitive, non-hidden only)", "{ history.date: 1 }"];
 
     // 9. stock collection - no Mongoose model, queried/updated by sku on
     // nearly every order/purchase/return write across the app, but never had
@@ -130,6 +151,28 @@ export async function GET() {
     const gemSheets = db.collection("gem_sheets");
     await gemSheets.createIndex({ "uploadedRows.completedAt": 1 });
     indexResults["gem_sheets"] = ["{ uploadedRows.completedAt: 1 }"];
+
+    // 18. bills collection - one invoice number per firm can never repeat;
+    // firmCode+invoiceDate backs the history table, contractNo backs lookups
+    // from a SellerOrder back to the bill that covered it.
+    const bills = db.collection("bills");
+    await bills.createIndex({ firmCode: 1, invoiceNumber: 1 }, { unique: true });
+    await bills.createIndex({ firmCode: 1, invoiceDate: -1 });
+    await bills.createIndex({ contractNo: 1 });
+    indexResults["bills"] = [
+      "{ firmCode: 1, invoiceNumber: 1 } (unique)",
+      "{ firmCode: 1, invoiceDate: -1 }",
+      "{ contractNo: 1 }"
+    ];
+
+    // 19. raw_gem_orders - the GeM Chrome extension's staging collection.
+    // POST /api/gem-orders already checks for an existing contractNo before
+    // inserting, but that's a findOne-then-insert race, not atomic; this
+    // unique index is the actual backstop against a duplicate order landing
+    // twice (e.g. two overlapping extension runs for the same firm).
+    const rawGemOrders = db.collection("raw_gem_orders");
+    await rawGemOrders.createIndex({ contractNo: 1 }, { unique: true });
+    indexResults["raw_gem_orders"] = ["{ contractNo: 1 } (unique)"];
 
     return NextResponse.json({
       success: true,

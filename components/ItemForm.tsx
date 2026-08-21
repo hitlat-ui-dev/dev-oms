@@ -45,7 +45,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
     sku: "Loading...",
     location: "",
     rateDisplay: 0,
-    itemId: "" // <--- ADD THIS
+    itemId: "", // <--- ADD THIS
+    hsnSac: "",
+    gstPercent: 0
   });
 
   useEffect(() => {
@@ -59,7 +61,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         reQty: initialData.reQty ?? initialData.totalQty ?? 0,
         location: initialData.location || "---",
         rateDisplay: initialData.rateDisplay || "₹ 0",
-        itemId: initialData.itemId || "" // <--- ADD THIS
+        itemId: initialData.itemId || "", // <--- ADD THIS
+        hsnSac: initialData.hsnSac || "",
+        gstPercent: initialData.gstPercent || 0
       });
     }
   }, [initialData]);
@@ -125,7 +129,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         category: formData.category,
         unit: formData.unit,
         location: formData.location,
-        sku: formData.sku
+        sku: formData.sku,
+        hsnSac: formData.hsnSac,
+        gstPercent: formData.gstPercent
       }
       : formData;
 
@@ -281,6 +287,40 @@ const result = await res.json();
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
                   placeholder="Warehouse Shelf, Rack No, etc. (Optional)"
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* HSN/SAC (billing) */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                HSN/SAC <span className="text-slate-400 font-normal lowercase">(for Tax Invoice)</span>
+              </label>
+              <div className="relative">
+                <FiHash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.hsnSac}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                  placeholder="E.G. 8471"
+                  onChange={(e) => setFormData({ ...formData, hsnSac: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* GST% (billing) */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                GST % <span className="text-slate-400 font-normal lowercase">(for Tax Invoice)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0" max="28" step="0.1"
+                  value={formData.gstPercent}
+                  className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-sm text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                  placeholder="18"
+                  onChange={(e) => setFormData({ ...formData, gstPercent: Number(e.target.value) })}
                 />
               </div>
             </div>

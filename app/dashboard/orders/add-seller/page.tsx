@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus, FiTrash2 } from "react-icons/fi";
+import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus, FiTrash2, FiMessageCircle } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -10,8 +10,10 @@ interface Seller {
   instituteName: string;
   buyerName?: string;
   mobile?: string;
+  whatsappNumber?: string;
   address?: string;
   place?: string;
+  state?: string;
   sellerBillName?: string;
   gemLocationText?: string;
   statementDescriptionName?: string[];
@@ -31,8 +33,10 @@ export default function AddSellerPage() {
     instituteName: "",
     buyerName: "",
     mobile: "",
+    whatsappNumber: "",
     address: "",
     place: "",
+    state: "",
     sellerBillName: "",
     gemLocationText: "",
     statementDescriptionName: [] as string[]
@@ -97,8 +101,10 @@ export default function AddSellerPage() {
       instituteName: "",
       buyerName: "",
       mobile: "",
+      whatsappNumber: "",
       address: "",
       place: "",
+      state: "",
       sellerBillName: "",
       gemLocationText: "",
       statementDescriptionName: []
@@ -156,8 +162,10 @@ export default function AddSellerPage() {
       instituteName: seller.instituteName,
       buyerName: seller.buyerName || "",
       mobile: seller.mobile || "",
+      whatsappNumber: seller.whatsappNumber || "",
       address: seller.address || "",
       place: seller.place || "",
+      state: seller.state || "",
       sellerBillName: seller.sellerBillName || "",
       gemLocationText: seller.gemLocationText || "",
       statementDescriptionName: descNames
@@ -239,6 +247,14 @@ export default function AddSellerPage() {
               </div>
 
               <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">WhatsApp No.</label>
+                <div className="relative">
+                  <FiMessageCircle className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input type="text" value={formData.whatsappNumber} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="For courier tracking updates" onChange={(e) => setFormData({ ...formData, whatsappNumber: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Place</label>
                 <div className="relative">
                   <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -259,6 +275,16 @@ export default function AddSellerPage() {
                 <div className="relative">
                   <FiHome className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input type="text" value={formData.address} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="Street Address" onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                  State <span className="text-slate-400 font-normal lowercase">(for CGST/SGST vs IGST)</span>
+                </label>
+                <div className="relative">
+                  <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input type="text" value={formData.state} className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 transition-all" placeholder="E.G. Gujarat" onChange={(e) => setFormData({ ...formData, state: e.target.value })} />
                 </div>
               </div>
 
@@ -386,9 +412,9 @@ export default function AddSellerPage() {
                       <div className="font-bold text-slate-600">{seller.mobile || "---"}</div>
                       <div
                         className="text-slate-400 text-[10px] font-medium mt-0.5 max-w-56 truncate cursor-help"
-                        title={[seller.address, seller.place].filter(Boolean).join(", ")}
+                        title={[seller.address, seller.place, seller.state].filter(Boolean).join(", ")}
                       >
-                        {[seller.address, seller.place].filter(Boolean).join(", ") || "---"}
+                        {[seller.address, seller.place, seller.state].filter(Boolean).join(", ") || "---"}
                       </div>
                     </td>
                     <td

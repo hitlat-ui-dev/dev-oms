@@ -33,6 +33,22 @@ const SellerOrderSchema = new Schema({
   // Username of the team member who created this order (blank for orders created
   // before this field existed, or via flows that don't yet capture it)
   createdBy: { type: String, default: "" },
+  // Set once a Bill is generated covering this order (one Bill can cover
+  // multiple SellerOrder docs sharing the same contractNo) - prevents the
+  // same line item being billed twice.
+  billId: { type: Schema.Types.ObjectId, ref: "Bill", default: null },
+  invoiceNumber: { type: String, default: "" },
+  // Lets an order be removed from the "Un-billed Contracts" list without an
+  // actual Bill ever being generated for it - either because it was already
+  // invoiced outside OMS (e.g. directly in Miracle, before this bill feature
+  // existed) or because no bill is needed for it at all. Deliberately kept
+  // separate from billId/Bill so these never get mixed into real invoice
+  // history, numbering, or GST reporting.
+  billExempt: { type: Boolean, default: false },
+  billExemptReason: { type: String, enum: ["ALREADY_BILLED_EXTERNAL", "NOT_REQUIRED", null], default: null },
+  billExemptNote: { type: String, default: "" },
+  billExemptAt: { type: Date, default: null },
+  billExemptBy: { type: String, default: "" },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 SellerOrderSchema.index({ firmCode: 1, createdAt: -1 });
@@ -40,5 +56,8 @@ SellerOrderSchema.index({ sellerId: 1, createdAt: -1 });
 SellerOrderSchema.index({ sku: 1, status: 1 });
 SellerOrderSchema.index({ paymentStatus: 1, firmCode: 1 });
 SellerOrderSchema.index({ createdAt: -1 });
+SellerOrderSchema.index({ contractNo: 1, firmCode: 1 });
+SellerOrderSchema.index({ billId: 1 });
+SellerOrderSchema.index({ firmCode: 1, billExempt: 1 });
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

@@ -279,31 +279,64 @@ async function extractItemDetails(card) {
 
 // ===== Pagination =====
 
-function findNextPageLink() {
-  const links = Array.from(document.querySelectorAll(".pagination a, ul.pagination a, nav[aria-label*='age'] a"));
-  for (const a of links) {
-    const li = a.closest("li");
-    if (li && (li.classList.contains("disabled") || li.classList.contains("active"))) continue;
+// Broadened past the original ".pagination a" assumption (Bootstrap-style
+// <ul class="pagination"><li><a>) - GeM's real pagination markup was never
+// verified against a live DOM (F12 is blocked on this page), so this also
+// covers <button>-based pagers (common with Angular Material / PrimeNG admin
+// UIs), plus a numbered-page-link fallback for portals that don't expose an
+// explicit "next" control at all.
+function findNextPageLink(pageCount) {
+  const container =
+    document.querySelector("[class*='pagin' i], [id*='pagin' i], nav[aria-label*='age' i]") || document;
+  const clickables = Array.from(container.querySelectorAll("a, button, [role='button'], li"));
 
-    const txt = a.textContent.trim();
-    const aria = (a.getAttribute("aria-label") || "").toLowerCase();
-    const title = (a.getAttribute("title") || "").toLowerCase();
-    const rel = (a.getAttribute("rel") || "").toLowerCase();
-    const hasNextIcon = !!a.querySelector("i.fa-angle-right, i.fa-chevron-right, .glyphicon-chevron-right");
+  const isDisabled = (el) => {
+    const li = el.closest ? el.closest("li") : null;
+    return (
+      el.classList?.contains("disabled") ||
+      el.getAttribute?.("aria-disabled") === "true" ||
+      el.disabled === true ||
+      !!(li && li.classList.contains("disabled"))
+    );
+  };
+  const clickTarget = (el) => (el.tagName === "LI" ? el.querySelector("a, button") || el : el);
+
+  // Pass 1: an explicit "next" control - icon, text, aria/title/rel, or class.
+  for (const el of clickables) {
+    if (isDisabled(el)) continue;
+
+    const txt = (el.textContent || "").trim();
+    const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+    const title = (el.getAttribute("title") || "").toLowerCase();
+    const rel = (el.getAttribute("rel") || "").toLowerCase();
+    const cls = (el.className || "").toString().toLowerCase();
+    const hasNextIcon = !!el.querySelector(
+      "i.fa-angle-right, i.fa-chevron-right, .glyphicon-chevron-right, .mat-paginator-icon, [class*='chevron-right'], [class*='angle-right']"
+    );
 
     const isNext =
       txt === "›" || txt === "»" || txt === ">" ||
       txt.toLowerCase() === "next" ||
       aria.includes("next") || title.includes("next") ||
       rel === "next" ||
-      (li && (li.classList.contains("next") || li.classList.contains("pagination-next"))) ||
+      cls.includes("next") ||
       hasNextIcon;
 
-    if (isNext) {
-      if (li && li.classList.contains("disabled")) return null;
-      return a;
-    }
+    if (isNext) return clickTarget(el);
   }
+
+  // Pass 2: no explicit "next" control found - fall back to a plain numbered
+  // page link/button for pageCount + 1 (most numbered pagers use just the
+  // digit as text content, with no icon/aria hint at all).
+  const targetPage = String(pageCount + 1);
+  for (const el of clickables) {
+    if (el.tagName === "LI") continue; // avoid double-matching the <a>/<button> inside it
+    if ((el.textContent || "").trim() !== targetPage) continue;
+    if (isDisabled(el)) continue;
+    const isActive = el.classList.contains("active") || el.classList.contains("current") || el.getAttribute("aria-current") === "page";
+    if (!isActive) return el;
+  }
+
   return null;
 }
 
@@ -387,7 +420,18 @@ async function fetchAllOrders() {
     let allOrders = [];
     let skippedOld = 0;
     let pageCount = 0;
+    let paginationStopReason = "";
     const maxPages = PAGES_TO_SCAN;
+
+    // console.log() alone is useless here - F12/Inspect is blocked on this
+    // GeM page by managed browser policy - so any pagination failure needs
+    // to also go to the background service worker's console (same channel
+    // debugDumpFirstOrderCard already uses) or the user has no way to see it.
+    const reportPaginationStop = (reason, html) => {
+      paginationStopReason = reason;
+      log(reason);
+      chrome.runtime.sendMessage({ type: "GEM_ORDERS_DEBUG_LOG", text: reason, html: html || "(none)" });
+    };
 
     while (pageCount < maxPages) {
       const cards = findOrderCards();
@@ -419,25 +463,26 @@ async function fetchAllOrders() {
       if (pageCount >= maxPages) break;
 
       const previousFirst = cards[0].link.innerText.trim();
-      const nextLink = findNextPageLink();
+      const nextLink = findNextPageLink(pageCount);
       if (!nextLink) {
-        log(`Stopped after page ${pageCount}: no "next" link found (pagination markup may have changed).`);
+        const paginationEl = document.querySelector("[class*='pagin' i], [id*='pagin' i], nav[aria-label*='age' i]");
+        reportPaginationStop(
+          `Stopped after page ${pageCount}: no "next" page control found (pagination markup may have changed).`,
+          paginationEl ? paginationEl.outerHTML : "(no pagination-like element found on page at all)"
+        );
         break;
       }
 
-      // GeM's pagination anchors use href="javascript:void(0)" - the actual
-      // page-advance happens in a JS click handler, but .click() also makes
-      // the browser try to "navigate" to that javascript: URL, which GeM's
-      // Content-Security-Policy blocks and logs as an error (harmless to the
-      // click handler itself, but noisy/worth avoiding). Swap it for a
-      // no-op "#" href first so there's nothing CSP-unsafe to navigate to.
-      if (/^javascript:/i.test(nextLink.getAttribute("href") || "")) {
-        nextLink.setAttribute("href", "#");
-      }
+      // Just a plain click - the actual page-advance is whatever click
+      // handler GeM's framework attached, not something driven by the
+      // element's href, so there's nothing to rewrite here first.
       nextLink.click();
       const changed = await waitForPageChange(previousFirst);
       if (!changed) {
-        log(`Stopped after page ${pageCount}: page content didn't change after clicking next.`);
+        reportPaginationStop(
+          `Stopped after page ${pageCount}: page content didn't change after clicking next.`,
+          nextLink.outerHTML
+        );
         break;
       }
     }
@@ -465,9 +510,14 @@ async function fetchAllOrders() {
       await sleep(150); // gentle gap between requests
     }
 
+    const pagesNote =
+      pageCount < maxPages && paginationStopReason
+        ? `\n\n⚠ Sirf ${pageCount} page${pageCount > 1 ? "s" : ""} scan hui (${maxPages} maangi thi) - pagination "next" nahi mila ya click ka asar nahi hua. Debug HTML background console me bhej diya hai (chrome://extensions -> is extension ka "service worker" link).`
+        : `\n\n(${pageCount} page${pageCount > 1 ? "s" : ""} scan hui, total ${allOrders.length} order process hue.)`;
+
     showResultModal(
       "Fetch complete",
-      `${saved} naye order saved hue.\n${duplicate} order pehle se fetch/verified the (skip ho gaye).\n${error} order me error aayi.\n${skippedOld} order 01/04/2026 se pehle ke the (fetch/save nahi kiye).\n\n(${pageCount} page${pageCount > 1 ? "s" : ""} scan hui, total ${allOrders.length} order process hue.)`,
+      `${saved} naye order saved hue.\n${duplicate} order pehle se fetch/verified the (skip ho gaye).\n${error} order me error aayi.\n${skippedOld} order 01/04/2026 se pehle ke the (fetch/save nahi kiye).${pagesNote}`,
       error > 0 && saved === 0 && duplicate === 0
     );
   } finally {

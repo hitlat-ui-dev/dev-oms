@@ -1,0 +1,1085 @@
+"use client";
+import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  FiArrowLeft, FiPrinter, FiCheckCircle, FiDownload, FiFileText,
+  FiChevronRight, FiX, FiCalendar, FiRefreshCw, FiUpload,
+} from "react-icons/fi";
+import BlockGuard from "@/components/BlockGuard";
+import { submitBillToGem } from "@/lib/triggerGemSubmit";
+
+interface Company {
+  _id: string;
+  firmName: string;
+  firmCode: string;
+  state?: string;
+  gstin?: string | null;
+  pan?: string | null;
+  isCompositionDealer?: boolean;
+  invoiceNumbering?: { prefix?: string };
+  gmailAccountEmail?: string;
+}
+
+interface EligibleOrderLine {
+  _id: string;
+  itemId?: string;
+  itemName: string;
+  sku?: string;
+  unit?: string;
+  reQty: number;
+  rate: number;
+  totalAmount: number;
+  hsnSac?: string;
+  gstPercent?: number;
+  billExemptReason?: string;
+  billExemptNote?: string;
+  billExemptAt?: string;
+  billExemptBy?: string;
+}
+
+interface EligibleGroup {
+  contractNo: string;
+  contractDate?: string;
+  sellerId?: string;
+  instituteName: string;
+  buyerState?: string;
+  orders: EligibleOrderLine[];
+}
+
+interface Bill {
+  _id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  billType: "TAX_INVOICE" | "BILL_OF_SUPPLY";
+  gstSplit: string;
+  contractNo: string;
+  buyerSnapshot: { instituteName: string; state?: string };
+  items: { qty: number; hsnSac?: string; gstPercent?: number }[];
+  grandTotal: number;
+  gemDocumentR2Key?: string;
+}
+
+// qty * rate frequently lands on a repeating binary fraction (e.g. 15.29 *
+// 65 -> 993.8499999999999) - every money value gets rounded through this
+// before display, not just the ones that happened to look wrong.
+function fmt2(n: number | undefined | null): string {
+  return (Number(n) || 0).toFixed(2);
+}
+
+function formatDateDDMMYYYY(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+interface LineOverride {
+  hsnSac: string;
+  gstPercent: number;
+  discount: number;
+}
+
+function billTypeFor(company: Company | undefined): "TAX_INVOICE" | "BILL_OF_SUPPLY" {
+  if (!company) return "BILL_OF_SUPPLY";
+  if (!company.gstin) return "BILL_OF_SUPPLY";
+  if (company.isCompositionDealer) return "BILL_OF_SUPPLY";
+  return "TAX_INVOICE";
+}
+
+function gstSplitFor(company: Company | undefined, buyerState?: string): "CGST_SGST" | "IGST" | "UNKNOWN" {
+  if (!company?.state || !buyerState) return "UNKNOWN";
+  return company.state.trim().toLowerCase() === buyerState.trim().toLowerCase() ? "CGST_SGST" : "IGST";
+}
+
+export default function GenerateBillPage() {
+  const router = useRouter();
+
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [firmCode, setFirmCode] = useState("");
+  const [groups, setGroups] = useState<EligibleGroup[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [selectedContract, setSelectedContract] = useState<EligibleGroup | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, LineOverride>>({});
+  const [numberMode, setNumberMode] = useState<"auto" | "manual">("auto");
+  const [manualNumber, setManualNumber] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{
+    invoiceNumber: string; pdfBase64: string; billId: string; contractNo: string;
+    contractDate?: string; buyerState?: string;
+    items: { qty: number; hsnSac?: string; gstPercent?: number }[];
+  } | null>(null);
+  const [submittingToGem, setSubmittingToGem] = useState(false);
+  const [gemSubmitStatus, setGemSubmitStatus] = useState("");
+  const [historySubmittingId, setHistorySubmittingId] = useState<string | null>(null);
+  const [historyStatus, setHistoryStatus] = useState<Record<string, string>>({});
+
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [exportDate, setExportDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exporting, setExporting] = useState(false);
+
+  // Contracts that will never get a real Bill: already invoiced outside OMS
+  // (e.g. directly in Miracle, before this feature existed) or genuinely not
+  // needed. Selected via checkboxes on the Un-billed Contracts list below.
+  //
+  // Keyed by "group key" (contractNo, or the first order's _id when
+  // contractNo is blank - several un-linked orders can share a blank
+  // contractNo, so that alone can't identify one group) - never by contractNo
+  // alone, and the API call itself is always by order _id, not contractNo,
+  // for the same reason.
+  const groupKey = (g: EligibleGroup) => g.contractNo || g.orders[0]?._id || "";
+
+  const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set());
+  const [exemptPanelOpen, setExemptPanelOpen] = useState(false);
+  const [exemptReason, setExemptReason] = useState<"ALREADY_BILLED_EXTERNAL" | "NOT_REQUIRED">("ALREADY_BILLED_EXTERNAL");
+  const [exemptNote, setExemptNote] = useState("");
+  const [exempting, setExempting] = useState(false);
+  const [showExempted, setShowExempted] = useState(false);
+  const [exemptedGroups, setExemptedGroups] = useState<EligibleGroup[]>([]);
+  const [loadingExempted, setLoadingExempted] = useState(false);
+  const [unExempting, setUnExempting] = useState<string | null>(null);
+  const [contractDateFrom, setContractDateFrom] = useState("");
+  const [contractDateTo, setContractDateTo] = useState("");
+
+  // Advances OMS's own auto-increment counter to match a number already
+  // issued outside OMS (offline sale billed directly in Miracle, sharing the
+  // same numbering series) - no order or Bill gets created, this only moves
+  // the counter so OMS's next auto-generated number doesn't collide.
+  const [registerNumbersInput, setRegisterNumbersInput] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [registerResult, setRegisterResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const company = useMemo(() => companies.find((c) => c.firmCode === firmCode), [companies, firmCode]);
+
+  const submitRegisterNumbers = async () => {
+    if (!firmCode || !registerNumbersInput.trim()) return;
+    setRegistering(true);
+    setRegisterResult(null);
+    try {
+      const res = await fetch("/api/bills/register-number", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firmCode, numbers: registerNumbersInput.trim(), registeredBy: currentUsername() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRegisterResult({ ok: true, message: data.message });
+        setRegisterNumbersInput("");
+      } else {
+        setRegisterResult({ ok: false, message: data.error || "Failed to register." });
+      }
+    } catch {
+      setRegisterResult({ ok: false, message: "Network error while registering." });
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  // contractDate is stored "DD/MM/YYYY" (as scraped off GeM) - parse for
+  // range comparison against the <input type="date"> (YYYY-MM-DD) filters.
+  const parseContractDate = (ddmmyyyy?: string): Date | null => {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((ddmmyyyy || "").trim());
+    if (!m) return null;
+    return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  };
+
+  const filteredGroups = useMemo(() => {
+    if (!contractDateFrom && !contractDateTo) return groups;
+    const from = contractDateFrom ? new Date(contractDateFrom) : null;
+    const to = contractDateTo ? new Date(contractDateTo) : null;
+    return groups.filter((g) => {
+      const d = parseContractDate(g.contractDate);
+      if (!d) return false; // no parseable date - excluded once a range filter is active
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+  }, [groups, contractDateFrom, contractDateTo]);
+
+  // The list can run into the hundreds for an old firm - show 20 at a time
+  // instead of dumping everything on screen at once.
+  const PAGE_SIZE = 20;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  useEffect(() => setVisibleCount(PAGE_SIZE), [firmCode, contractDateFrom, contractDateTo]);
+  const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
+
+  const currentUsername = (): string => {
+    try {
+      const stored = localStorage.getItem("oms_user");
+      if (stored) return JSON.parse(stored)?.username || "";
+    } catch { /* ignore */ }
+    return "";
+  };
+
+  const fetchExempted = async (fc: string) => {
+    setLoadingExempted(true);
+    try {
+      const res = await fetch(`/api/bills/eligible-orders?firmCode=${encodeURIComponent(fc)}&exempted=true`);
+      const data = await res.json();
+      if (Array.isArray(data)) setExemptedGroups(data);
+    } catch {
+      /* review panel is a convenience, fail silently */
+    } finally {
+      setLoadingExempted(false);
+    }
+  };
+
+  const toggleContractSelected = (key: string) => {
+    setSelectedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // "Select all" only covers what's currently loaded on screen - selecting
+  // hundreds of unseen contracts from a single click would be surprising.
+  const toggleSelectAllContracts = () => {
+    setSelectedGroupKeys((prev) =>
+      prev.size === visibleGroups.length ? new Set() : new Set(visibleGroups.map(groupKey))
+    );
+  };
+
+  const submitExemption = async () => {
+    if (!firmCode || selectedGroupKeys.size === 0) return;
+    const orderIds = filteredGroups
+      .filter((g) => selectedGroupKeys.has(groupKey(g)))
+      .flatMap((g) => g.orders.map((o) => o._id));
+    if (orderIds.length === 0) return;
+
+    setExempting(true);
+    try {
+      const res = await fetch("/api/bills/exempt-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firmCode,
+          orderIds,
+          reason: exemptReason,
+          note: exemptNote.trim(),
+          exemptBy: currentUsername(),
+        }),
+      });
+      if (res.ok) {
+        setSelectedGroupKeys(new Set());
+        setExemptPanelOpen(false);
+        setExemptNote("");
+        fetchGroups(firmCode);
+        if (showExempted) fetchExempted(firmCode);
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to mark as exempt.");
+      }
+    } catch {
+      setError("Network error while marking as exempt.");
+    } finally {
+      setExempting(false);
+    }
+  };
+
+  const undoExemption = async (g: EligibleGroup) => {
+    if (!firmCode) return;
+    const key = groupKey(g);
+    setUnExempting(key);
+    try {
+      const res = await fetch("/api/bills/exempt-orders", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firmCode, orderIds: g.orders.map((o) => o._id) }),
+      });
+      if (res.ok) {
+        fetchExempted(firmCode);
+        fetchGroups(firmCode);
+      }
+    } finally {
+      setUnExempting(null);
+    }
+  };
+
+  useEffect(() => {
+    fetch("/api/companies").then((r) => r.json()).then((d) => Array.isArray(d) && setCompanies(d));
+  }, []);
+
+  const fetchGroups = async (fc: string) => {
+    setLoadingGroups(true);
+    setSelectedContract(null);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/bills/eligible-orders?firmCode=${encodeURIComponent(fc)}`);
+      const data = await res.json();
+      if (Array.isArray(data)) setGroups(data);
+    } catch {
+      setError("Failed to load un-billed orders.");
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  const fetchBills = async (fc: string) => {
+    try {
+      const res = await fetch(`/api/bills?firmCode=${encodeURIComponent(fc)}`);
+      const data = await res.json();
+      if (Array.isArray(data)) setBills(data);
+    } catch {
+      /* history is a convenience, fail silently */
+    }
+  };
+
+  useEffect(() => {
+    setSelectedGroupKeys(new Set());
+    setExemptPanelOpen(false);
+    setShowExempted(false);
+    setExemptedGroups([]);
+    setContractDateFrom("");
+    setContractDateTo("");
+    if (firmCode) {
+      fetchGroups(firmCode);
+      fetchBills(firmCode);
+    } else {
+      setGroups([]);
+      setBills([]);
+    }
+  }, [firmCode]);
+
+  const selectContract = (g: EligibleGroup) => {
+    setSelectedContract(g);
+    setResult(null);
+    setError("");
+    const initial: Record<string, LineOverride> = {};
+    g.orders.forEach((o) => {
+      initial[o._id] = { hsnSac: o.hsnSac || "", gstPercent: o.gstPercent || 0, discount: 0 };
+    });
+    setOverrides(initial);
+  };
+
+  const updateOverride = (orderId: string, field: keyof LineOverride, value: string) => {
+    setOverrides((prev) => ({
+      ...prev,
+      [orderId]: {
+        ...prev[orderId],
+        [field]: field === "hsnSac" ? value : Number(value) || 0,
+      },
+    }));
+  };
+
+  const isTaxInvoice = billTypeFor(company) === "TAX_INVOICE";
+  const gstSplit = gstSplitFor(company, selectedContract?.buyerState);
+
+  const preview = useMemo(() => {
+    if (!selectedContract) return null;
+    let subTotal = 0;
+    let totalDiscount = 0;
+    let totalGst = 0;
+    for (const o of selectedContract.orders) {
+      const ov = overrides[o._id] || { hsnSac: "", gstPercent: 0, discount: 0 };
+      const gross = o.reQty * o.rate;
+      const taxable = gross - (ov.discount || 0);
+      const gst = isTaxInvoice ? (taxable * (ov.gstPercent || 0)) / 100 : 0;
+      subTotal += taxable;
+      totalDiscount += ov.discount || 0;
+      totalGst += gst;
+    }
+    return { subTotal, totalDiscount, totalGst, grandTotal: subTotal + totalGst };
+  }, [selectedContract, overrides, isTaxInvoice]);
+
+  const handleGenerate = async () => {
+    if (!selectedContract || !company) return;
+    if (numberMode === "manual" && !manualNumber.trim()) {
+      setError("Enter the manual invoice number.");
+      return;
+    }
+    setGenerating(true);
+    setError("");
+    try {
+      let currentUsername = "";
+      try {
+        const stored = localStorage.getItem("oms_user");
+        if (stored) currentUsername = JSON.parse(stored)?.username || "";
+      } catch { /* ignore */ }
+
+      const res = await fetch("/api/bills/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firmCode: company.firmCode,
+          contractNo: selectedContract.contractNo,
+          numberMode,
+          manualNumber: numberMode === "manual" ? manualNumber.trim() : undefined,
+          createdBy: currentUsername,
+          lineOverrides: selectedContract.orders.map((o) => ({
+            sellerOrderId: o._id,
+            hsnSac: overrides[o._id]?.hsnSac || "",
+            gstPercent: overrides[o._id]?.gstPercent || 0,
+            discount: overrides[o._id]?.discount || 0,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to generate bill.");
+        return;
+      }
+      setResult({
+        invoiceNumber: data.invoiceNumber,
+        pdfBase64: data.pdfBase64,
+        billId: data.billId,
+        contractNo: selectedContract.contractNo,
+        contractDate: selectedContract.contractDate,
+        buyerState: selectedContract.buyerState,
+        items: selectedContract.orders.map((o) => ({
+          qty: o.reQty,
+          hsnSac: overrides[o._id]?.hsnSac,
+          gstPercent: overrides[o._id]?.gstPercent,
+        })),
+      });
+      setGemSubmitStatus("");
+      setSelectedContract(null);
+      setManualNumber("");
+      fetchGroups(firmCode);
+      fetchBills(firmCode);
+    } catch (err) {
+      setError("Network error while generating bill.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const openPdfFromBase64 = (base64: string) => {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: "application/pdf" });
+    window.open(URL.createObjectURL(blob), "_blank");
+  };
+
+  const handleSubmitToGem = async () => {
+    if (!result || !company) return;
+    setSubmittingToGem(true);
+    setGemSubmitStatus("");
+    try {
+      await submitBillToGem({
+        firmCode: company.firmCode,
+        billType: billTypeFor(company),
+        contractNo: result.contractNo,
+        contractDate: result.contractDate,
+        buyerState: result.buyerState,
+        billId: result.billId,
+        billNo: result.invoiceNumber,
+        billPdfUrl: `${window.location.origin}/api/bills/${result.billId}/pdf`,
+        firmName: company.firmName,
+        gmailAccountEmail: company.gmailAccountEmail,
+        items: result.items,
+      });
+      setGemSubmitStatus("GeM tab khul gaya — extension automation shuru ho gayi.");
+    } catch (err: any) {
+      setGemSubmitStatus(`Extension trigger nahi hua: ${err.message}`);
+    } finally {
+      setSubmittingToGem(false);
+    }
+  };
+
+  // Same as handleSubmitToGem, but usable from any Bill History row - not
+  // just the just-generated one, since that success banner disappears on
+  // navigation/refresh. contractDate falls back to the bill's own
+  // invoiceDate (the actual contract date isn't stored on the Bill record).
+  const handleSubmitToGemFromHistory = async (bill: Bill) => {
+    if (!company) return;
+    setHistorySubmittingId(bill._id);
+    setHistoryStatus((prev) => ({ ...prev, [bill._id]: "" }));
+    try {
+      await submitBillToGem({
+        firmCode: company.firmCode,
+        billType: bill.billType,
+        contractNo: bill.contractNo,
+        contractDate: formatDateDDMMYYYY(bill.invoiceDate),
+        buyerState: bill.buyerSnapshot.state,
+        billId: bill._id,
+        billNo: bill.invoiceNumber,
+        billPdfUrl: `${window.location.origin}/api/bills/${bill._id}/pdf`,
+        firmName: company.firmName,
+        gmailAccountEmail: company.gmailAccountEmail,
+        items: bill.items,
+      });
+      setHistoryStatus((prev) => ({ ...prev, [bill._id]: "GeM tab khul gaya." }));
+    } catch (err: any) {
+      setHistoryStatus((prev) => ({ ...prev, [bill._id]: `Fail: ${err.message}` }));
+    } finally {
+      setHistorySubmittingId(null);
+    }
+  };
+
+  const handleExportMiracle = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/bills/export-miracle?date=${exportDate}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Export failed.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Bills_${exportDate}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <BlockGuard
+      permission="generateBill"
+      fallback={
+        <div className="flex flex-col items-center gap-2 m-4 p-4 border border-red-200 rounded-xl bg-red-50 text-center">
+          <p className="text-red-500 font-bold uppercase">You have no Access for this Page.</p>
+          <Link href="/dashboard/account" className="text-sm bg-slate-900 text-white px-4 py-2 mt-4 rounded-lg hover:bg-slate-800 transition-all">
+            Back to Account
+          </Link>
+        </div>
+      }
+    >
+      <div className="p-4 md:p-12 max-w-7xl mx-auto space-y-6">
+        <div className="flex justify-between items-center">
+          <button onClick={() => router.push("/dashboard/account")} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
+            <FiArrowLeft /> Back to Account
+          </button>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden">
+          <div className="p-8 text-white flex items-center gap-4 bg-[#0f172a]">
+            <div className="p-4 bg-orange-500/20 rounded-2xl text-orange-400">
+              <FiPrinter size={32} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black uppercase tracking-tight">Generate Bill</h1>
+              <p className="text-orange-400 text-[10px] font-black tracking-[0.2em] uppercase mt-1">Tax Invoice / Bill of Supply</p>
+            </div>
+          </div>
+
+          <div className="p-8 space-y-6">
+            {error && (
+              <div className="bg-rose-50 text-rose-600 p-4 rounded-xl flex items-center gap-3 font-bold text-sm border border-rose-100">
+                <FiX /> {error}
+              </div>
+            )}
+
+            {result && (
+              <div className="bg-emerald-50 text-emerald-700 p-4 rounded-xl border border-emerald-100 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span className="flex items-center gap-2 font-bold text-sm">
+                    <FiCheckCircle /> Bill {result.invoiceNumber} generated successfully.
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => openPdfFromBase64(result.pdfBase64)}
+                      className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all"
+                    >
+                      <FiDownload /> View PDF
+                    </button>
+                    <button
+                      onClick={handleSubmitToGem}
+                      disabled={submittingToGem}
+                      title="Requires the GeM Bill Auto-Submit Chrome extension installed"
+                      className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-60"
+                    >
+                      <FiUpload /> {submittingToGem ? "Submitting..." : "Submit to GeM"}
+                    </button>
+                  </div>
+                </div>
+                {gemSubmitStatus && <p className="text-xs font-bold text-emerald-800">{gemSubmitStatus}</p>}
+              </div>
+            )}
+
+            {/* Firm select */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Firm</label>
+              <select
+                value={firmCode}
+                onChange={(e) => setFirmCode(e.target.value)}
+                className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+              >
+                <option value="">Select Firm...</option>
+                {companies.map((c) => (
+                  <option key={c._id} value={c.firmCode}>{c.firmName} ({c.firmCode})</option>
+                ))}
+              </select>
+              {company && (
+                <p className="text-[11px] font-bold text-slate-400 ml-1">
+                  {company.gstin ? `GSTIN: ${company.gstin}` : `Unregistered (PAN: ${company.pan || "---"})`}
+                  {" · "}
+                  {billTypeFor(company) === "TAX_INVOICE" ? "Issues Tax Invoice" : "Issues Bill of Supply"}
+                  {company.isCompositionDealer ? " (Composition Dealer)" : ""}
+                </p>
+              )}
+            </div>
+
+            {/* Register a number already used outside OMS (offline sale billed
+                directly in Miracle, sharing this firm's numbering series) - keeps
+                OMS's own auto-counter from later colliding with it. */}
+            {firmCode && company && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Register Miracle Bill Number(s)
+                </p>
+                <p className="text-[11px] font-bold text-slate-400">
+                  Already billed offline in Miracle under {company.invoiceNumbering?.prefix || "this firm's"} numbering?
+                  Register it here so OMS's next auto number doesn't collide - no order or bill gets created.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={registerNumbersInput}
+                    onChange={(e) => setRegisterNumbersInput(e.target.value)}
+                    placeholder="e.g. 46 or 46, 47, 48 or 46-50"
+                    className="flex-1 text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-orange-400"
+                  />
+                  <button
+                    onClick={submitRegisterNumbers}
+                    disabled={registering || !registerNumbersInput.trim()}
+                    className="text-[11px] font-black uppercase tracking-widest text-white bg-slate-700 hover:bg-slate-800 disabled:opacity-50 rounded-lg px-4 py-2 whitespace-nowrap"
+                  >
+                    {registering ? "Registering..." : "Register"}
+                  </button>
+                </div>
+                {registerResult && (
+                  <p className={`text-[11px] font-bold ${registerResult.ok ? "text-emerald-600" : "text-rose-600"}`}>
+                    {registerResult.message}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Contract list */}
+            {firmCode && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Un-billed Contracts</label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { setShowExempted((v) => { const next = !v; if (next) fetchExempted(firmCode); return next; }); }}
+                      className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-orange-600 transition-colors"
+                    >
+                      {showExempted ? "Hide" : "Show"} Exempted
+                    </button>
+                    <button onClick={() => fetchGroups(firmCode)} className="text-slate-400 hover:text-orange-600 transition-colors" title="Refresh">
+                      <FiRefreshCw size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 px-1">
+                  <FiCalendar className="text-slate-400" size={13} />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Contract Date</span>
+                  <input
+                    type="date"
+                    value={contractDateFrom}
+                    onChange={(e) => setContractDateFrom(e.target.value)}
+                    className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                  />
+                  <span className="text-[10px] font-bold text-slate-400">to</span>
+                  <input
+                    type="date"
+                    value={contractDateTo}
+                    onChange={(e) => setContractDateTo(e.target.value)}
+                    className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                  />
+                  {(contractDateFrom || contractDateTo) && (
+                    <button
+                      onClick={() => { setContractDateFrom(""); setContractDateTo(""); }}
+                      className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-orange-600"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {loadingGroups ? (
+                  <p className="text-xs font-bold text-slate-400 p-4">Loading...</p>
+                ) : groups.length === 0 ? (
+                  <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    No un-billed orders for this firm.
+                  </p>
+                ) : filteredGroups.length === 0 ? (
+                  <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    No un-billed contracts in that date range.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 px-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedGroupKeys.size > 0 && selectedGroupKeys.size === visibleGroups.length}
+                        onChange={toggleSelectAllContracts}
+                        className="w-3.5 h-3.5"
+                      />
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                        {selectedGroupKeys.size > 0 ? `${selectedGroupKeys.size} selected` : `Select all (showing ${visibleGroups.length} of ${filteredGroups.length})`}
+                      </span>
+                      {selectedGroupKeys.size > 0 && (
+                        <button
+                          onClick={() => setExemptPanelOpen((v) => !v)}
+                          className="ml-auto text-[10px] font-black uppercase tracking-widest text-orange-600 hover:text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-1.5"
+                        >
+                          Mark as Exempt (No Bill Needed)
+                        </button>
+                      )}
+                    </div>
+
+                    {exemptPanelOpen && selectedGroupKeys.size > 0 && (
+                      <div className="bg-orange-50/70 border border-orange-200 rounded-xl p-4 space-y-3">
+                        <p className="text-xs font-bold text-slate-600">
+                          Why doesn't {selectedGroupKeys.size} contract{selectedGroupKeys.size > 1 ? "s" : ""} need a bill from OMS?
+                        </p>
+                        <div className="flex flex-col gap-2">
+                          <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                            <input type="radio" checked={exemptReason === "ALREADY_BILLED_EXTERNAL"} onChange={() => setExemptReason("ALREADY_BILLED_EXTERNAL")} />
+                            Already billed outside OMS (e.g. in Miracle)
+                          </label>
+                          <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                            <input type="radio" checked={exemptReason === "NOT_REQUIRED"} onChange={() => setExemptReason("NOT_REQUIRED")} />
+                            No bill needed for this at all
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          value={exemptNote}
+                          onChange={(e) => setExemptNote(e.target.value)}
+                          placeholder={exemptReason === "ALREADY_BILLED_EXTERNAL" ? "Optional: Miracle invoice number, e.g. SM2" : "Optional note"}
+                          className="w-full text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-orange-400"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={submitExemption}
+                            disabled={exempting}
+                            className="text-[11px] font-black uppercase tracking-widest text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50 rounded-lg px-4 py-2"
+                          >
+                            {exempting ? "Saving..." : "Confirm"}
+                          </button>
+                          <button
+                            onClick={() => setExemptPanelOpen(false)}
+                            className="text-[11px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-700 px-4 py-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* One shared column grid for every item row across every card, so
+                        Qty/Rate/Total line up vertically down the whole list instead of
+                        each card auto-sizing its own (differently-positioned) columns.
+                        The leading spacer matches the checkbox + gap each card indents by. */}
+                    <div className="flex items-center gap-3 px-4">
+                      <span className="w-3.5 flex-shrink-0" />
+                      <div className="flex-1 grid grid-cols-[1fr_70px_70px_85px] gap-x-3 text-[10px] font-black text-slate-400 uppercase tracking-wide">
+                        <span>Item</span>
+                        <span className="text-right">Qty</span>
+                        <span className="text-right">Rate</span>
+                        <span className="text-right">Total</span>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                      {visibleGroups.map((g) => {
+                        const key = groupKey(g);
+                        return (
+                          <div
+                            key={key}
+                            className={`w-full p-4 hover:bg-orange-50/50 transition-all ${selectedContract?.contractNo === g.contractNo ? "bg-orange-50" : ""}`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedGroupKeys.has(key)}
+                                onChange={() => toggleContractSelected(key)}
+                                className="w-3.5 h-3.5 flex-shrink-0 mt-1"
+                              />
+                              <button onClick={() => selectContract(g)} className="flex-1 text-left">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="font-black text-slate-700 text-sm">{g.contractNo || "No Contract No."}</p>
+                                    <p className="text-xs font-bold text-slate-400">
+                                      {g.instituteName}{g.buyerState ? ` · ${g.buyerState}` : ""}{g.contractDate ? ` · ${g.contractDate}` : ""}
+                                    </p>
+                                  </div>
+                                  <FiChevronRight className="text-slate-300 flex-shrink-0" />
+                                </div>
+                                <div className="mt-2 space-y-1">
+                                  {g.orders.map((o) => (
+                                    <div key={o._id} className="grid grid-cols-[1fr_70px_70px_85px] gap-x-3 text-[11px] text-slate-600">
+                                      <span className="font-bold truncate" title={o.itemName}>{o.itemName}</span>
+                                      <span className="text-right tabular-nums">{o.reQty} {o.unit || ""}</span>
+                                      <span className="text-right tabular-nums">₹{fmt2(o.rate)}</span>
+                                      <span className="text-right font-bold tabular-nums">₹{fmt2(o.totalAmount)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {filteredGroups.length > visibleGroups.length && (
+                      <button
+                        onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                        className="w-full text-[11px] font-black uppercase tracking-widest text-orange-600 hover:text-orange-700 bg-orange-50 border border-orange-200 rounded-xl py-2.5"
+                      >
+                        Load 20 More ({filteredGroups.length - visibleGroups.length} remaining)
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {showExempted && (
+                  <div className="space-y-2 pt-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Exempted Contracts</label>
+                    {loadingExempted ? (
+                      <p className="text-xs font-bold text-slate-400 p-4">Loading...</p>
+                    ) : exemptedGroups.length === 0 ? (
+                      <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                        No exempted contracts for this firm.
+                      </p>
+                    ) : (
+                      <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                        {exemptedGroups.map((g) => {
+                          const first = g.orders[0];
+                          const key = groupKey(g);
+                          return (
+                            <div key={key} className="flex items-center justify-between p-4">
+                              <div>
+                                <p className="font-black text-slate-700 text-sm">{g.contractNo || "No Contract No."}</p>
+                                <p className="text-xs font-bold text-slate-400">{g.instituteName} · {g.orders.length} item(s){g.contractDate ? ` · ${g.contractDate}` : ""}</p>
+                                <p className="text-[10px] font-bold text-orange-500 mt-1">
+                                  {first?.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? "Already billed outside OMS" : "No bill needed"}
+                                  {first?.billExemptNote ? ` · ${first.billExemptNote}` : ""}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => undoExemption(g)}
+                                disabled={unExempting === key}
+                                className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-orange-600 disabled:opacity-50 border border-slate-200 rounded-lg px-3 py-1.5"
+                              >
+                                {unExempting === key ? "Undoing..." : "Undo"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Line items + generate */}
+            {selectedContract && company && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-slate-50 p-4 flex items-center justify-between border-b border-slate-200">
+                  <div>
+                    <p className="font-black text-slate-700 text-sm">{selectedContract.contractNo}</p>
+                    <p className="text-xs font-bold text-slate-400">
+                      {selectedContract.instituteName}
+                      {gstSplit !== "UNKNOWN" && isTaxInvoice ? ` · ${gstSplit === "IGST" ? "IGST" : "CGST + SGST"}` : ""}
+                      {isTaxInvoice && gstSplit === "UNKNOWN" ? " · Buyer state missing — add it on the Seller record to auto-decide CGST/SGST vs IGST" : ""}
+                    </p>
+                  </div>
+                  <button onClick={() => setSelectedContract(null)} className="text-slate-400 hover:text-rose-600"><FiX /></button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50/50">
+                        <th className="p-3 font-black text-slate-400 uppercase tracking-widest">Item</th>
+                        <th className="p-3 font-black text-slate-400 uppercase tracking-widest">Qty</th>
+                        <th className="p-3 font-black text-slate-400 uppercase tracking-widest">Rate</th>
+                        <th className="p-3 font-black text-slate-400 uppercase tracking-widest">Discount</th>
+                        {isTaxInvoice && <th className="p-3 font-black text-slate-400 uppercase tracking-widest">HSN/SAC</th>}
+                        {isTaxInvoice && <th className="p-3 font-black text-slate-400 uppercase tracking-widest">GST %</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedContract.orders.map((o) => (
+                        <tr key={o._id}>
+                          <td className="p-3 font-bold text-slate-700">{o.itemName}</td>
+                          <td className="p-3 font-bold text-slate-600">{o.reQty} {o.unit}</td>
+                          <td className="p-3 font-bold text-slate-600">₹{fmt2(o.rate)}</td>
+                          <td className="p-3">
+                            <input
+                              type="number" min="0"
+                              value={overrides[o._id]?.discount ?? 0}
+                              onChange={(e) => updateOverride(o._id, "discount", e.target.value)}
+                              className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-slate-700 focus:ring-2 focus:ring-orange-500/20"
+                            />
+                          </td>
+                          {isTaxInvoice && (
+                            <td className="p-3">
+                              <input
+                                type="text"
+                                value={overrides[o._id]?.hsnSac ?? ""}
+                                onChange={(e) => updateOverride(o._id, "hsnSac", e.target.value)}
+                                className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-slate-700 focus:ring-2 focus:ring-orange-500/20"
+                              />
+                            </td>
+                          )}
+                          {isTaxInvoice && (
+                            <td className="p-3">
+                              <input
+                                type="number" min="0" max="28" step="0.1"
+                                value={overrides[o._id]?.gstPercent ?? 0}
+                                onChange={(e) => updateOverride(o._id, "gstPercent", e.target.value)}
+                                className="w-20 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none font-bold text-slate-700 focus:ring-2 focus:ring-orange-500/20"
+                              />
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {preview && (
+                  <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col items-end gap-1 text-xs font-bold text-slate-600">
+                    <span>Sub Total: ₹{preview.subTotal.toFixed(2)}</span>
+                    {preview.totalDiscount > 0 && <span>Discount: - ₹{preview.totalDiscount.toFixed(2)}</span>}
+                    {isTaxInvoice && <span>GST: ₹{preview.totalGst.toFixed(2)}</span>}
+                    <span className="text-sm font-black text-slate-900">Grand Total: ₹{preview.grandTotal.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <div className="p-4 border-t border-slate-200 space-y-4">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <input type="radio" checked={numberMode === "auto"} onChange={() => setNumberMode("auto")} /> Auto Number
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <input type="radio" checked={numberMode === "manual"} onChange={() => setNumberMode("manual")} /> Manual Number
+                    </label>
+                  </div>
+                  {numberMode === "manual" && (
+                    <input
+                      type="text"
+                      value={manualNumber}
+                      onChange={(e) => setManualNumber(e.target.value)}
+                      placeholder={`E.G. ${company.invoiceNumbering?.prefix || ""}52`}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10"
+                    />
+                  )}
+                  <button
+                    onClick={handleGenerate}
+                    disabled={generating}
+                    className="w-full bg-[#ff5100] hover:bg-orange-700 text-white font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-3 transition-all uppercase tracking-widest text-sm active:scale-95 disabled:opacity-60"
+                  >
+                    <FiFileText /> {generating ? "Generating..." : "Generate Bill"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* History + Miracle export */}
+        {firmCode && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
+              <h2 className="font-black text-slate-800 uppercase tracking-tight">Bill History</h2>
+              <div className="flex items-center gap-2">
+                <FiCalendar className="text-slate-400" />
+                <input
+                  type="date"
+                  value={exportDate}
+                  onChange={(e) => setExportDate(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none"
+                />
+                <button
+                  onClick={handleExportMiracle}
+                  disabled={exporting}
+                  className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-60"
+                >
+                  <FiDownload /> {exporting ? "Exporting..." : "Export for Miracle"}
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50/50">
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Invoice No.</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Date</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Type</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Buyer</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">Amount</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">PDF</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">Submit to GeM</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">GeM Invoice</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {bills.length === 0 && (
+                    <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">No bills generated yet.</td></tr>
+                  )}
+                  {bills.map((b) => (
+                    <tr key={b._id} className="hover:bg-slate-50/50">
+                      <td className="p-4 font-black text-slate-700">{b.invoiceNumber}</td>
+                      <td className="p-4 font-bold text-slate-600">{new Date(b.invoiceDate).toLocaleDateString("en-GB")}</td>
+                      <td className="p-4 font-bold text-slate-600">{b.billType === "TAX_INVOICE" ? "Tax Invoice" : "Bill of Supply"}</td>
+                      <td className="p-4 font-bold text-slate-600">{b.buyerSnapshot?.instituteName}</td>
+                      <td className="p-4 font-bold text-slate-600 text-right">₹{b.grandTotal?.toFixed(2)}</td>
+                      <td className="p-4 text-right">
+                        <a
+                          href={`/api/bills/${b._id}/pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-2 inline-flex bg-slate-100 text-slate-400 rounded-lg hover:bg-orange-600 hover:text-white transition-all"
+                        >
+                          <FiDownload size={14} />
+                        </a>
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          <button
+                            onClick={() => handleSubmitToGemFromHistory(b)}
+                            disabled={historySubmittingId === b._id}
+                            title="Requires the GeM Bill Auto-Submit Chrome extension installed"
+                            className="p-2 inline-flex bg-slate-100 text-slate-400 rounded-lg hover:bg-slate-900 hover:text-white transition-all disabled:opacity-60"
+                          >
+                            <FiUpload size={14} />
+                          </button>
+                          {historyStatus[b._id] && (
+                            <span className="text-[10px] font-bold text-slate-400 max-w-[160px] text-right">{historyStatus[b._id]}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-4 text-right">
+                        {b.gemDocumentR2Key ? (
+                          <a
+                            href={`/api/bills/${b._id}/gem-document`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="GeM's own e-signed invoice document"
+                            className="p-2 inline-flex bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all"
+                          >
+                            <FiDownload size={14} />
+                          </a>
+                        ) : (
+                          <span className="text-slate-300" title="GeM invoice not submitted/uploaded yet">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </BlockGuard>
+  );
+}

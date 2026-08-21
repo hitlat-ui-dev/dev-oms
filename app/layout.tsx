@@ -41,6 +41,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       fetch("/api/backup/auto", { method: "POST" }).catch((err) =>
         console.error("Auto backup check failed silently:", err)
       );
+      // Trigger yesterday's courier-tracking run on initial site access
+      fetch("/api/courier/auto", { method: "POST" }).catch((err) =>
+        console.error("Courier auto-run check failed silently:", err)
+      );
     }
   }, [isLoginPage, router]);
 

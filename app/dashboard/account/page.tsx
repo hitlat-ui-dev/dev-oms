@@ -1,13 +1,20 @@
 "use client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare } from "react-icons/fi";
+import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare, FiPrinter } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
 export default function AccountPage() {
   const router = useRouter();
 
   const menuItems = [
+    {
+      name: "Generate Bill",
+      path: "/dashboard/account/bills",
+      sub: "TAX INVOICE / BILL OF SUPPLY",
+      icon: <FiPrinter />,
+      color: "bg-[#ea580c]",
+    },
     {
       name: "Statement",
       path: "/dashboard/account/statement",
