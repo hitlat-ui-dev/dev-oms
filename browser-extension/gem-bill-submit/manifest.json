@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "GeM Bill Auto-Submit — DEV GROUP",
+  "version": "1.0.0",
+  "description": "OMS se generate hua bill GeM portal pe contract ke against upload/submit karta hai, OTP Gmail se auto-fetch karke fill karta hai.",
+
+  "permissions": [
+    "identity",
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "downloads",
+    "debugger"
+  ],
+
+  "host_permissions": [
+    "https://fulfilment.gem.gov.in/*",
+    "https://mkp.gem.gov.in/*",
+    "https://bidplus.gem.gov.in/*",
+    "https://www.googleapis.com/*",
+    "https://dev-oms-blush.vercel.app/*",
+    "http://localhost:3000/*"
+  ],
+
+  "background": {
+    "service_worker": "background/background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://fulfilment.gem.gov.in/*",
+        "https://mkp.gem.gov.in/*",
+        "https://bidplus.gem.gov.in/*"
+      ],
+      "js": ["content/content-gem.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_title": "GeM Bill Auto-Submit",
+    "default_popup": "popup/popup.html"
+  },
+
+  "externally_connectable": {
+    "matches": ["https://dev-oms-blush.vercel.app/*", "http://localhost:3000/*"]
+  }
+}

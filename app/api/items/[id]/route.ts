@@ -23,6 +23,8 @@ export async function PATCH(
     if (data.location !== undefined) updateFields.location = data.location;
     if (data.hidden !== undefined) updateFields.hidden = data.hidden;
     if (data.rate !== undefined) updateFields.rate = data.rate !== "" ? Number(data.rate) : null;
+    if (data.hsnSac !== undefined) updateFields.hsnSac = data.hsnSac;
+    if (data.gstPercent !== undefined) updateFields.gstPercent = data.gstPercent !== "" ? Number(data.gstPercent) : 0;
 
     // 3. STEP A: Update the Stock document first
     const stockResult = await db.collection("stock").findOneAndUpdate(

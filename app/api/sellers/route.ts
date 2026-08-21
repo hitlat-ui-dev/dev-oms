@@ -61,10 +61,12 @@ export async function POST(req: Request) {
       instituteName: data.instituteName.trim(),
       buyerName: data.buyerName?.trim() || "",
       mobile: data.mobile?.trim() || "",
+      whatsappNumber: data.whatsappNumber?.trim() || "",
       address: data.address?.trim() || "",
       place: data.place?.trim() || "",
       sellerBillName: data.sellerBillName?.trim() || "",
       gemLocationText: data.gemLocationText?.trim() || "",
+      state: data.state?.trim() || "",
       statementDescriptionName: descNames
     };
 

@@ -33,6 +33,29 @@ export async function POST(req: Request) {
     await connectDB();
     const data = await req.json();
 
+    // No index/query ever guarded against re-adding an item that already
+    // exists under a different SKU - a case/whitespace-insensitive name
+    // match slipped through repeatedly (16 duplicate-name groups found
+    // across the live inventory before this check was added). Block it
+    // here rather than just warning, since the fix for an existing
+    // duplicate is a manual merge, not something worth doing twice.
+    const normalizedName = String(data.itemName || "").trim();
+    if (normalizedName) {
+      // A hidden item is a retired duplicate on purpose - it shouldn't block
+      // reusing that name, matching the DB's own partial unique index
+      // (itemName_unique_visible_ci), which only applies to non-hidden items.
+      const existing = await Item.findOne({
+        itemName: { $regex: `^${normalizedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+        hidden: { $in: [false, null] },
+      }).lean();
+      if (existing) {
+        return NextResponse.json(
+          { error: `An item named "${normalizedName}" already exists (SKU ${(existing as any).sku}). Use that item instead of creating a new one.` },
+          { status: 409 }
+        );
+      }
+    }
+
     // 1. Create the Item exactly with the fields from the form (sku, itemName, currentStock, etc.)
     // We still initialize an empty history array so the report doesn't crash later
     const newItem = await Item.create({

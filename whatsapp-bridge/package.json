@@ -1,0 +1,16 @@
+{
+  "name": "courier-whatsapp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone always-on service (runs on this PC via PM2, NOT deployed to Vercel) that polls dev-oms for pending courier-tracking WhatsApp sends and delivers them via a real WhatsApp Web session (whatsapp-web.js). Free, unofficial - see the README in this folder before touching it.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}

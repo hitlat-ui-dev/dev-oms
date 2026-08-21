@@ -12,18 +12,33 @@ const SellerSchema = new Schema({
     required: false, 
     trim: true 
   },
-  mobile: { 
+  mobile: {
+    type: String,
+    required: false
+  },
+  // Where courier-tracking WhatsApp notifications get sent - separate from
+  // `mobile` since the contact number on file isn't always on WhatsApp, or
+  // the institute wants notifications routed to a different number.
+  whatsappNumber: {
+    type: String,
+    required: false,
+    trim: true
+  },
+  address: {
     type: String, 
     required: false 
   },
-  address: { 
-    type: String, 
-    required: false 
+  place: {
+    type: String,
+    required: false,
+    trim: true
   },
-  place: { 
-    type: String, 
-    required: false, 
-    trim: true 
+  // Buyer's state - decides CGST/SGST vs IGST on a generated bill against the
+  // seller firm's state. Optional so existing institutes stay saveable.
+  state: {
+    type: String,
+    required: false,
+    trim: true
   },
   sellerBillName: {
     type: String,

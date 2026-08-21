@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      width: 360px;
+      font-family: Arial, sans-serif;
+      padding: 14px;
+      margin: 0;
+    }
+    h2 { font-size: 15px; color: #0B1F4D; margin: 0 0 10px 0; }
+    .firmRow {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 12.5px;
+    }
+    .firmName { font-weight: 600; }
+    .linkedEmail { color: #1E7B34; font-size: 11px; }
+    .notLinked { color: #C5221F; font-size: 11px; }
+    button {
+      background: #0B1F4D;
+      color: #fff;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    button:hover { background: #16306e; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+    #status { font-size: 11px; color: #666; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>GeM Bill Auto-Submit — Gmail Accounts</h2>
+  <div id="firmList">Loading firms...</div>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -215,11 +215,20 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       const method = isEditing ? "PATCH" : "POST";
       const url = isEditing ? `/api/seller-orders/${initialData._id}` : "/api/seller-orders";
 
+      // sellerId is an ObjectId field server-side - "" (no institute match
+      // found, e.g. a GeM-verify order matched by name only) must not be
+      // sent as-is, or the update throws a Mongoose cast error. Omit the key
+      // entirely rather than nulling it: on an edit, that leaves whatever
+      // sellerId already exists on the order untouched instead of silently
+      // wiping out a valid link just because this save's institute-name
+      // match happened not to resolve.
+      const payload: any = { ...formData, totalAmount, ...(isEditing ? {} : { createdBy: currentUsername }) };
+      if (!payload.sellerId) delete payload.sellerId;
+
       const res = await fetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
-        // createdBy is only sent on create — an edit shouldn't reassign authorship
-        body: JSON.stringify({ ...formData, totalAmount, ...(isEditing ? {} : { createdBy: currentUsername }) })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {

@@ -21,6 +21,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const updateData = await req.json();
 
+    // sellerId is an ObjectId field - orders that were never linked to a
+    // Seller record (e.g. GeM-verify orders matched by institute name only)
+    // load into the edit form as "", and Mongoose's cast throws a BSONError
+    // on "" (unlike null, which it accepts fine) the moment this reaches
+    // findOneAndUpdate. Drop the key instead of nulling it out, so a save
+    // that isn't actually changing the seller link leaves whatever value
+    // (valid ObjectId or null) already exists on the order untouched.
+    if (updateData.sellerId === "") {
+      delete updateData.sellerId;
+    }
+
     // 1. Find Original Order
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });
