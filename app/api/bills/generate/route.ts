@@ -144,6 +144,22 @@ export async function POST(req: Request) {
       ? await db.collection("items").find({ _id: { $in: itemIds.map((id: any) => new ObjectId(id)) } }).toArray()
       : [];
     const itemById = new Map(itemDocs.map((it) => [String(it._id), it]));
+
+    // A hidden/retired item can't be billed even if this order was placed
+    // before it got hidden - the contract needs correcting to its active
+    // replacement item first (see the same hidden-item guard on Ready to
+    // Ship/Delivery transitions in app/api/seller-orders/[id]/route.ts).
+    const hiddenLine = orders.find((o) => o.itemId && itemById.get(String(o.itemId))?.hidden === true);
+    if (hiddenLine) {
+      const hiddenItemDoc = itemById.get(String(hiddenLine.itemId));
+      return NextResponse.json(
+        {
+          error: `"${hiddenLine.itemName}" (SKU ${hiddenItemDoc?.sku || hiddenLine.sku}) is hidden/retired — this contract can't be billed until the order is corrected to use its active replacement item.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const overridesByOrderId = new Map(
       (Array.isArray(lineOverrides) ? lineOverrides : []).map((o: any) => [String(o.sellerOrderId), o])
     );

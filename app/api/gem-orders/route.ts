@@ -80,6 +80,17 @@ export async function POST(req: Request) {
 
     try {
       await db.collection("raw_gem_orders").insertOne(rawOrderDoc);
+      // Firm-level "when was this last fetched" log - kept separate from
+      // raw_gem_orders because those rows get deleted once verified, which
+      // would otherwise erase the fetch history for a firm the moment its
+      // last pending order gets cleared.
+      if (rawOrderDoc.firmCode) {
+        await db.collection("gem_order_fetch_log").updateOne(
+          { firmCode: rawOrderDoc.firmCode },
+          { $set: { firmCode: rawOrderDoc.firmCode, lastFetchedAt: new Date() } },
+          { upsert: true }
+        );
+      }
     } catch (insertErr: any) {
       // The findOne check above is a race, not a guarantee (two overlapping
       // extension runs could both pass it for the same contractNo) - the

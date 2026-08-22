@@ -19,7 +19,28 @@ export async function GET(req: Request) {
 
     const client = await clientPromise;
     const db = client.db();
-    const bills = await db.collection("bills").find(query).sort({ invoiceDate: -1, createdAt: -1 }).toArray();
+
+    // contractDate isn't stored on the Bill doc itself (only on the seller
+    // orders it was generated from) - looked up here so Bill History can
+    // show it without needing a schema migration for bills already generated.
+    const bills = await db.collection("bills").aggregate([
+      { $match: query },
+      { $sort: { invoiceDate: -1, createdAt: -1 } },
+      {
+        $lookup: {
+          from: "sellerorders",
+          let: { fc: "$firmCode", cn: "$contractNo" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$firmCode", "$$fc"] }, { $eq: ["$contractNo", "$$cn"] }] } } },
+            { $limit: 1 },
+            { $project: { _id: 0, contractDate: 1 } },
+          ],
+          as: "_contractLookup",
+        },
+      },
+      { $addFields: { contractDate: { $arrayElemAt: ["$_contractLookup.contractDate", 0] } } },
+      { $project: { _contractLookup: 0 } },
+    ]).toArray();
 
     return NextResponse.json(bills);
   } catch (error: any) {

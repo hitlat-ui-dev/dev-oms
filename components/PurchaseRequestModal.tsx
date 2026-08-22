@@ -52,9 +52,10 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
   }, [formData.itemName, stockData]);
 
   const handleTextChange = (value: string) => {
-    // 1. Try to find an exact match in your stockData
+    // 1. Try to find an exact match in your stockData (excluding hidden items
+    // - see the same-named hidden/active duplicate note in handleSave below)
     const selectedItem = stockData.find(
-      (i) => i.itemName?.toLowerCase().trim() === value.toLowerCase().trim()
+      (i) => i.itemName?.toLowerCase().trim() === value.toLowerCase().trim() && i.hidden !== true
     );
 
     setFormData({
@@ -132,14 +133,23 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
     //console.log("3. Complete local stockData array available in component:", stockData);
 
     // Locating the item inside the stock database list strictly by Name match
+    // A hidden item is often a retired duplicate sharing the exact same name
+    // as its active replacement (see app/api/items/route.ts's duplicate-name
+    // check) - matched separately below so a hidden hit gets its own clear
+    // error instead of silently resolving to the wrong (retired) SKU.
     const matchedItem = stockData.find((i) => {
       const dbName = (i.itemName || "").trim().toUpperCase();
-      return dbName === cleanInput;
+      return dbName === cleanInput && i.hidden !== true;
     });
 
     //console.log("4. Result of stockData.find():", matchedItem);
 
     if (!matchedItem) {
+      const hiddenMatch = stockData.find((i) => (i.itemName || "").trim().toUpperCase() === cleanInput && i.hidden === true);
+      if (hiddenMatch) {
+        alert(`❌ Error: "${hiddenMatch.itemName}" (SKU ${hiddenMatch.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
+        return;
+      }
       alert(`DEBUG ALERT: System could not find ANY item in stockData matching name: "${cleanInput}"`);
       //console.log("Result: Blocked at step 4 (No item match found)");
       return;

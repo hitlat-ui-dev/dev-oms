@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   FiArrowLeft, FiPrinter, FiCheckCircle, FiDownload, FiFileText,
-  FiChevronRight, FiX, FiCalendar, FiRefreshCw, FiUpload,
+  FiChevronRight, FiX, FiCalendar, FiRefreshCw, FiUpload, FiSearch,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
-import { submitBillToGem } from "@/lib/triggerGemSubmit";
+import { submitBillToGem, retryGemDocumentFetch } from "@/lib/triggerGemSubmit";
 
 interface Company {
   _id: string;
@@ -54,6 +54,7 @@ interface Bill {
   billType: "TAX_INVOICE" | "BILL_OF_SUPPLY";
   gstSplit: string;
   contractNo: string;
+  contractDate?: string; // DD/MM/YYYY - looked up server-side from the seller order, not stored on the Bill doc
   buyerSnapshot: { instituteName: string; state?: string };
   items: { qty: number; hsnSac?: string; gstPercent?: number }[];
   grandTotal: number;
@@ -112,10 +113,24 @@ export default function GenerateBillPage() {
   const [gemSubmitStatus, setGemSubmitStatus] = useState("");
   const [historySubmittingId, setHistorySubmittingId] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<Record<string, string>>({});
+  const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
+
+  const [showZipExportModal, setShowZipExportModal] = useState(false);
+  const [zipFirmCode, setZipFirmCode] = useState("");
+  const [zipInstituteName, setZipInstituteName] = useState("");
+  const [zipDateFrom, setZipDateFrom] = useState("");
+  const [zipDateTo, setZipDateTo] = useState("");
+  const [zipExporting, setZipExporting] = useState(false);
+  const [zipExportError, setZipExportError] = useState("");
 
   const [bills, setBills] = useState<Bill[]>([]);
   const [exportDate, setExportDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [exporting, setExporting] = useState(false);
+  const [billHistoryDateFrom, setBillHistoryDateFrom] = useState("");
+  const [billHistoryDateTo, setBillHistoryDateTo] = useState("");
+  const [invoiceRangeFrom, setInvoiceRangeFrom] = useState("");
+  const [invoiceRangeTo, setInvoiceRangeTo] = useState("");
+  const [billHistorySearchQuery, setBillHistorySearchQuery] = useState("");
 
   // Contracts that will never get a real Bill: already invoiced outside OMS
   // (e.g. directly in Miracle, before this feature existed) or genuinely not
@@ -139,6 +154,7 @@ export default function GenerateBillPage() {
   const [unExempting, setUnExempting] = useState<string | null>(null);
   const [contractDateFrom, setContractDateFrom] = useState("");
   const [contractDateTo, setContractDateTo] = useState("");
+  const [contractSearchQuery, setContractSearchQuery] = useState("");
 
   // Advances OMS's own auto-increment counter to match a number already
   // issued outside OMS (offline sale billed directly in Miracle, sharing the
@@ -183,24 +199,90 @@ export default function GenerateBillPage() {
   };
 
   const filteredGroups = useMemo(() => {
-    if (!contractDateFrom && !contractDateTo) return groups;
-    const from = contractDateFrom ? new Date(contractDateFrom) : null;
-    const to = contractDateTo ? new Date(contractDateTo) : null;
-    return groups.filter((g) => {
-      const d = parseContractDate(g.contractDate);
-      if (!d) return false; // no parseable date - excluded once a range filter is active
-      if (from && d < from) return false;
-      if (to && d > to) return false;
-      return true;
-    });
-  }, [groups, contractDateFrom, contractDateTo]);
+    let result = groups;
+
+    if (contractDateFrom || contractDateTo) {
+      const from = contractDateFrom ? new Date(contractDateFrom) : null;
+      const to = contractDateTo ? new Date(contractDateTo) : null;
+      result = result.filter((g) => {
+        const d = parseContractDate(g.contractDate);
+        if (!d) return false; // no parseable date - excluded once a range filter is active
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+    }
+
+    const q = contractSearchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((g) => {
+        if (g.contractNo?.toLowerCase().includes(q)) return true;
+        if (g.instituteName?.toLowerCase().includes(q)) return true;
+        return g.orders.some((o) =>
+          o.itemName?.toLowerCase().includes(q) || String(o.totalAmount ?? "").includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [groups, contractDateFrom, contractDateTo, contractSearchQuery]);
 
   // The list can run into the hundreds for an old firm - show 20 at a time
   // instead of dumping everything on screen at once.
   const PAGE_SIZE = 20;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => setVisibleCount(PAGE_SIZE), [firmCode, contractDateFrom, contractDateTo]);
+  useEffect(() => setVisibleCount(PAGE_SIZE), [firmCode, contractDateFrom, contractDateTo, contractSearchQuery]);
   const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
+
+  // Invoice numbers are "<prefix><number>" (e.g. "SM14") - pull the trailing
+  // digits out so a from/to range can be compared numerically regardless of
+  // whether the user typed the prefix or just the number.
+  const extractNumericSuffix = (s: string): number | null => {
+    const m = /(\d+)\s*$/.exec(String(s || ""));
+    return m ? parseInt(m[1], 10) : null;
+  };
+
+  const filteredBills = useMemo(() => {
+    let result = bills;
+
+    if (billHistoryDateFrom || billHistoryDateTo) {
+      const from = billHistoryDateFrom ? new Date(`${billHistoryDateFrom}T00:00:00`) : null;
+      const to = billHistoryDateTo ? new Date(`${billHistoryDateTo}T23:59:59`) : null;
+      result = result.filter((b) => {
+        const d = new Date(b.invoiceDate);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+    }
+
+    if (invoiceRangeFrom || invoiceRangeTo) {
+      const fromNum = invoiceRangeFrom ? extractNumericSuffix(invoiceRangeFrom) : null;
+      const toNum = invoiceRangeTo ? extractNumericSuffix(invoiceRangeTo) : null;
+      result = result.filter((b) => {
+        const n = extractNumericSuffix(b.invoiceNumber);
+        if (n === null) return false;
+        if (fromNum !== null && n < fromNum) return false;
+        if (toNum !== null && n > toNum) return false;
+        return true;
+      });
+    }
+
+    const q = billHistorySearchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((b) =>
+        b.invoiceNumber?.toLowerCase().includes(q) ||
+        b.contractNo?.toLowerCase().includes(q) ||
+        b.buyerSnapshot?.instituteName?.toLowerCase().includes(q) ||
+        String(b.grandTotal ?? "").includes(q)
+      );
+    }
+
+    return result;
+  }, [bills, billHistoryDateFrom, billHistoryDateTo, invoiceRangeFrom, invoiceRangeTo, billHistorySearchQuery]);
+
+  const billHistoryFiltersActive =
+    billHistoryDateFrom || billHistoryDateTo || invoiceRangeFrom || invoiceRangeTo || billHistorySearchQuery;
 
   const currentUsername = (): string => {
     try {
@@ -491,7 +573,7 @@ export default function GenerateBillPage() {
         firmCode: company.firmCode,
         billType: bill.billType,
         contractNo: bill.contractNo,
-        contractDate: formatDateDDMMYYYY(bill.invoiceDate),
+        contractDate: bill.contractDate || formatDateDDMMYYYY(bill.invoiceDate),
         buyerState: bill.buyerSnapshot.state,
         billId: bill._id,
         billNo: bill.invoiceNumber,
@@ -505,6 +587,29 @@ export default function GenerateBillPage() {
       setHistoryStatus((prev) => ({ ...prev, [bill._id]: `Fail: ${err.message}` }));
     } finally {
       setHistorySubmittingId(null);
+    }
+  };
+
+  // For a bill already submitted+verified on GeM whose OMS copy of GeM's own
+  // invoice PDF never arrived ("GeM Invoice" column shows "-") - re-fetches
+  // just that document instead of resubmitting the whole bill.
+  const handleRetryGemDocument = async (bill: Bill) => {
+    if (!company) return;
+    setRetryingDocId(bill._id);
+    setHistoryStatus((prev) => ({ ...prev, [bill._id]: "" }));
+    try {
+      await retryGemDocumentFetch({
+        firmCode: company.firmCode,
+        contractNo: bill.contractNo,
+        billId: bill._id,
+        billNo: bill.invoiceNumber,
+        billPdfUrl: `${window.location.origin}/api/bills/${bill._id}/pdf`,
+      });
+      setHistoryStatus((prev) => ({ ...prev, [bill._id]: "GeM tab khul gaya, document fetch ho raha hai." }));
+    } catch (err: any) {
+      setHistoryStatus((prev) => ({ ...prev, [bill._id]: `Fail: ${err.message}` }));
+    } finally {
+      setRetryingDocId(null);
     }
   };
 
@@ -531,6 +636,41 @@ export default function GenerateBillPage() {
     }
   };
 
+  // Bulk-downloads both the OMS invoice PDF and GeM's own e-signed invoice
+  // (when uploaded) for every bill matching the modal's Firm/Institute/Date
+  // filters, as one ZIP - independent of whichever firm is selected in the
+  // "Generate Bill" panel above, since this can span multiple firms.
+  const handleZipExport = async () => {
+    setZipExporting(true);
+    setZipExportError("");
+    try {
+      const params = new URLSearchParams();
+      if (zipFirmCode) params.set("firmCode", zipFirmCode);
+      if (zipInstituteName.trim()) params.set("instituteName", zipInstituteName.trim());
+      if (zipDateFrom) params.set("from", zipDateFrom);
+      if (zipDateTo) params.set("to", zipDateTo);
+
+      const res = await fetch(`/api/bills/export-zip?${params.toString()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setZipExportError(data.error || "Export failed.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Bills_Export_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowZipExportModal(false);
+    } catch {
+      setZipExportError("Network error while exporting.");
+    } finally {
+      setZipExporting(false);
+    }
+  };
+
   return (
     <BlockGuard
       permission="generateBill"
@@ -547,6 +687,12 @@ export default function GenerateBillPage() {
         <div className="flex justify-between items-center">
           <button onClick={() => router.push("/dashboard/account")} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
             <FiArrowLeft /> Back to Account
+          </button>
+          <button
+            onClick={() => setShowZipExportModal(true)}
+            className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all"
+          >
+            <FiDownload /> Export Bills (ZIP)
           </button>
         </div>
 
@@ -698,6 +844,25 @@ export default function GenerateBillPage() {
                   )}
                 </div>
 
+                <div className="relative px-1">
+                  <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                  <input
+                    type="text"
+                    value={contractSearchQuery}
+                    onChange={(e) => setContractSearchQuery(e.target.value)}
+                    placeholder="Search Contract No / Item Name / Institute Name / Total Amount..."
+                    className="w-full pl-9 pr-8 py-2 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-orange-400"
+                  />
+                  {contractSearchQuery && (
+                    <button
+                      onClick={() => setContractSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-orange-600"
+                    >
+                      <FiX size={13} />
+                    </button>
+                  )}
+                </div>
+
                 {loadingGroups ? (
                   <p className="text-xs font-bold text-slate-400 p-4">Loading...</p>
                 ) : groups.length === 0 ? (
@@ -706,7 +871,7 @@ export default function GenerateBillPage() {
                   </p>
                 ) : filteredGroups.length === 0 ? (
                   <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                    No un-billed contracts in that date range.
+                    No un-billed contracts match that date range / search.
                   </p>
                 ) : (
                   <>
@@ -1007,13 +1172,88 @@ export default function GenerateBillPage() {
                 </button>
               </div>
             </div>
+
+            <div className="p-4 border-b border-slate-100 bg-white flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <FiCalendar className="text-slate-400" size={13} />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Date</span>
+                <input
+                  type="date"
+                  value={billHistoryDateFrom}
+                  onChange={(e) => setBillHistoryDateFrom(e.target.value)}
+                  className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                />
+                <span className="text-[10px] font-bold text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={billHistoryDateTo}
+                  onChange={(e) => setBillHistoryDateTo(e.target.value)}
+                  className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <FiFileText className="text-slate-400" size={13} />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Invoice No.</span>
+                <input
+                  type="text"
+                  value={invoiceRangeFrom}
+                  onChange={(e) => setInvoiceRangeFrom(e.target.value)}
+                  placeholder={`E.G. ${company?.invoiceNumbering?.prefix || ""}14`}
+                  className="w-28 text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                />
+                <span className="text-[10px] font-bold text-slate-400">to</span>
+                <input
+                  type="text"
+                  value={invoiceRangeTo}
+                  onChange={(e) => setInvoiceRangeTo(e.target.value)}
+                  placeholder={`E.G. ${company?.invoiceNumbering?.prefix || ""}20`}
+                  className="w-28 text-xs font-bold border border-slate-200 rounded-lg px-2 py-1 outline-none focus:border-orange-400"
+                />
+              </div>
+
+              <div className="relative flex-1 min-w-[220px]">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                <input
+                  type="text"
+                  value={billHistorySearchQuery}
+                  onChange={(e) => setBillHistorySearchQuery(e.target.value)}
+                  placeholder="Search Invoice No / Contract No / Buyer / Amount..."
+                  className="w-full pl-8 pr-8 py-1.5 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-orange-400"
+                />
+                {billHistorySearchQuery && (
+                  <button
+                    onClick={() => setBillHistorySearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-orange-600"
+                  >
+                    <FiX size={13} />
+                  </button>
+                )}
+              </div>
+
+              {billHistoryFiltersActive && (
+                <button
+                  onClick={() => {
+                    setBillHistoryDateFrom("");
+                    setBillHistoryDateTo("");
+                    setInvoiceRangeFrom("");
+                    setInvoiceRangeTo("");
+                    setBillHistorySearchQuery("");
+                  }}
+                  className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-orange-600"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50/50">
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Invoice No.</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Date</th>
-                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Type</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Contract No</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest">Buyer</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">Amount</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">PDF</th>
@@ -1025,11 +1265,17 @@ export default function GenerateBillPage() {
                   {bills.length === 0 && (
                     <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">No bills generated yet.</td></tr>
                   )}
-                  {bills.map((b) => (
+                  {bills.length > 0 && filteredBills.length === 0 && (
+                    <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">No bills match those filters.</td></tr>
+                  )}
+                  {filteredBills.map((b) => (
                     <tr key={b._id} className="hover:bg-slate-50/50">
                       <td className="p-4 font-black text-slate-700">{b.invoiceNumber}</td>
                       <td className="p-4 font-bold text-slate-600">{new Date(b.invoiceDate).toLocaleDateString("en-GB")}</td>
-                      <td className="p-4 font-bold text-slate-600">{b.billType === "TAX_INVOICE" ? "Tax Invoice" : "Bill of Supply"}</td>
+                      <td className="p-4">
+                        <div className="font-bold text-slate-700">{b.contractNo || "—"}</div>
+                        {b.contractDate && <div className="text-[10px] font-bold text-slate-400">{b.contractDate}</div>}
+                      </td>
                       <td className="p-4 font-bold text-slate-600">{b.buyerSnapshot?.instituteName}</td>
                       <td className="p-4 font-bold text-slate-600 text-right">₹{b.grandTotal?.toFixed(2)}</td>
                       <td className="p-4 text-right">
@@ -1069,7 +1315,14 @@ export default function GenerateBillPage() {
                             <FiDownload size={14} />
                           </a>
                         ) : (
-                          <span className="text-slate-300" title="GeM invoice not submitted/uploaded yet">—</span>
+                          <button
+                            onClick={() => handleRetryGemDocument(b)}
+                            disabled={retryingDocId === b._id}
+                            title="Bill GeM par already submit/verify ho chuka ho to iska document dobara fetch karo"
+                            className="p-2 inline-flex bg-slate-100 text-slate-400 rounded-lg hover:bg-slate-900 hover:text-white transition-all disabled:opacity-60"
+                          >
+                            <FiRefreshCw size={14} />
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1080,6 +1333,86 @@ export default function GenerateBillPage() {
           </div>
         )}
       </div>
+
+      {showZipExportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
+              <h2 className="font-black uppercase tracking-tight">Export Bills (ZIP)</h2>
+              <button onClick={() => setShowZipExportModal(false)} className="text-white/50 hover:text-white transition-colors">
+                <FiX size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs font-bold text-slate-500">
+                In filters se jo bhi bills match karenge, unka OMS invoice PDF
+                aur GeM ka e-signed document (agar upload hua ho) — dono
+                ek ZIP me, har bill ke liye alag folder ("Firm-Contract No")
+                ke saath download honge.
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Firm (optional)</label>
+                <select
+                  value={zipFirmCode}
+                  onChange={(e) => setZipFirmCode(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                >
+                  <option value="">All Firms</option>
+                  {companies.map((c) => (
+                    <option key={c._id} value={c.firmCode}>{c.firmName} ({c.firmCode})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Institute Name (optional)</label>
+                <input
+                  type="text"
+                  value={zipInstituteName}
+                  onChange={(e) => setZipInstituteName(e.target.value)}
+                  placeholder="e.g. Mansa ITI"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date From</label>
+                  <input
+                    type="date"
+                    value={zipDateFrom}
+                    onChange={(e) => setZipDateFrom(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date To</label>
+                  <input
+                    type="date"
+                    value={zipDateTo}
+                    onChange={(e) => setZipDateTo(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  />
+                </div>
+              </div>
+
+              {zipExportError && (
+                <p className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{zipExportError}</p>
+              )}
+
+              <button
+                onClick={handleZipExport}
+                disabled={zipExporting}
+                className="w-full bg-[#ff5100] hover:bg-orange-700 text-white font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-3 transition-all uppercase tracking-widest text-sm active:scale-95 disabled:opacity-60"
+              >
+                <FiDownload /> {zipExporting ? "Preparing ZIP..." : "Download ZIP"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </BlockGuard>
   );
 }

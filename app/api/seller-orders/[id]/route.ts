@@ -51,6 +51,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Order record is missing a SKU code." }, { status: 400 });
     }
 
+    // A hidden/retired item can't be shipped or delivered even if this order
+    // was placed before it got hidden - Cancel/Return/Hisab stay allowed so a
+    // stuck order can still be resolved without needing the item un-hidden.
+    if (updateData.status === "READY TO SHIP" || updateData.status === "DELIVERY") {
+      const referencedItem = await db.collection("items").findOne({ sku: itemSku });
+      if (referencedItem?.hidden === true) {
+        return NextResponse.json(
+          {
+            error: `"${originalOrder.itemName}" (SKU ${itemSku}) is hidden/retired — this order can't move to ${updateData.status} until the item is un-hidden, or the order is corrected to use its active replacement.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     // Define bulletproof stock query filter using the item SKU code
     const stockFilter = { sku: itemSku };
 

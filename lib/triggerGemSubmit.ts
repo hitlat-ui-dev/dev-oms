@@ -47,6 +47,44 @@ export function submitBillToGem(params: SubmitBillToGemParams): Promise<any> {
   });
 }
 
+export interface RetryGemDocumentParams {
+  firmCode: string;
+  contractNo: string;
+  billId: string;
+  billNo: string;
+  billPdfUrl: string;
+}
+
+// Re-fetches just GeM's own e-signed invoice PDF for a bill that's already
+// submitted/verified on GeM but whose OMS copy is missing (Bill History's
+// "GeM Invoice" column shows "-" - the original submit run's document step
+// is non-fatal, so this can happen without the bill itself needing redoing).
+// Skips the whole submit flow - the extension only opens the order and grabs
+// the already-generated invoice's download link, no re-invoicing risk.
+export function retryGemDocumentFetch(params: RetryGemDocumentParams): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chromeRuntime = (window as any).chrome?.runtime;
+    if (!chromeRuntime?.sendMessage) {
+      reject(new Error("Extension detect nahi hua — install hai ya nahi check karo."));
+      return;
+    }
+
+    chromeRuntime.sendMessage(
+      GEM_EXTENSION_ID,
+      { type: "RETRY_GEM_DOCUMENT", payload: params },
+      (response: any) => {
+        if (chromeRuntime.lastError) {
+          reject(new Error(chromeRuntime.lastError.message));
+        } else if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || "Unknown error"));
+        }
+      }
+    );
+  });
+}
+
 // USAGE example (e.g. in app/dashboard/account/bills/page.tsx after a bill is generated):
 //
 // import { submitBillToGem } from "@/lib/triggerGemSubmit";

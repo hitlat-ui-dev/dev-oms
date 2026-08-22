@@ -52,6 +52,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  if (message.type === "RETRY_GEM_DOCUMENT") {
+    handleRetryGemDocument(message.payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
 
 async function handleSubmitBillToGem(payload) {
@@ -102,6 +109,35 @@ async function handleSubmitBillToGem(payload) {
   const tab = await chrome.tabs.create({ url: GEM_ORDERS_URL, active: true });
 
   return { tabId: tab.id, message: "GeM tab khola gaya, content script automation shuru karega." };
+}
+
+// Bill already fully submitted+verified on GeM, but OMS ke paas uski copy
+// nahi hai (SUBMIT_BILL_TO_GEM ke GEM_DOCUMENT step ka pehla attempt fail ho
+// gaya tha, jo non-fatal hai). Poora flow dobara chalane ke bajaye seedha
+// order tak jaake, jo invoice already generated hai uska download link utha
+// ke upload karta hai - GENERATE INVOICE/UPLOAD/E-VERIFY dobara chalane se
+// already-invoiced order pe error ya duplicate invoice ka risk hota.
+async function handleRetryGemDocument(payload) {
+  const { firmCode, contractNo, billNo, billId, billPdfUrl } = payload;
+
+  if (!firmCode || !contractNo || !billNo || !billId || !billPdfUrl) {
+    throw new Error("firmCode, contractNo, billNo, billId, aur billPdfUrl zaroori hain.");
+  }
+
+  const omsOrigin = new URL(billPdfUrl).origin;
+
+  await chrome.storage.local.set({
+    pendingBillSubmission: {
+      firmCode, contractNo, billNo, billId, omsOrigin,
+      documentOnly: true,
+      step: "SEARCH",
+      startedAt: Date.now(),
+    },
+  });
+
+  const tab = await chrome.tabs.create({ url: GEM_ORDERS_URL, active: true });
+
+  return { tabId: tab.id, message: "GeM tab khola gaya, sirf invoice document fetch hoga." };
 }
 
 // ---------------------------------------------------------------------------

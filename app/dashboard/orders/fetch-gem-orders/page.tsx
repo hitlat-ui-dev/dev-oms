@@ -16,7 +16,8 @@ import {
   FiAlertCircle,
   FiChevronUp,
   FiChevronDown,
-  FiZap
+  FiZap,
+  FiX
 } from "react-icons/fi";
 
 interface RawGeMOrder {
@@ -77,6 +78,9 @@ export default function FetchGeMOrdersPage() {
   const [stockItems, setStockItems] = useState<StockItemOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showFetchHistory, setShowFetchHistory] = useState(false);
+  const [fetchHistory, setFetchHistory] = useState<{ firmCode: string; firmName: string; lastFetchedAt: string | null }[]>([]);
+  const [loadingFetchHistory, setLoadingFetchHistory] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: "firmCode" | "instituteName" | "itemName"; direction: "asc" | "desc" } | null>(null);
 
@@ -192,6 +196,20 @@ export default function FetchGeMOrdersPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const openFetchHistory = async () => {
+    setShowFetchHistory(true);
+    setLoadingFetchHistory(true);
+    try {
+      const res = await fetch(`/api/gem-orders/fetch-history?t=${Date.now()}`);
+      const data = await res.json();
+      setFetchHistory(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error fetching GeM order fetch history:", err);
+    } finally {
+      setLoadingFetchHistory(false);
     }
   };
 
@@ -483,6 +501,13 @@ export default function FetchGeMOrdersPage() {
           <FiArrowLeft size={16} /> Back to Orders Dashboard
         </button>
         <div className="flex items-center gap-3">
+          <button
+            onClick={openFetchHistory}
+            title="Har firm ke GeM orders last kab fetch hue the"
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+          >
+            <FiClock size={14} /> History
+          </button>
           <button
             onClick={runBulkAutoMatch}
             disabled={matchingAll || rawOrders.length === 0}
@@ -782,6 +807,47 @@ export default function FetchGeMOrdersPage() {
               >
                 {verifying ? "Verifying..." : "Approve & Move Order"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFetchHistory && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h2 className="font-black uppercase tracking-tight">Fetch History</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Firm-wise last fetch date &amp; time</p>
+              </div>
+              <button onClick={() => setShowFetchHistory(false)} className="text-white/50 hover:text-white transition-colors">
+                <FiX size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 space-y-2">
+              {loadingFetchHistory ? (
+                <p className="text-xs font-bold text-slate-400 text-center py-8">Loading...</p>
+              ) : fetchHistory.length === 0 ? (
+                <p className="text-xs font-bold text-slate-400 text-center py-8">No firms found.</p>
+              ) : (
+                fetchHistory.map((f) => (
+                  <div key={f.firmCode} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div>
+                      <p className="font-black text-slate-700 text-sm">{f.firmName}</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{f.firmCode}</p>
+                    </div>
+                    {f.lastFetchedAt ? (
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-slate-700">{new Date(f.lastFetchedAt).toLocaleDateString("en-GB")}</p>
+                        <p className="text-[10px] font-bold text-slate-400">{new Date(f.lastFetchedAt).toLocaleTimeString("en-GB")}</p>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Never Fetched</span>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

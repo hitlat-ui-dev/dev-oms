@@ -62,6 +62,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     remark: ""
   };
   const [formData, setFormData] = useState(blankFormData);
+  // "Save & Add Another" clears the form to enter the next order back-to-back
+  // - the button itself keeps focus after being clicked, so re-focusing Firm
+  // Code here means the user can start typing immediately instead of tabbing
+  // back to the top of the form.
+  const firmCodeInputRef = useRef<HTMLInputElement>(null);
   // Brief inline confirmation shown after "Save & Add Another" instead of a
   // blocking alert() - a blocking dialog on every entry would defeat the
   // point of typing several orders back-to-back without leaving the modal.
@@ -198,9 +203,16 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
       return false; // Block database submit action pipeline completely
     }
-    const isValidItem = stocks.some((x: any) => x.itemName === formData.itemName);
-    if (!isValidItem) {
+    // Matched by itemId (not name) so an edit re-opened on an order that
+    // already references a hidden item gets caught too, not just the
+    // itemName datalist's own hidden-item selection.
+    const matchedStockItem = stocks.find((x: any) => x._id === formData.itemId);
+    if (!matchedStockItem) {
       alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
+      return false;
+    }
+    if (matchedStockItem.hidden === true) {
+      alert(`❌ Error: "${matchedStockItem.itemName}" (SKU ${matchedStockItem.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
       return false;
     }
 
@@ -274,6 +286,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     setFormData(blankFormData);
     setSavedFlash("✓ Order saved — add the next one");
     setTimeout(() => setSavedFlash(""), 2500);
+    firmCodeInputRef.current?.focus();
   };
 
   return (
@@ -325,6 +338,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
               <input
+                ref={firmCodeInputRef}
                 list="firm-options"
                 required
                 placeholder="Search Firm..."
@@ -403,8 +417,13 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                   // First, update the text so the user can actually type
                   setFormData(prev => ({ ...prev, itemName: val }));
 
-                  // Second, check if the typed text matches an item in your list
-                  const selectedItem = stocks.find((x: any) => x.itemName === val);
+                  // Second, check if the typed text matches an item in your list -
+                  // excluding hidden items, since a hidden item is often a retired
+                  // duplicate sharing the exact same name as its active replacement
+                  // (see app/api/items/route.ts's duplicate-name check), and a plain
+                  // name match here would otherwise silently pick whichever one
+                  // happens to come first in the array.
+                  const selectedItem = stocks.find((x: any) => x.itemName === val && x.hidden !== true);
                   if (selectedItem) {
                     setFormData(prev => ({
                       ...prev,

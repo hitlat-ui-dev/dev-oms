@@ -251,6 +251,19 @@ export default function OrdersListPage() {
     setSelectedOrderIds([]);
   }, [activeTab]);
 
+  // Same Ctrl/Cmd+K quick-add shortcut as the Dashboard's "New Order" tile -
+  // works here too so it doesn't only exist one click away.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowOrderModal(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const grandTotal = orders.reduce((sum, order) => {
     // Use the total field from your DB or calculate: price * quantity
     return sum + (order.totalAmount || 0);

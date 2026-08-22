@@ -63,7 +63,11 @@
 
     if (step === "SEARCH") {
       await stepSearchAndOpenOrder(data);
-      await setStep(data, "GENERATE_INVOICE");
+      // documentOnly retries (bill already submitted+verified on GeM, sirf
+      // OMS-side me GeM ka PDF missing hai) seedha document fetch pe jaate
+      // hain - GENERATE INVOICE dobara chalana already-invoiced order pe
+      // error ya duplicate invoice bana sakta hai.
+      await setStep(data, data.documentOnly ? "GEM_DOCUMENT" : "GENERATE_INVOICE");
     }
     if (data.step === "GENERATE_INVOICE") {
       await stepGenerateInvoice(data);
@@ -90,13 +94,20 @@
       await setStep(data, "GEM_DOCUMENT");
     }
     if (data.step === "GEM_DOCUMENT") {
-      // Non-fatal: the bill is already fully submitted on GeM at this
-      // point, so a failure here shouldn't alarm-and-stop like the earlier
-      // steps do - it just means OMS won't have a copy of GeM's own PDF.
-      try {
+      if (data.documentOnly) {
+        // This run's whole point IS the document fetch - let a failure
+        // propagate so the outer catch's alert() actually tells the user,
+        // instead of silently swallowing it like the full-flow case below.
         await stepFetchAndUploadGemDocument(data);
-      } catch (err) {
-        console.error("[GeM Bill Auto-Submit] GeM document fetch/upload failed (bill itself is still submitted fine):", err);
+      } else {
+        // Non-fatal: the bill is already fully submitted on GeM at this
+        // point, so a failure here shouldn't alarm-and-stop like the earlier
+        // steps do - it just means OMS won't have a copy of GeM's own PDF.
+        try {
+          await stepFetchAndUploadGemDocument(data);
+        } catch (err) {
+          console.error("[GeM Bill Auto-Submit] GeM document fetch/upload failed (bill itself is still submitted fine):", err);
+        }
       }
       await setStep(data, "DONE");
     }
