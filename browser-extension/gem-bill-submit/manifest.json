@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "GeM Bill Auto-Submit — DEV GROUP",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7HSg77LYFdjHsbriW7uy6M+n15Ikc2sovO+rffa0dQX4xg0OtFKNKTVoeRYqfFUSSNBjBpv8YXjj96eGq7TWpGkBUSdfNoTzHlwNyIhGyDYfSYQ9o6DdAgwK0zTDqW8PEEhsWfiLL0QMJMg2ytrdysVrqmh7JpKzjwzMILWg6XNJU3BYHdtao4s/eIMWirjwN34ZowFLVCXhitDCeiJ1cOr65y113zdGNvwiCNidED+B+P2f6BiRhWo56FTGCRO8pYjqGcbLmIfX88tusavarsnAu9AZnCwbITGbQtni3Sv09afBQ3+WlIq24vdMIKbKYbwRlVPwY0uYP+21EVXJdwIDAQAB",
   "description": "OMS se generate hua bill GeM portal pe contract ke against upload/submit karta hai, OTP Gmail se auto-fetch karke fill karta hai.",
 
   "permissions": [

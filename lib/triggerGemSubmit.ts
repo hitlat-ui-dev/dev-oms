@@ -3,10 +3,11 @@
 // Call this from the OMS webapp when the "Submit to GeM" button is pressed
 // (e.g. from the Generate Bill success state). The extension's
 // "externally_connectable" manifest entry already whitelists this OMS
-// origin, so no extra setup is needed on this side beyond pasting the real
-// EXTENSION_ID below once you've loaded the extension via chrome://extensions.
+// origin. The extension's manifest.json has a fixed "key" field, so this ID
+// stays the same on every computer that loads the extension unpacked —
+// no per-computer update needed here.
 
-const GEM_EXTENSION_ID = "cpcbmjadjgcnjhkibadjiahhfklgehnk"; // chrome://extensions se mila (20-Aug-2026)
+const GEM_EXTENSION_ID = "lcadakplnhlmmkgajnojaaiimojnhbap"; // fixed via manifest.json "key" (22-Aug-2026)
 
 export interface SubmitBillToGemParams {
   firmCode: string;

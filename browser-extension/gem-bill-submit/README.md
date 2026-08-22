@@ -64,11 +64,12 @@ Confirmed Gmail OTP format (`background.js`'s `fetchLatestOtpFromGmail`):
 
 ## STILL PENDING
 
-1. **Google Cloud OAuth Client ID** — placeholder in both `manifest.json`
-   and `background/background.js` (`YOUR_CHROME_EXTENSION_OAUTH_CLIENT_ID`).
-   Create one at console.cloud.google.com → APIs & Services → Credentials →
-   OAuth Client ID → type "Chrome Extension" (needs the extension's ID from
-   `chrome://extensions` after a first Load Unpacked).
+1. **Google verification / test user cap** — the OAuth client (`Web client
+   1`, project `my-app-506111`) is in Testing publishing status, capped at
+   100 test users lifetime. Each firm's Gmail account must be added under
+   Test users (`console.cloud.google.com/auth/audience?project=my-app-506111`)
+   before it can be linked. Moving to Published/Verified needs a Google
+   review (sensitive `gmail.readonly` scope) — not done yet.
 2. **End-to-end test of the full automated run** — every step was mapped
    and clicked through manually to capture selectors, but the script itself
    (`content-gem.js`) hasn't yet been run start-to-finish unattended.
@@ -79,12 +80,26 @@ Confirmed Gmail OTP format (`background.js`'s `fetchLatestOtpFromGmail`):
 
 ## Setup
 
+`manifest.json` has a fixed `"key"` field (an embedded public key), so the
+extension's ID is **always the same** — `lcadakplnhlmmkgajnojaaiimojnhbap` —
+on every computer that loads this folder, regardless of path. That ID is
+already wired into `GEM_EXTENSION_ID` in `lib/triggerGemSubmit.ts` and
+registered as an OAuth redirect URI in Google Cloud Console, so a fresh
+install on a new machine needs none of the old per-computer ID steps.
+
 1. `chrome://extensions` → Developer mode ON → Load Unpacked → select this folder.
-2. Note the Extension ID it's assigned, paste it into `GEM_EXTENSION_ID` in
-   `lib/triggerGemSubmit.ts`.
-3. Fill in the OAuth Client ID (item 1 above) in both `manifest.json` and
-   `background/background.js`, then reload the extension.
-4. Set each firm's "GeM OTP Gmail Account" field on the My Company page —
+2. Confirm the Extension ID shown matches `lcadakplnhlmmkgajnojaaiimojnhbap`
+   (if it doesn't, the `"key"` field got dropped/edited — check `manifest.json`).
+3. Set each firm's "GeM OTP Gmail Account" field on the My Company page —
    the popup's "Link Gmail" button is disabled for firms without it.
+4. That Gmail address must be added as a **Test user** in the Google Cloud
+   OAuth consent screen (project `my-app-506111`, since the OAuth client is
+   in Testing publishing status, capped at 100 test users) — see
+   `console.cloud.google.com/auth/audience?project=my-app-506111`.
 5. Test end-to-end on a real order, watching the browser console
    (`[GeM Bill Auto-Submit]` log lines) for where it succeeds/fails.
+
+Note: the private key generated alongside this manifest key is not needed
+for unpacked loading (Chrome derives the ID from the public `"key"` field
+alone) — only keep it if this extension ever gets packaged/published to the
+Chrome Web Store.
