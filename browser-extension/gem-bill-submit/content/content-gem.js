@@ -342,6 +342,14 @@
       return;
     }
 
+    // Confirmed live (22-Aug-2026): the Download Invoice button only exists
+    // under the "Shipment wise" tab - stepSearchAndOpenOrder lands on
+    // "Product wise" (GeM's default tab), which shows "Invoice: --" with no
+    // download button at all, causing this step to time out looking for it.
+    const shipmentWiseTab = await waitForElementByText(["a"], /shipment wise/i, MAX_WAIT_MS);
+    shipmentWiseTab.click();
+    await sleep(1200); // let the tab's content panel render
+
     const downloadBtn = await waitForElementMatching(
       () => findInvoiceDownloadButtonForBillNo(data.billNo),
       MAX_WAIT_MS
