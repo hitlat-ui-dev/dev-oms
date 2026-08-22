@@ -24,7 +24,14 @@ export async function GET(req: Request) {
       .collection("sellerorders")
       // Mongo's { field: null } matches both an explicit null AND a missing
       // field, which covers pre-existing orders that predate the billId field.
-      .find(exempted ? { firmCode, billExempt: true } : { firmCode, billId: null, billExempt: { $ne: true } })
+      .find(
+        exempted
+          ? { firmCode, billExempt: true }
+          // An order already cancelled (e.g. via Bill History's "Cancel
+          // Order") shouldn't come back as something to bill - it has
+          // nothing left to invoice.
+          : { firmCode, billId: null, billExempt: { $ne: true }, status: { $ne: "CANCELL ORDER" } }
+      )
       .sort({ contractNo: 1, createdAt: 1 })
       .toArray();
 

@@ -95,6 +95,7 @@ interface OrderLite {
   paidAmount?: number;
   isPaid?: boolean;
   status: string;
+  billExemptReason?: "ALREADY_BILLED_EXTERNAL" | "NOT_REQUIRED" | null;
 }
 
 const RETURN_FAMILY = new Set(["CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"]);
@@ -249,7 +250,13 @@ export default function ReconciliationPage() {
           o.instituteName === instituteName &&
           o.firmCode === firmCode &&
           !o.isPaid &&
-          !RETURN_FAMILY.has(o.status)
+          !RETURN_FAMILY.has(o.status) &&
+          // "No bill needed for this at all" orders aren't a real receivable -
+          // a payment can never belong to one, so they're excluded from the
+          // manual Bill picker. "Already billed outside OMS (e.g. Miracle)"
+          // orders stay pickable - they were legitimately billed, just not
+          // via OMS's Generate Bill, so a payment should still link to them.
+          o.billExemptReason !== "NOT_REQUIRED"
       );
     },
     [orders]
@@ -761,6 +768,7 @@ export default function ReconciliationPage() {
                                   {bills.map((b) => (
                                     <option key={b._id} value={b._id}>
                                       {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
+                                      {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
                                     </option>
                                   ))}
                                 </select>

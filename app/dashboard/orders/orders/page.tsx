@@ -25,6 +25,9 @@ export default function OrdersListPage() {
   const router = useRouter();
   const [orders, setOrders] = useState<any[]>([]);
   const [showOrderModal, setShowOrderModal] = useState(false);
+  const [showRemainingOrderModal, setShowRemainingOrderModal] = useState(false);
+  const [remainingOrderData, setRemainingOrderData] = useState<any[] | null>(null);
+  const [loadingRemainingOrder, setLoadingRemainingOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [displayLimit, setDisplayLimit] = useState(50);
   const [activeTab, setActiveTab] = useState("ALL");
@@ -233,6 +236,22 @@ export default function OrdersListPage() {
   const fetchTabData = useCallback(async () => {
     await fetchOrders(ordersLoadedAll);
   }, [fetchOrders, ordersLoadedAll]);
+
+  // Only fetched when the "Remaining Order" popup's own Load button is
+  // pressed - this scans every open order across every institute, so it
+  // shouldn't run automatically just because the Orders page was opened.
+  const loadRemainingOrderSummary = async () => {
+    setLoadingRemainingOrder(true);
+    try {
+      const res = await fetch(`/api/orders/remaining-summary?t=${Date.now()}`);
+      const data = await res.json();
+      setRemainingOrderData(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Remaining order summary fetch error:", err);
+    } finally {
+      setLoadingRemainingOrder(false);
+    }
+  };
 
   const handleRefreshAll = useCallback(async () => {
     await fetchOrders(ordersLoadedAll);
@@ -958,6 +977,12 @@ const shippingLock = useRef(false);
               <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
               <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
             </div>
+            <button
+              onClick={() => setShowRemainingOrderModal(true)}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all border border-slate-200"
+            >
+              Remaining Order
+            </button>
           </div>
           <div>
             <button
@@ -1464,6 +1489,68 @@ const shippingLock = useRef(false);
             }}
             initialData={editingOrder}
           />
+        </div>
+      )}
+
+      {showRemainingOrderModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-6 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h2 className="font-black uppercase tracking-tight">Remaining Order</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  Institute-wise To Check / Ready to Ship pending counts
+                </p>
+              </div>
+              <button
+                onClick={() => setShowRemainingOrderModal(false)}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto">
+              {remainingOrderData === null ? (
+                <div className="text-center py-10">
+                  <button
+                    onClick={loadRemainingOrderSummary}
+                    disabled={loadingRemainingOrder}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition-all disabled:opacity-60"
+                  >
+                    {loadingRemainingOrder ? "Loading..." : "Load Data"}
+                  </button>
+                </div>
+              ) : remainingOrderData.length === 0 ? (
+                <p className="text-center text-slate-400 font-bold text-sm py-10">
+                  No orders pending in To Check / Ready to Ship.
+                </p>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="p-3 font-black text-slate-400 uppercase tracking-widest">Institute</th>
+                      <th className="p-3 font-black text-slate-400 uppercase tracking-widest text-right">To Check</th>
+                      <th className="p-3 font-black text-slate-400 uppercase tracking-widest text-right">Ready to Ship</th>
+                      <th className="p-3 font-black text-slate-400 uppercase tracking-widest text-right">Oldest Pending</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {remainingOrderData.map((r) => (
+                      <tr key={r.instituteName} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-bold text-slate-700">{r.instituteName}</td>
+                        <td className="p-3 text-right font-bold text-amber-600">{r.toCheckCount}</td>
+                        <td className="p-3 text-right font-bold text-emerald-600">{r.readyToShipCount}</td>
+                        <td className="p-3 text-right font-bold text-slate-500">
+                          {r.daysPending !== null ? `${r.daysPending} days` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

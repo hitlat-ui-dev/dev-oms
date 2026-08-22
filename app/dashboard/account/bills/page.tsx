@@ -59,6 +59,7 @@ interface Bill {
   items: { qty: number; hsnSac?: string; gstPercent?: number }[];
   grandTotal: number;
   gemDocumentR2Key?: string;
+  cancelled?: boolean;
 }
 
 // qty * rate frequently lands on a repeating binary fraction (e.g. 15.29 *
@@ -114,6 +115,8 @@ export default function GenerateBillPage() {
   const [historySubmittingId, setHistorySubmittingId] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<Record<string, string>>({});
   const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [cancellingBillId, setCancellingBillId] = useState<string | null>(null);
 
   const [showZipExportModal, setShowZipExportModal] = useState(false);
   const [zipFirmCode, setZipFirmCode] = useState("");
@@ -283,6 +286,15 @@ export default function GenerateBillPage() {
 
   const billHistoryFiltersActive =
     billHistoryDateFrom || billHistoryDateTo || invoiceRangeFrom || invoiceRangeTo || billHistorySearchQuery;
+
+  // Bill History can run into the hundreds for an old firm - show 15 at a
+  // time instead of dumping everything on screen at once.
+  const BILL_PAGE_SIZE = 15;
+  const [visibleBillCount, setVisibleBillCount] = useState(BILL_PAGE_SIZE);
+  useEffect(() => setVisibleBillCount(BILL_PAGE_SIZE), [
+    firmCode, billHistoryDateFrom, billHistoryDateTo, invoiceRangeFrom, invoiceRangeTo, billHistorySearchQuery,
+  ]);
+  const visibleBills = useMemo(() => filteredBills.slice(0, visibleBillCount), [filteredBills, visibleBillCount]);
 
   const currentUsername = (): string => {
     try {
@@ -610,6 +622,71 @@ export default function GenerateBillPage() {
       setHistoryStatus((prev) => ({ ...prev, [bill._id]: `Fail: ${err.message}` }));
     } finally {
       setRetryingDocId(null);
+    }
+  };
+
+  // Undoes a mistakenly-generated bill (only offered before GeM's own
+  // invoice has been fetched - see the API route's comment for why).
+  const handleRegenerateBill = async (bill: Bill) => {
+    if (
+      !window.confirm(
+        `"${bill.invoiceNumber}" delete karke uske orders wapas Un-billed Contracts me le jayega. Fresh se Generate Bill karna hoga. Continue karein?`
+      )
+    ) {
+      return;
+    }
+    setRegeneratingId(bill._id);
+    try {
+      const res = await fetch(`/api/bills/${bill._id}/regenerate`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Regenerate failed.");
+        return;
+      }
+      alert(
+        data.numberReclaimed
+          ? `Bill delete ho gaya - "${data.invoiceNumber}" agla Auto Number generate karte hi wapas mil jayega.`
+          : `Bill delete ho gaya - lekin "${data.invoiceNumber}" ke baad naye bills ban chuke hain, isliye wahi number wapas nahi milega, agla naya number milega.`
+      );
+      if (firmCode === data.firmCode) {
+        fetchGroups(firmCode);
+        fetchBills(firmCode);
+      }
+    } catch {
+      alert("Network error while regenerating.");
+    } finally {
+      setRegeneratingId(null);
+    }
+  };
+
+  // Cancels every order this bill was generated from (restoring stock) and
+  // tags the bill itself as cancelled - the bill record stays for the
+  // accounting trail, it isn't deleted.
+  const handleCancelBill = async (bill: Bill) => {
+    if (
+      !window.confirm(
+        `"${bill.invoiceNumber}" ke saare orders cancel ho jayenge (stock wapas aa jayega) aur bill "Cancelled" tag ho jayega. Continue karein?`
+      )
+    ) {
+      return;
+    }
+    setCancellingBillId(bill._id);
+    try {
+      const res = await fetch(`/api/bills/${bill._id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userName: currentUsername() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Cancel failed.");
+        return;
+      }
+      fetchBills(firmCode);
+    } catch {
+      alert("Network error while cancelling.");
+    } finally {
+      setCancellingBillId(null);
     }
   };
 
@@ -1259,18 +1336,26 @@ export default function GenerateBillPage() {
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">PDF</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">Submit to GeM</th>
                     <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">GeM Invoice</th>
+                    <th className="p-4 font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {bills.length === 0 && (
-                    <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">No bills generated yet.</td></tr>
+                    <tr><td colSpan={9} className="p-6 text-center text-slate-400 font-bold">No bills generated yet.</td></tr>
                   )}
                   {bills.length > 0 && filteredBills.length === 0 && (
-                    <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">No bills match those filters.</td></tr>
+                    <tr><td colSpan={9} className="p-6 text-center text-slate-400 font-bold">No bills match those filters.</td></tr>
                   )}
-                  {filteredBills.map((b) => (
-                    <tr key={b._id} className="hover:bg-slate-50/50">
-                      <td className="p-4 font-black text-slate-700">{b.invoiceNumber}</td>
+                  {visibleBills.map((b) => (
+                    <tr key={b._id} className={`hover:bg-slate-50/50 ${b.cancelled ? "opacity-50" : ""}`}>
+                      <td className="p-4">
+                        <div className="font-black text-slate-700">{b.invoiceNumber}</div>
+                        {b.cancelled && (
+                          <span className="inline-block mt-1 text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">
+                            Cancelled
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4 font-bold text-slate-600">{new Date(b.invoiceDate).toLocaleDateString("en-GB")}</td>
                       <td className="p-4">
                         <div className="font-bold text-slate-700">{b.contractNo || "—"}</div>
@@ -1325,11 +1410,46 @@ export default function GenerateBillPage() {
                           </button>
                         )}
                       </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {!b.gemDocumentR2Key && !b.cancelled && (
+                            <button
+                              onClick={() => handleRegenerateBill(b)}
+                              disabled={regeneratingId === b._id}
+                              title="Delete this bill and re-generate it (only available before GeM's invoice exists)"
+                              className="p-2 inline-flex bg-slate-100 text-slate-400 rounded-lg hover:bg-orange-600 hover:text-white transition-all disabled:opacity-60"
+                            >
+                              <FiRefreshCw size={14} />
+                            </button>
+                          )}
+                          {!b.cancelled && (
+                            <button
+                              onClick={() => handleCancelBill(b)}
+                              disabled={cancellingBillId === b._id}
+                              title="Cancel every order this bill was generated from, and tag the bill as cancelled"
+                              className="p-2 inline-flex bg-slate-100 text-slate-400 rounded-lg hover:bg-red-600 hover:text-white transition-all disabled:opacity-60"
+                            >
+                              <FiX size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {visibleBillCount < filteredBills.length && (
+              <div className="p-4 border-t border-slate-100">
+                <button
+                  onClick={() => setVisibleBillCount((c) => c + BILL_PAGE_SIZE)}
+                  className="w-full py-3 bg-orange-50 hover:bg-orange-100 text-orange-600 font-black text-[11px] uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Load {Math.min(BILL_PAGE_SIZE, filteredBills.length - visibleBillCount)} More ({filteredBills.length - visibleBillCount} Remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
