@@ -187,6 +187,8 @@ export default function GeMSyncPage() {
   // Whether a sheet's heavy content (uploadedRows/originalExcelData) is
   // currently being fetched from R2 on demand (see fetchSheetContent below).
   const [loadingSheetContent, setLoadingSheetContent] = useState(false);
+  const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [saveToLibraryStatus, setSaveToLibraryStatus] = useState("");
 
   // The Sheet Library list no longer carries uploadedRows/originalExcelData —
   // those live in R2 now, fetched only when a sheet is actually opened.
@@ -414,6 +416,54 @@ export default function GeMSyncPage() {
 
     return () => clearTimeout(delayDebounceFn);
   }, [activeSheetId, fileName, uploadedRows, originalExcelData, selectedBuyerId, currentUsername]);
+
+  // Explicit, immediate (non-debounced) save straight after an upload - the
+  // debounced auto-save above only fires 1s after the *last* state change,
+  // which for a freshly-parsed sheet can race with (or just silently save 0
+  // rows ahead of) the async Excel parsing finishing. This button gives a
+  // deterministic save point with visible success/failure feedback, once the
+  // parsed rows are already visible on screen for review.
+  const handleSaveToLibrary = async () => {
+    if (!activeSheetId || !fileName) return;
+    setSavingToLibrary(true);
+    setSaveToLibraryStatus("");
+    try {
+      const activeSheet = sheets.find(s => s.id === activeSheetId);
+      const res = await fetch("/api/gem-sync?action=save_sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: activeSheetId,
+          fileName,
+          uploadedRows,
+          originalExcelData,
+          selectedBuyerId,
+          isCompleted: activeSheet?.isCompleted,
+          lastEditedBy: currentUsername || activeSheet?.lastEditedBy || "",
+          uploadedBy: currentUsername,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Save failed");
+      }
+      const totalRows = uploadedRows.length;
+      const completedRows = uploadedRows.filter(r => r.isCompleted).length;
+      setSheets(prev => {
+        const exists = prev.some(s => s.id === activeSheetId);
+        const updatedAt = new Date().toISOString();
+        return exists
+          ? prev.map(s => (s.id === activeSheetId ? { ...s, fileName, totalRows, completedRows, selectedBuyerId, updatedAt } : s))
+          : [{ id: activeSheetId, fileName, totalRows, completedRows, selectedBuyerId, updatedAt, isCompleted: false }, ...prev];
+      });
+      setSaveToLibraryStatus(`Saved (${totalRows} rows)`);
+    } catch (err: any) {
+      setSaveToLibraryStatus(`Failed: ${err.message || "unknown error"}`);
+    } finally {
+      setSavingToLibrary(false);
+      setTimeout(() => setSaveToLibraryStatus(""), 4000);
+    }
+  };
 
   // Sync state helpers (updates both LocalState, LocalStorage fallback, and MongoDB)
   const saveBuyers = (updatedBuyers: Buyer[]) => {
@@ -1605,9 +1655,32 @@ export default function GeMSyncPage() {
                     </button>
                   )}
 
+                  {fileName && uploadedRows.length > 0 && (
+                    <button
+                      onClick={handleSaveToLibrary}
+                      disabled={savingToLibrary}
+                      title="Save this upload to the Sheet Library right now, instead of waiting on auto-save"
+                      className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-xl font-black text-xs uppercase tracking-wider transition-all border bg-blue-600 text-white border-blue-600 hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                    >
+                      <FiUploadCloud size={16} /> {savingToLibrary ? "Saving..." : "Save to Sheet Library"}
+                    </button>
+                  )}
+
                   {fileName && (
                     <span className="text-xs text-emerald-700 font-bold bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-200 truncate max-w-xs">
-                      ✓ Loaded: {fileName}
+                      ✓ Loaded: {fileName} ({uploadedRows.length} rows)
+                    </span>
+                  )}
+
+                  {saveToLibraryStatus && (
+                    <span
+                      className={`text-xs font-bold py-1.5 px-3 rounded-lg border truncate max-w-xs ${
+                        saveToLibraryStatus.startsWith("Failed")
+                          ? "text-red-700 bg-red-50 border-red-200"
+                          : "text-emerald-700 bg-emerald-50 border-emerald-200"
+                      }`}
+                    >
+                      {saveToLibraryStatus}
                     </span>
                   )}
                 </div>
