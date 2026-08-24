@@ -419,6 +419,28 @@ export default function GenerateBillPage() {
     }
   };
 
+  // Re-fetches everything currently on screen (un-billed contracts, bill
+  // history, exempted list if open, and the firm dropdown) without a full
+  // page reload - lets the user pull in orders/bills someone else just
+  // created elsewhere instead of hitting F5 and losing their place.
+  const [refreshingAll, setRefreshingAll] = useState(false);
+  const handleRefreshAll = async () => {
+    setRefreshingAll(true);
+    try {
+      const tasks: Promise<any>[] = [
+        fetch("/api/companies").then((r) => r.json()).then((d) => Array.isArray(d) && setCompanies(d)),
+      ];
+      if (firmCode) {
+        tasks.push(fetchGroups(firmCode));
+        tasks.push(fetchBills(firmCode));
+        if (showExempted) tasks.push(fetchExempted(firmCode));
+      }
+      await Promise.all(tasks);
+    } finally {
+      setRefreshingAll(false);
+    }
+  };
+
   useEffect(() => {
     setSelectedGroupKeys(new Set());
     setExemptPanelOpen(false);
@@ -765,12 +787,22 @@ export default function GenerateBillPage() {
           <button onClick={() => router.push("/dashboard/account")} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
             <FiArrowLeft /> Back to Account
           </button>
-          <button
-            onClick={() => setShowZipExportModal(true)}
-            className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all"
-          >
-            <FiDownload /> Export Bills (ZIP)
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefreshAll}
+              disabled={refreshingAll}
+              title="Refresh un-billed contracts, bill history, and firms without reloading the page"
+              className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all disabled:opacity-50"
+            >
+              <FiRefreshCw size={14} className={refreshingAll ? "animate-spin" : ""} /> Refresh
+            </button>
+            <button
+              onClick={() => setShowZipExportModal(true)}
+              className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-800 transition-all"
+            >
+              <FiDownload /> Export Bills (ZIP)
+            </button>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden">
