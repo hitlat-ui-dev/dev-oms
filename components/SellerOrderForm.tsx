@@ -44,6 +44,15 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   }, []);
 
+  useEffect(() => {
+    if (!isModal) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose?.(savedOrdersRef.current);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isModal, onClose]);
+
   const blankFormData = {
     firmCode: "",
     sellerId: "",
