@@ -438,23 +438,36 @@ export default function GeMSyncPage() {
     setSaveToLibraryStatus("");
     try {
       const activeSheet = sheets.find(s => s.id === activeSheetId);
+      const payload = JSON.stringify({
+        id: activeSheetId,
+        fileName,
+        uploadedRows,
+        originalExcelData,
+        selectedBuyerId,
+        isCompleted: activeSheet?.isCompleted,
+        lastEditedBy: currentUsername || activeSheet?.lastEditedBy || "",
+        uploadedBy: currentUsername,
+      });
+      // Vercel rejects any request body over ~4.5MB before this app's code
+      // even runs, returning a plain (non-JSON) error page - catching that
+      // here up front gives a diagnosable message instead of a bare "Save
+      // failed". This is usually caused by an Excel file whose used-range
+      // extends far past the real data (e.g. formatting once applied to a
+      // whole row/column), which sheet_to_json then pads with blank cells -
+      // handleExcelUpload already strips fully-blank rows/columns to avoid
+      // this, but a genuinely huge sheet can still hit the limit.
+      const sizeMB = new Blob([payload]).size / (1024 * 1024);
+      if (sizeMB > 4) {
+        throw new Error(`Sheet is ${sizeMB.toFixed(1)}MB, over the 4MB save limit - check the Excel file for stray formatting far beyond the real data range and re-save it, then re-upload.`);
+      }
       const res = await fetch("/api/gem-sync?action=save_sheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: activeSheetId,
-          fileName,
-          uploadedRows,
-          originalExcelData,
-          selectedBuyerId,
-          isCompleted: activeSheet?.isCompleted,
-          lastEditedBy: currentUsername || activeSheet?.lastEditedBy || "",
-          uploadedBy: currentUsername,
-        }),
+        body: payload,
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Save failed");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `Save failed (HTTP ${res.status})`);
       }
       const totalRows = uploadedRows.length;
       const completedRows = uploadedRows.filter(r => r.isCompleted).length;
@@ -679,7 +692,29 @@ export default function GeMSyncPage() {
         const workbook = XLSX.read(bstr, { type: "binary" });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const data: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        const rawData: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+        // Excel's own idea of a sheet's "used range" can extend far past the
+        // real data (e.g. someone once applied formatting/borders to a whole
+        // row or column) - sheet_to_json then pads every row with dozens of
+        // blank-string columns that were never real content, which can bloat
+        // this file's saved size well past the server's request-size limit
+        // for no reason. Drop any column that's blank in every row, and any
+        // row that's blank in every remaining column, before this becomes
+        // state or gets uploaded.
+        const meaningfulKeys = new Set<string>();
+        rawData.forEach(row => {
+          Object.keys(row).forEach(k => {
+            if (String(row[k]).trim() !== "") meaningfulKeys.add(k);
+          });
+        });
+        const data: any[] = rawData
+          .map(row => {
+            const trimmedRow: any = {};
+            meaningfulKeys.forEach(k => { trimmedRow[k] = row[k]; });
+            return trimmedRow;
+          })
+          .filter(row => Object.values(row).some(v => String(v).trim() !== ""));
 
         setOriginalExcelData(data);
 
