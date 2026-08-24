@@ -795,13 +795,24 @@ export default function ReconciliationPage() {
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 text-center">
-                                <button
-                                  disabled={busyId === m._id || !man.sellerId}
-                                  onClick={() => handleSaveManual(m)}
-                                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
-                                >
-                                  Save & Learn
-                                </button>
+                                <div className="flex flex-col items-center gap-1.5">
+                                  <button
+                                    disabled={busyId === m._id || !man.sellerId}
+                                    onClick={() => handleSaveManual(m)}
+                                    title={!man.sellerId ? "Select an institute first" : undefined}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                                  >
+                                    Save & Learn
+                                  </button>
+                                  <button
+                                    disabled={busyId === m._id}
+                                    onClick={() => handleReject(m)}
+                                    title="No institute/bill applies here (e.g. a personal transfer) - remove it from this list without touching any order"
+                                    className="w-full bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-500 font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );

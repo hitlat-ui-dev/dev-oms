@@ -603,6 +603,15 @@ export default function GeMSyncPage() {
     if (!file) return;
     setFileName(file.name);
     setActiveSheetId("sheet_" + Date.now());
+    // Cleared synchronously, in the same tick as the new sheet id above -
+    // parsing this file happens inside FileReader's async onload below, and
+    // the debounced auto-save effect (keyed off activeSheetId/uploadedRows)
+    // can otherwise fire on the *previous* sheet's still-in-state rows
+    // before parsing finishes, silently saving the old sheet's content under
+    // the new sheet's id (exactly what caused every upload to end up with
+    // identical content - confirmed live 24-Aug-2026).
+    setUploadedRows([]);
+    setOriginalExcelData([]);
 
     const reader = new FileReader();
     reader.onload = (evt) => {
