@@ -9,11 +9,19 @@ export async function GET() {
     // 1. Fetch purchase requests
     const data = await db.collection("purchase_requests").aggregate([
       { $sort: { createdAt: -1 } },
+      // Joined on sku, not itemName - a hidden/retired item is often kept
+      // around sharing the exact same itemName as its active replacement
+      // (see app/api/items/route.ts's duplicate-name check), and an
+      // itemName join has no way to prefer one match over the other -
+      // $arrayElemAt just takes whichever the $lookup happened to return
+      // first, silently overwriting this PR's own correct sku/category with
+      // the wrong (possibly hidden) item's. sku is unique per item, so this
+      // join can never cross-contaminate between duplicates.
       {
         $lookup: {
           from: "items",
-          localField: "itemName",
-          foreignField: "itemName",
+          localField: "sku",
+          foreignField: "sku",
           as: "masterInfo"
         }
       },

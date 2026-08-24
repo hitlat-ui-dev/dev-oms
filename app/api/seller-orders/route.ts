@@ -216,33 +216,58 @@ export async function GET(req: Request) {
     // These three queries run concurrently using database indexes.
     const [orders, prTotals, opTotals] = await Promise.all([
       rawOrdersQuery.toArray(),
-      // 2. Aggregate active PR Quantities from 'purchase_requests'
+      // 2. Aggregate active PR Quantities from 'purchase_requests' - grouped
+      // by sku (falling back to itemName only for the rare legacy record
+      // with no sku) rather than itemName alone, since a hidden/retired
+      // item can share the exact same itemName as its active replacement -
+      // grouping by name alone would merge a hidden duplicate's pending
+      // qty into the active item's displayed total.
       db.collection("purchase_requests").aggregate([
         { $match: { status: "Purchase Request" } },
         {
           $group: {
-            _id: { $toUpper: { $trim: { input: "$itemName" } } },
+            _id: {
+              sku: { $toUpper: { $trim: { input: { $ifNull: ["$sku", ""] } } } },
+              name: { $toUpper: { $trim: { input: "$itemName" } } }
+            },
             total: { $sum: { $convert: { input: "$prQty", to: "double", onError: 0 } } }
           }
         }
       ]).toArray(),
-      // 3. Aggregate OP Quantities from 'Order place Purchase'
+      // 3. Aggregate OP Quantities from 'Order place Purchase' (same sku-first grouping)
       db.collection("Order place Purchase").aggregate([
         {
           $group: {
-            _id: { $toUpper: { $trim: { input: "$itemName" } } },
+            _id: {
+              sku: { $toUpper: { $trim: { input: { $ifNull: ["$sku", ""] } } } },
+              name: { $toUpper: { $trim: { input: "$itemName" } } }
+            },
             total: { $sum: { $convert: { input: "$orderQty", to: "double", onError: 0 } } }
           }
         }
       ]).toArray()
     ]);
 
-    // 4. Create Lookup Maps
-    const prMap: Record<string, number> = {};
-    prTotals.forEach(item => { if (item._id) prMap[item._id] = item.total; });
+    // 4. Create Lookup Maps - keyed by sku when the source record had one,
+    // else by name (kept separate so a skuless legacy record never merges
+    // into a sku-tracked active item's total, and vice versa).
+    const prMapBySku: Record<string, number> = {};
+    const prMapByName: Record<string, number> = {};
+    prTotals.forEach(item => {
+      const sku = item._id?.sku;
+      const name = item._id?.name;
+      if (sku) prMapBySku[sku] = (prMapBySku[sku] || 0) + item.total;
+      else if (name) prMapByName[name] = (prMapByName[name] || 0) + item.total;
+    });
 
-    const opMap: Record<string, number> = {};
-    opTotals.forEach(item => { if (item._id) opMap[item._id] = item.total; });
+    const opMapBySku: Record<string, number> = {};
+    const opMapByName: Record<string, number> = {};
+    opTotals.forEach(item => {
+      const sku = item._id?.sku;
+      const name = item._id?.name;
+      if (sku) opMapBySku[sku] = (opMapBySku[sku] || 0) + item.total;
+      else if (name) opMapByName[name] = (opMapByName[name] || 0) + item.total;
+    });
 
     // 5. Batch lookup stock quantity for unique itemIds in the returned orders set (~20 items)
     const itemIds = Array.from(new Set(orders.map((o: any) => o.itemId).filter(Boolean)));
@@ -266,12 +291,13 @@ export async function GET(req: Request) {
 
     // 6. Merge data into enriched orders payload
     const enrichedOrders = orders.map((order: any) => {
+      const skuKey = (order.sku || "").trim().toUpperCase();
       const nameKey = (order.itemName || "").trim().toUpperCase();
       const stockInfo = stockMap[order.itemId?.toString()] || { totalQty: 0, reQty: 0 };
       return {
         ...order,
-        prQty: prMap[nameKey] || 0,
-        opQty: opMap[nameKey] || 0,
+        prQty: skuKey ? (prMapBySku[skuKey] || 0) : (prMapByName[nameKey] || 0),
+        opQty: skuKey ? (opMapBySku[skuKey] || 0) : (opMapByName[nameKey] || 0),
         stockQty: stockInfo.totalQty,
         stockReQty: stockInfo.reQty
       };

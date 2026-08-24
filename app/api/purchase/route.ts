@@ -16,7 +16,12 @@ async function fetchWithDetails(db: any, collectionName: string) {
                   { $eq: ["$_id", { $toObjectId: "$$searchId" }] },
                   { $eq: ["$_id", "$$searchId"] },
                   { $eq: ["$itemId", "$$searchId"] },
-                  { $eq: ["$itemName", "$$searchName"] }
+                  // Name fallback only - a hidden/retired item can share the
+                  // exact same itemName as its active replacement, and this
+                  // $or has no way to prefer an id match over a name match
+                  // (array order isn't guaranteed), so excluding hidden here
+                  // stops it from ever winning over the real active item.
+                  { $and: [{ $eq: ["$itemName", "$$searchName"] }, { $ne: ["$hidden", true] }] }
                 ]
               }
             }
@@ -38,7 +43,7 @@ async function fetchWithDetails(db: any, collectionName: string) {
                   { $eq: ["$_id", { $toObjectId: "$$searchId" }] },
                   { $eq: ["$_id", "$$searchId"] },
                   { $eq: ["$itemId", "$$searchId"] },
-                  { $eq: ["$itemName", "$$searchName"] }
+                  { $and: [{ $eq: ["$itemName", "$$searchName"] }, { $ne: ["$hidden", true] }] }
                 ]
               }
             }
@@ -111,26 +116,38 @@ export async function POST(req: Request) {
       // Safe fallback if parsing non-standard structures
     }
 
-    // Step 1: Check primary active data collection (stock)
-    let masterItem = await db.collection("stock").findOne({
-      $or: [
-        { _id: queryId },
-        { _id: String(itemId || "") },
-        { itemId: String(itemId || "") },
-        { itemName: String(itemName || "") }
-      ]
-    });
+    // Step 1: Check primary active data collection (stock) by id only - a
+    // hidden/retired item is often kept around sharing the exact same
+    // itemName as its active replacement (see app/api/items/route.ts's
+    // duplicate-name check), so mixing an itemName match into this $or
+    // risked resolving to the wrong (retired) one even when a correct
+    // itemId was already supplied (confirmed live: sent a Purchase Request
+    // to a hidden SKU while the order it came from used the active one).
+    const idConditions: any[] = [];
+    if (queryId) idConditions.push({ _id: queryId });
+    if (itemId) {
+      idConditions.push({ _id: String(itemId) });
+      idConditions.push({ itemId: String(itemId) });
+    }
+
+    let masterItem = idConditions.length
+      ? await db.collection("stock").findOne({ $or: idConditions })
+      : null;
 
     // Step 2: Fallback query checking legacy catalog collection (items)
-    if (!masterItem) {
-      masterItem = await db.collection("items").findOne({
-        $or: [
-          { _id: queryId },
-          { _id: String(itemId || "") },
-          { itemId: String(itemId || "") },
-          { itemName: String(itemName || "") }
-        ]
-      });
+    if (!masterItem && idConditions.length) {
+      masterItem = await db.collection("items").findOne({ $or: idConditions });
+    }
+
+    // Step 3: only when no id resolved at all (e.g. a legacy caller that
+    // never had an itemId to send) fall back to matching by name - hidden
+    // items are excluded so this can never silently pick a retired
+    // duplicate over its active replacement.
+    if (!masterItem && itemName) {
+      masterItem = await db.collection("stock").findOne({ itemName: String(itemName), hidden: { $ne: true } });
+      if (!masterItem) {
+        masterItem = await db.collection("items").findOne({ itemName: String(itemName), hidden: { $ne: true } });
+      }
     }
 
     // Airtight validation guard statement
