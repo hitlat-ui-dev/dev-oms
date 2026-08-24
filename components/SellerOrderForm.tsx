@@ -21,6 +21,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   const [sellers, setSellers] = useState<any[]>([]);
   const [stocks, setStocks] = useState<any[]>([]);
   const [firms, setFirms] = useState<any[]>([]);
+  const [parties, setParties] = useState<string[]>([]);
+  const [showAddParty, setShowAddParty] = useState(false);
+  const [newPartyName, setNewPartyName] = useState("");
+  const [addingParty, setAddingParty] = useState(false);
   const [currentUsername, setCurrentUsername] = useState("");
   // Guards against a race where Save is clicked before the firms/sellers/stock
   // reference lists (fetched async below) have loaded — with an edit modal
@@ -126,18 +130,21 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [selRes, stkRes, firmRes] = await Promise.all([
+        const [selRes, stkRes, firmRes, partyRes] = await Promise.all([
           fetch("/api/sellers"),
           fetch("/api/stock"),
-          fetch("/api/companies")
+          fetch("/api/companies"),
+          fetch("/api/order-parties")
         ]);
         const selData = await selRes.json();
         const stkData = await stkRes.json();
         const firmData = await firmRes.json();
+        const partyData = await partyRes.json();
 
         setSellers(Array.isArray(selData) ? selData : []);
         setStocks(Array.isArray(stkData) ? stkData : []);
         setFirms(Array.isArray(firmData) ? firmData : []);
+        setParties(Array.isArray(partyData) ? partyData : []);
       } catch (err) {
         console.error("Load error", err);
       } finally {
@@ -155,6 +162,30 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
     return qty * rate;
   }, [formData.reQty, formData.orderQty, formData.rate]);
+
+  const handleAddParty = async () => {
+    const name = newPartyName.trim().toLowerCase();
+    if (!name) return;
+    setAddingParty(true);
+    try {
+      const res = await fetch("/api/order-parties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        setParties((prev) => (prev.includes(name) ? prev : [...prev, name].sort()));
+        setFormData((prev) => ({ ...prev, subParty: name }));
+        setNewPartyName("");
+        setShowAddParty(false);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || "Failed to add party");
+      }
+    } finally {
+      setAddingParty(false);
+    }
+  };
 
   const handleContractPaste = (e: React.ClipboardEvent) => {
     const html = e.clipboardData.getData("text/html");
@@ -376,14 +407,59 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                   </option>
                 ))}
               </datalist>
-              <input
-                type="text"
-                placeholder="party (optional) — e.g. vinay"
-                className="w-full px-3 py-1.5 bg-transparent text-[10px] lowercase text-slate-400 outline-none placeholder:text-slate-300"
-                value={formData.subParty}
-                onChange={(e) => setFormData({ ...formData, subParty: e.target.value.toLowerCase() })}
-                title="If an outside party actually supplied/handled this order (billed under this firm's GST), name them here — keeps Firm Code as the real firm for billing."
-              />
+              <div className="flex items-center gap-1.5">
+                <select
+                  className="flex-1 min-w-0 px-3 py-1.5 bg-transparent text-[10px] lowercase text-slate-400 outline-none"
+                  value={formData.subParty}
+                  onChange={(e) => setFormData({ ...formData, subParty: e.target.value })}
+                  title="If an outside party actually supplied/handled this order (billed under this firm's GST), pick them here — keeps Firm Code as the real firm for billing."
+                >
+                  <option value="">party (optional)</option>
+                  {parties.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                  {/* Guards against an existing order's subParty (e.g. from before
+                      this party was added to the shared list, or since removed)
+                      not matching any option and silently getting blanked out. */}
+                  {formData.subParty && !parties.includes(formData.subParty) && (
+                    <option value={formData.subParty}>{formData.subParty}</option>
+                  )}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowAddParty((v) => !v)}
+                  title="Add a new party to the list"
+                  className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 text-xs font-black leading-none"
+                >
+                  +
+                </button>
+              </div>
+              {showAddParty && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="New party name..."
+                    className="flex-1 min-w-0 px-3 py-1.5 bg-slate-50 border rounded-lg text-[10px] lowercase outline-none"
+                    value={newPartyName}
+                    onChange={(e) => setNewPartyName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddParty();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={addingParty || !newPartyName.trim()}
+                    onClick={handleAddParty}
+                    className="shrink-0 text-[9px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-700 disabled:opacity-40 border border-blue-200 rounded-lg px-2 py-1.5"
+                  >
+                    {addingParty ? "..." : "Add"}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* <div className="space-y-2">
