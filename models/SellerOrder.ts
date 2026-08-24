@@ -9,7 +9,15 @@ const SellerOrderSchema = new Schema({
   // kept separate from firmCode so billing/company lookups always resolve
   // to a real, fully-configured firm instead of a placeholder "tag" company.
   subParty: { type: String, default: "" },
-  sellerId: { type: Schema.Types.ObjectId, ref: "Seller", required: true },
+  // Not required: 357 existing orders (mostly GeM auto-imports, matched by
+  // institute name only, no linked Seller record) legitimately have this
+  // null - app/api/seller-orders/route.ts's POST already works around
+  // Mongoose's required check for that case with a raw insertOne, but the
+  // Partial Ship / Return Order flows in [id]/route.ts still create their
+  // split-off order via SellerOrder.create(), which does run this
+  // validator and was rejecting every split/return on a null-sellerId
+  // order with "sellerId: Path `sellerId` is required."
+  sellerId: { type: Schema.Types.ObjectId, ref: "Seller", default: null },
   instituteName: { type: String, required: true },
   itemId: { type: Schema.Types.ObjectId, ref: "Stock", required: true },
   itemName: { type: String, required: true },
