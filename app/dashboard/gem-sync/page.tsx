@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import XLSXStyle from "xlsx-js-style";
 import Link from "next/link";
 import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   FiUploadCloud,
   FiDownload,
@@ -290,6 +291,14 @@ export default function GeMSyncPage() {
   // Search filter state for the buyer selector popover
   const [openBuyerSelectSheetId, setOpenBuyerSelectSheetId] = useState<string | null>(null);
   const [buyerSearchFilter, setBuyerSearchFilter] = useState<string>("");
+  // The popover is rendered through a portal (see below) at this fixed
+  // viewport position, computed from the trigger button's own rect - the
+  // table sits in an `overflow-x-auto` wrapper, which the CSS overflow spec
+  // forces to also compute overflow-y as `auto` (setting only one axis to a
+  // non-visible value makes the other axis auto too), so an absolutely
+  // positioned dropdown for a row near the bottom of the table was getting
+  // clipped there and its lower options stopped receiving clicks.
+  const [buyerPopoverPos, setBuyerPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   const filteredBuyerOptions = useMemo(() => {
     if (!buyerSearchFilter.trim()) return allBuyerOptions;
@@ -2353,10 +2362,12 @@ export default function GeMSyncPage() {
                             <td className="py-4 px-6 relative">
                               <button
                                 type="button"
-                                onClick={() => {
+                                onClick={(e) => {
                                   if (isPopoverOpen) {
                                     setOpenBuyerSelectSheetId(null);
                                   } else {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setBuyerPopoverPos({ top: rect.bottom + 6, left: rect.left });
                                     setOpenBuyerSelectSheetId(sheet.id);
                                     setBuyerSearchFilter("");
                                   }
@@ -2371,8 +2382,10 @@ export default function GeMSyncPage() {
                                 <FiChevronDown size={14} className={`shrink-0 transition-transform ${isPopoverOpen ? "rotate-180 text-blue-600" : "text-slate-400"}`} />
                               </button>
 
-                              {/* Searchable Buyer Popover Dropdown */}
-                              {isPopoverOpen && (
+                              {/* Searchable Buyer Popover Dropdown - portaled to <body> and
+                                  fixed-positioned so it can never be clipped by the table's
+                                  scroll container, no matter which row it opens from */}
+                              {isPopoverOpen && buyerPopoverPos && createPortal(
                                 <>
                                   {/* Backdrop to close on click outside */}
                                   <div
@@ -2380,7 +2393,10 @@ export default function GeMSyncPage() {
                                     onClick={() => setOpenBuyerSelectSheetId(null)}
                                   />
 
-                                  <div className="absolute left-6 top-14 z-[100] w-80 bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl shadow-2xl p-3 space-y-2.5 animate-in fade-in">
+                                  <div
+                                    className="fixed z-[100] w-80 bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl shadow-2xl p-3 space-y-2.5 animate-in fade-in"
+                                    style={{ top: buyerPopoverPos.top, left: buyerPopoverPos.left }}
+                                  >
                                     <div className="relative">
                                       <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--gem-text-secondary)] text-xs" />
                                       <input
@@ -2434,7 +2450,8 @@ export default function GeMSyncPage() {
                                       )}
                                     </div>
                                   </div>
-                                </>
+                                </>,
+                                document.body
                               )}
                             </td>
                             <td className="py-4 px-6">
