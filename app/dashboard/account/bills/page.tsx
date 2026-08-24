@@ -18,7 +18,6 @@ interface Company {
   pan?: string | null;
   isCompositionDealer?: boolean;
   invoiceNumbering?: { prefix?: string };
-  gmailAccountEmail?: string;
 }
 
 interface EligibleOrderLine {
@@ -603,11 +602,29 @@ export default function GenerateBillPage() {
     window.open(URL.createObjectURL(blob), "_blank");
   };
 
+  // GeM OTP Gmail account now comes from the logged-in user's own GeM Login
+  // Setup entry for this firm (gemMailId) - not Company Setup's
+  // gmailAccountEmail, which used to be one shared value for the whole
+  // team. Same account works for both this (bill e-verify) and the GeM
+  // Login Setup page's own "Login" button, since the extension links/stores
+  // Gmail tokens by email now, not by firm.
+  const fetchGemMailId = async (firmCode: string): Promise<string | undefined> => {
+    try {
+      const res = await fetch(`/api/gem-credentials?username=${encodeURIComponent(currentUsername())}`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return undefined;
+      return data.find((c: any) => c.firmCode === firmCode)?.gemMailId || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const handleSubmitToGem = async () => {
     if (!result || !company) return;
     setSubmittingToGem(true);
     setGemSubmitStatus("");
     try {
+      const gemMailId = await fetchGemMailId(company.firmCode);
       await submitBillToGem({
         firmCode: company.firmCode,
         billType: billTypeFor(company),
@@ -618,7 +635,7 @@ export default function GenerateBillPage() {
         billNo: result.invoiceNumber,
         billPdfUrl: `${window.location.origin}/api/bills/${result.billId}/pdf`,
         firmName: company.firmName,
-        gmailAccountEmail: company.gmailAccountEmail,
+        gmailAccountEmail: gemMailId,
         items: result.items,
       });
       setGemSubmitStatus("GeM tab khul gaya — extension automation shuru ho gayi.");
@@ -638,6 +655,7 @@ export default function GenerateBillPage() {
     setHistorySubmittingId(bill._id);
     setHistoryStatus((prev) => ({ ...prev, [bill._id]: "" }));
     try {
+      const gemMailId = await fetchGemMailId(company.firmCode);
       await submitBillToGem({
         firmCode: company.firmCode,
         billType: bill.billType,
@@ -648,7 +666,7 @@ export default function GenerateBillPage() {
         billNo: bill.invoiceNumber,
         billPdfUrl: `${window.location.origin}/api/bills/${bill._id}/pdf`,
         firmName: company.firmName,
-        gmailAccountEmail: company.gmailAccountEmail,
+        gmailAccountEmail: gemMailId,
         items: bill.items,
       });
       setHistoryStatus((prev) => ({ ...prev, [bill._id]: "GeM tab khul gaya." }));

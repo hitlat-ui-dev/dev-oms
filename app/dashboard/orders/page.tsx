@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiKey } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
@@ -72,6 +72,14 @@ export default function OrdersDashboard() {
       color: "bg-slate-800",
       shadow: "shadow-slate-200",
       permissionKey: "addMyCompanies"
+    },
+    {
+      title: "GeM Login Setup",
+      desc: "Your own firm-wise GeM portal credentials",
+      icon: <FiKey size={24} />,
+      path: "/dashboard/orders/gem-credentials",
+      color: "bg-orange-600",
+      shadow: "shadow-orange-200",
     }
   ];
 
@@ -95,6 +103,7 @@ export default function OrdersDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
         {actions
           .filter((item) => {
+            if (!item.permissionKey) return true; // no gate - visible to every logged-in user
             const usernameLower = user?.username?.trim().toLowerCase();
             const isSuperAdmin = ["chintan", "hitesh"].includes(usernameLower) || user?.permissions?.boss === true;
             if (isSuperAdmin) return true;

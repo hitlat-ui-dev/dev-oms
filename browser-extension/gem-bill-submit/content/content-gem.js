@@ -28,6 +28,157 @@
   const MAX_WAIT_MS = 20000;
 
   init();
+  checkPendingLogin();
+
+  // GeM Login Setup's "Login" button - independent of the bill-submission
+  // flow above (that only ever runs on fulfilment.gem.gov.in). GeM's real
+  // login is two pages, both confirmed live 24-Aug-2026 on sso.gem.gov.in:
+  //   1. User ID + Captcha ("Password shall be entered on next screen..."
+  //      is GeM's own on-page text) - #loginid / #captcha_math / a
+  //      button.btn1.btn-nov "Submit". Captcha is left for a human to type;
+  //      once they do, this auto-clicks Submit for them.
+  //   2. Password + OTP - #password, a "Generate OTP" button (#resend), an
+  //      #otp field (disabled until OTP generation kicks in) and
+  //      #finalSubmit (disabled until #otp has a value). The OTP itself is
+  //      auto-fetched from the credential's saved gemMailId the same way
+  //      the bill-submission flow fetches its e-verify OTP - see
+  //      FETCH_LOGIN_OTP in background.js.
+  // Kept in chrome.storage.local across both pages (not cleared after page
+  // 1) since submitting page 1's form navigates to page 2 as a real page
+  // load, which would otherwise lose all in-memory state.
+  async function checkPendingLogin() {
+    const { data } = await chrome.runtime.sendMessage({ type: "GET_PENDING_LOGIN" });
+    if (!data) return;
+
+    // A stale pending login (tab closed/abandoned, then a later unrelated
+    // GeM page loaded) shouldn't silently fill credentials into some other
+    // page long after the button was clicked.
+    if (Date.now() - data.startedAt > 10 * 60 * 1000) {
+      chrome.runtime.sendMessage({ type: "CLEAR_PENDING_LOGIN" });
+      return;
+    }
+
+    try {
+      if ((data.step || "USERNAME") === "USERNAME") {
+        await fillUsernameAndCaptchaStep(data);
+      } else if (data.step === "PASSWORD") {
+        await fillPasswordStep(data);
+        chrome.runtime.sendMessage({ type: "CLEAR_PENDING_LOGIN" });
+      }
+    } catch (err) {
+      console.error("[GeM Bill Auto-Submit] Login auto-fill fail hua:", err);
+      chrome.runtime.sendMessage({ type: "CLEAR_PENDING_LOGIN" });
+    }
+  }
+
+  async function fillUsernameAndCaptchaStep(data) {
+    const usernameField = await waitForElement("#loginid", 10000).catch(() => null);
+    if (!usernameField) {
+      console.warn("[GeM Bill Auto-Submit] #loginid field nahi mila is page pe - login page ka structure badal gaya lagta hai.");
+      return;
+    }
+    setNativeValue(usernameField, data.gemUserId);
+    fireEvents(usernameField);
+    console.log("[GeM Bill Auto-Submit] User ID fill kar diya. Captcha manually daalo - bharte hi Submit apne aap ho jayega.");
+
+    const captchaField = await waitForElement("#captcha_math", 10000).catch(() => null);
+    if (!captchaField) {
+      console.warn("[GeM Bill Auto-Submit] #captcha_math field nahi mila - Submit manually dabana padega.");
+      return;
+    }
+
+    // Debounced on the captcha field's own input event - waits for the user
+    // to stop typing (not just the first keystroke) before treating it as
+    // "filled in" and clicking Submit.
+    await new Promise((resolve) => {
+      let debounceId;
+      const onInput = () => {
+        clearTimeout(debounceId);
+        if (captchaField.value.trim().length < 6) return; // GeM's captcha text is 6 characters - don't submit on a partial entry
+        debounceId = setTimeout(() => {
+          captchaField.removeEventListener("input", onInput);
+          resolve();
+        }, 600);
+      };
+      captchaField.addEventListener("input", onInput);
+    });
+
+    const submitBtn = Array.from(document.querySelectorAll("button")).find(
+      (b) => isVisible(b) && /^submit$/i.test(b.textContent.trim())
+    );
+    if (!submitBtn) {
+      console.warn("[GeM Bill Auto-Submit] Captcha bhar gaya par Submit button nahi mila - manually dabao.");
+      return;
+    }
+
+    console.log("[GeM Bill Auto-Submit] Captcha bhar gaya, Submit click kar raha hu.");
+    // Persisted BEFORE the click, since Submit navigates to page 2 as a real
+    // page load - checkPendingLogin() on that next page reads this step to
+    // know it should now fill the password instead of the username again.
+    await chrome.runtime.sendMessage({ type: "SET_PENDING_LOGIN_STEP", step: "PASSWORD" });
+    submitBtn.click();
+  }
+
+  // Password page (confirmed live 24-Aug-2026): #password, a "Generate OTP"
+  // button (#resend), an #otp field that's disabled until OTP generation
+  // kicks in, and #finalSubmit which is disabled until #otp has a value.
+  async function fillPasswordStep(data) {
+    const passwordField = await waitForElement("#password", 10000).catch(() => null);
+    if (!passwordField) {
+      console.warn("[GeM Bill Auto-Submit] #password field nahi mila is page pe.");
+      return;
+    }
+    setNativeValue(passwordField, data.gemPassword);
+    fireEvents(passwordField);
+    console.log("[GeM Bill Auto-Submit] Password fill kar diya.");
+
+    const generateOtpBtn = await waitForElement("#resend", 10000).catch(() => null);
+    if (!generateOtpBtn) {
+      console.warn("[GeM Bill Auto-Submit] #resend (Generate OTP) button nahi mila - manually 'Generate OTP' dabao.");
+      return;
+    }
+
+    const sinceTs = Date.now() - 5000; // small buffer for clock skew, same idea as the bill-submission OTP fetch
+    console.log("[GeM Bill Auto-Submit] Generate OTP click kar raha hu.");
+    generateOtpBtn.click();
+
+    if (!data.gemMailId) {
+      console.warn("[GeM Bill Auto-Submit] Is credential ka Mail ID save nahi hai - OTP manually daal ke Submit karo.");
+      return;
+    }
+
+    const otpField = await waitForElementMatching(() => {
+      const el = document.querySelector("#otp");
+      return el && isVisible(el) && !el.disabled ? el : null;
+    }, 20000).catch(() => null);
+    if (!otpField) {
+      console.warn("[GeM Bill Auto-Submit] #otp field enable nahi hua - manually daal ke Submit karo.");
+      return;
+    }
+
+    console.log(`[GeM Bill Auto-Submit] "${data.gemMailId}" se OTP fetch kar raha hu...`);
+    const otpResponse = await chrome.runtime.sendMessage({ type: "FETCH_LOGIN_OTP", gemMailId: data.gemMailId, sinceTs });
+    if (!otpResponse?.success) {
+      console.warn("[GeM Bill Auto-Submit] OTP fetch fail hua:", otpResponse?.error, "- manually daal ke Submit karo.");
+      return;
+    }
+
+    setNativeValue(otpField, otpResponse.otp);
+    fireEvents(otpField);
+    console.log("[GeM Bill Auto-Submit] OTP fill kar diya:", otpResponse.otp);
+
+    const submitBtn = await waitForElementMatching(() => {
+      const el = document.querySelector("#finalSubmit");
+      return el && isVisible(el) && !el.disabled ? el : null;
+    }, 10000).catch(() => null);
+    if (!submitBtn) {
+      console.warn("[GeM Bill Auto-Submit] #finalSubmit enable nahi hua - manually Submit dabao.");
+      return;
+    }
+
+    console.log("[GeM Bill Auto-Submit] Login Submit click kar raha hu.");
+    submitBtn.click();
+  }
 
   async function init() {
     const { data } = await chrome.runtime.sendMessage({ type: "GET_PENDING_SUBMISSION" });
@@ -315,7 +466,7 @@
 
     const otpResponse = await chrome.runtime.sendMessage({
       type: "FETCH_OTP_FROM_GMAIL",
-      firmCode: data.firmCode,
+      gmailAccountEmail: data.gmailAccountEmail,
     });
     if (!otpResponse?.success) {
       throw new Error("OTP fetch fail: " + (otpResponse?.error || "unknown error"));

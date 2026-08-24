@@ -85,6 +85,40 @@ export function retryGemDocumentFetch(params: RetryGemDocumentParams): Promise<a
   });
 }
 
+export interface GemLoginParams {
+  gemUserId: string;
+  gemPassword: string;
+  gemMailId?: string; // used to auto-fetch the login OTP, same as the bill-submission Gmail flow
+}
+
+// Opens/focuses a GeM tab and asks content-gem.js to fill in the saved
+// Username/Password on the login form - Captcha (and OTP, if GeM prompts for
+// one) still need a human, this only saves the typing. See content-gem.js's
+// fillGemLoginForm() for the actual field-filling logic and its caveats.
+export function triggerGemLogin(params: GemLoginParams): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chromeRuntime = (window as any).chrome?.runtime;
+    if (!chromeRuntime?.sendMessage) {
+      reject(new Error("Extension detect nahi hua — install hai ya nahi check karo."));
+      return;
+    }
+
+    chromeRuntime.sendMessage(
+      GEM_EXTENSION_ID,
+      { type: "GEM_LOGIN", payload: params },
+      (response: any) => {
+        if (chromeRuntime.lastError) {
+          reject(new Error(chromeRuntime.lastError.message));
+        } else if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || "Unknown error"));
+        }
+      }
+    );
+  });
+}
+
 // USAGE example (e.g. in app/dashboard/account/bills/page.tsx after a bill is generated):
 //
 // import { submitBillToGem } from "@/lib/triggerGemSubmit";

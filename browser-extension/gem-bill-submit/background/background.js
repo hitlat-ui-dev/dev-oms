@@ -18,6 +18,11 @@
 
 const GEM_BASE_URL = "https://fulfilment.gem.gov.in";
 const GEM_ORDERS_URL = `${GEM_BASE_URL}/fulfilment/home#WORKSPACE_ID=ORDERS_WS`;
+// The actual GeM SSO login form (User ID + Captcha, then Password on a
+// follow-up page) - confirmed live 24-Aug-2026 via DevTools inspection.
+// client_id/state here are the SSO app's own identifiers, not a per-visit
+// nonce - this exact URL was confirmed to reach the login form directly.
+const GEM_LOGIN_URL = "https://sso.gem.gov.in/ARXSSO/oauth/doLogin?redirect_uri=https%3A%2F%2Fmkp.gem.gov.in%2Fauth%2Farx%2Fcallback&client_id=131804060198305&state=4e4b6dfa72e45b4249f6ccef0b50be7a83693c9d080cf7ae";
 
 // Manifest me daale gaye OAuth client ID ko yahan bhi use karenge (launchWebAuthFlow ke liye
 // alag se URL banana padta hai, chrome.identity.getAuthToken jaisa seedha nahi hota).
@@ -59,7 +64,32 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  if (message.type === "GEM_LOGIN") {
+    handleGemLogin(message.payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
+
+// GeM Login Setup page's "Login" button - stashes the saved Username/
+// Password/Mail so content-gem.js can fill them in (and fetch the login OTP
+// from gemMailId, if given) once the login page loads, then opens/focuses
+// that tab. Captcha is the only thing left for the user.
+async function handleGemLogin(payload) {
+  const { gemUserId, gemPassword, gemMailId } = payload || {};
+  if (!gemUserId || !gemPassword) {
+    throw new Error("gemUserId aur gemPassword zaroori hain.");
+  }
+
+  await chrome.storage.local.set({
+    pendingGemLogin: { gemUserId, gemPassword, gemMailId: gemMailId || "", step: "USERNAME", startedAt: Date.now() },
+  });
+
+  const tab = await chrome.tabs.create({ url: GEM_LOGIN_URL, active: true });
+  return { tabId: tab.id, message: "GeM login tab khola gaya." };
+}
 
 async function handleSubmitBillToGem(payload) {
   const {
@@ -75,31 +105,39 @@ async function handleSubmitBillToGem(payload) {
   // PDF URL it already sent - used later to upload GeM's own invoice back.
   const omsOrigin = new URL(billPdfUrl).origin;
 
-  // Check karo ki is firm ka Gmail account already linked hai ya nahi
-  let tokenData = await getStoredTokenForFirm(firmCode);
+  // Gmail account ab email se link/store hota hai (gmailTokensByEmail), na
+  // ki firmCode se - GeM Login Setup ke gemMailId aur is e-verify OTP ke
+  // beech ek hi linked account share hota hai, do alag jagah link nahi
+  // karna padta. OMS ab gmailAccountEmail me GeM Login Setup ka gemMailId
+  // bhejta hai (Company Setup ka purana field ab yahan use nahi hota).
+  if (!gmailAccountEmail) {
+    throw new Error(
+      `Firm "${firmName}" ka Mail ID GeM Login Setup me save nahi hai - pehle wahan is firm ka Mail ID save karo.`
+    );
+  }
+
+  let tokenData = await getStoredTokenForEmail(gmailAccountEmail);
 
   if (!tokenData) {
-    // Token nahi hai ya expire ho gaya — agar OMS ne gmailAccountEmail bheja hai to
-    // AUTOMATICALLY silent re-link try karo, user ko popup me jaane ki zaroorat na pade.
-    if (gmailAccountEmail) {
-      try {
-        await linkGmailAccountForFirm(firmCode, gmailAccountEmail); // silent-first internally
-        tokenData = await getStoredTokenForFirm(firmCode);
-      } catch {
-        // silent bhi fail hua — ab manual popup se link karna padega
-      }
+    // Token nahi hai ya expire ho gaya — AUTOMATICALLY silent re-link try
+    // karo, user ko kahi jaane ki zaroorat na pade.
+    try {
+      await linkGmailAccountForEmail(gmailAccountEmail); // silent-first, interactive fallback internally
+      tokenData = await getStoredTokenForEmail(gmailAccountEmail);
+    } catch {
+      // silent bhi fail hua, interactive bhi cancel/fail hua - error neeche throw hoga
     }
   }
 
   if (!tokenData) {
     throw new Error(
-      `Firm "${firmName}" ka Gmail account link nahi hai/expire ho gaya. Extension popup se "Link Gmail" dabao (ek baar login confirm karna padega).`
+      `"${gmailAccountEmail}" ka Gmail account link nahi ho paya. GeM Login Setup se ek baar "Login" chala ke Google consent confirm karo.`
     );
   }
 
   await chrome.storage.local.set({
     pendingBillSubmission: {
-      firmCode, contractNo, billNo, billPdfUrl, firmName,
+      firmCode, contractNo, billNo, billPdfUrl, firmName, gmailAccountEmail,
       billType, contractDate, buyerState, items, billId, omsOrigin,
       step: "SEARCH",
       startedAt: Date.now(),
@@ -153,7 +191,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "FETCH_OTP_FROM_GMAIL") {
-    fetchLatestOtpFromGmail(message.firmCode)
+    fetchLatestOtpFromGmail(message.gmailAccountEmail)
       .then((otp) => sendResponse({ success: true, otp }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -176,6 +214,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_PENDING_SUBMISSION") {
     chrome.storage.local.get("pendingBillSubmission").then((data) => {
       sendResponse({ success: true, data: data.pendingBillSubmission || null });
+    });
+    return true;
+  }
+
+  if (message.type === "GET_PENDING_LOGIN") {
+    chrome.storage.local.get("pendingGemLogin").then((data) => {
+      sendResponse({ success: true, data: data.pendingGemLogin || null });
+    });
+    return true;
+  }
+
+  if (message.type === "CLEAR_PENDING_LOGIN") {
+    chrome.storage.local.remove("pendingGemLogin").then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === "FETCH_LOGIN_OTP") {
+    // payload: { gemMailId, sinceTs } - sent from content-gem.js's GeM
+    // Login OTP step (distinct from the bill-submission OTP fetch above,
+    // which is keyed by firmCode against an already-linked Gmail account).
+    fetchLoginOtp(message.gemMailId, message.sinceTs)
+      .then((otp) => sendResponse({ success: true, otp }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "SET_PENDING_LOGIN_STEP") {
+    chrome.storage.local.get("pendingGemLogin").then(({ pendingGemLogin }) => {
+      if (pendingGemLogin) {
+        pendingGemLogin.step = message.step;
+        chrome.storage.local.set({ pendingGemLogin }).then(() => sendResponse({ success: true }));
+      } else {
+        sendResponse({ success: false });
+      }
     });
     return true;
   }
@@ -281,6 +353,14 @@ async function linkGmailAccountForFirm(firmCode, knownEmail) {
   gmailTokens[firmCode] = tokenData;
   await chrome.storage.local.set({ gmailTokens });
 
+  // Also saved under the unified by-email store (gmailTokensByEmail) - a
+  // link done here (via the extension's own popup) is then immediately
+  // usable by GeM Login Setup's "Login" button and the bill-submission
+  // e-verify OTP too, since both now look up by email, not firmCode.
+  const { gmailTokensByEmail = {} } = await chrome.storage.local.get("gmailTokensByEmail");
+  gmailTokensByEmail[profile.email.toLowerCase()] = tokenData;
+  await chrome.storage.local.set({ gmailTokensByEmail });
+
   return profile.email;
 }
 
@@ -296,22 +376,95 @@ async function getStoredTokenForFirm(firmCode) {
   return tokenData;
 }
 
-// ---------------------------------------------------------------------------
-// 4. GMAIL OTP FETCH (firmCode ke hisaab se sahi account ka token use karta hai)
-// ---------------------------------------------------------------------------
-async function fetchLatestOtpFromGmail(firmCode) {
-  const tokenData = await getStoredTokenForFirm(firmCode);
-  if (!tokenData) {
-    throw new Error("Is firm ka Gmail account link nahi hai ya token expire ho gaya — popup se dobara link karo.");
+// Same silent-then-interactive linking as linkGmailAccountForFirm, but keyed
+// by the email address itself rather than a firmCode - used for the GeM
+// Login Setup page's OTP step, which has a gemMailId but no firm-master
+// Gmail link. Kept in a separate storage key (gmailTokensByEmail) so it can
+// never collide with or disturb the firmCode-keyed bill-submission tokens.
+async function getStoredTokenForEmail(email) {
+  const { gmailTokensByEmail = {} } = await chrome.storage.local.get("gmailTokensByEmail");
+  const tokenData = gmailTokensByEmail[email.toLowerCase()];
+  if (!tokenData) return null;
+  if (Date.now() >= tokenData.expiresAt) return null;
+  return tokenData;
+}
+
+async function linkGmailAccountForEmail(email) {
+  let tokenResult = await trySilentAuth(email);
+  if (!tokenResult) {
+    tokenResult = await tryInteractiveAuth(email);
   }
 
+  const { accessToken, expiresIn } = tokenResult;
+
+  const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const profile = await profileRes.json();
+
+  if (profile.email.toLowerCase() !== email.toLowerCase()) {
+    throw new Error(
+      `Authorize hua account (${profile.email}) is credential ke Mail ID (${email}) se MATCH nahi karta. Sahi account select karo.`
+    );
+  }
+
+  const tokenData = { accessToken, expiresAt: Date.now() + expiresIn * 1000, email: profile.email };
+
+  const { gmailTokensByEmail = {} } = await chrome.storage.local.get("gmailTokensByEmail");
+  gmailTokensByEmail[email.toLowerCase()] = tokenData;
+  await chrome.storage.local.set({ gmailTokensByEmail });
+
+  return profile.email;
+}
+
+// GeM Login Setup's OTP step - "Generate OTP" was just clicked on the GeM
+// login page, this polls gemMailId's inbox for it. NOT YET CONFIRMED: the
+// login OTP email's exact sender/subject - reuses the same
+// "from:noreply@gem.gov.in subject:OTP" query confirmed for the
+// bill-submission e-verify OTP, since it's the same institution and both are
+// GeM OTP mails, but this specific email hasn't been seen live yet.
+async function fetchLoginOtp(email, sinceTs) {
+  if (!email) {
+    throw new Error("Is credential ka Mail ID save nahi hai - GeM Login Setup me pehle wo bhi bharo.");
+  }
+
+  let tokenData = await getStoredTokenForEmail(email);
+  if (!tokenData) {
+    // First time for this email (or expired) - this pops the Google
+    // consent screen right there on the GeM tab, one-time only.
+    await linkGmailAccountForEmail(email);
+    tokenData = await getStoredTokenForEmail(email);
+  }
+  if (!tokenData) {
+    throw new Error(`"${email}" ka Gmail account link nahi ho paya.`);
+  }
+
+  return pollGmailForOtp(tokenData.accessToken, sinceTs);
+}
+
+// ---------------------------------------------------------------------------
+// 4. GMAIL OTP FETCH (email ke hisaab se sahi account ka token use karta hai -
+//    same gmailTokensByEmail store as GeM Login Setup's OTP fetch)
+// ---------------------------------------------------------------------------
+async function fetchLatestOtpFromGmail(email) {
+  if (!email) {
+    throw new Error("Is bill ke firm ka Mail ID GeM Login Setup me save nahi hai.");
+  }
+  const tokenData = await getStoredTokenForEmail(email);
+  if (!tokenData) {
+    throw new Error(`"${email}" ka Gmail account link nahi hai ya token expire ho gaya — GeM Login Setup se "Login" chala ke dobara link karo.`);
+  }
   // Confirmed live: without a time cutoff, an OLD OTP email (from an
   // earlier test/attempt) got picked up and GeM rejected it ("OTP does not
   // match"). Only messages received from just before this fetch started are
   // accepted - a small negative buffer covers clock skew between this
   // machine and Gmail's servers, not a real waiting window.
-  const acceptAfterMs = Date.now() - 30 * 1000;
+  return pollGmailForOtp(tokenData.accessToken, Date.now() - 30 * 1000);
+}
 
+// Shared by both OTP flows (bill-submission e-verify, GeM Login OTP) - only
+// the token and the "accept mail received after this time" cutoff differ.
+async function pollGmailForOtp(accessToken, acceptAfterMs) {
   // Gmail's search index can lag a brand-new message by well over the
   // ~45s this used to allow for - widened to ~2 minutes.
   const maxAttempts = 40;
@@ -328,7 +481,7 @@ async function fetchLatestOtpFromGmail(firmCode) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const listRes = await fetch(
       `https://www.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=5`,
-      { headers: { Authorization: `Bearer ${tokenData.accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const listData = await listRes.json();
 
@@ -348,7 +501,7 @@ async function fetchLatestOtpFromGmail(firmCode) {
       for (const { id: msgId } of listData.messages) {
         const msgRes = await fetch(
           `https://www.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`,
-          { headers: { Authorization: `Bearer ${tokenData.accessToken}` } }
+          { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         const msgData = await msgRes.json();
 

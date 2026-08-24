@@ -18,7 +18,6 @@ interface Company {
   isCompositionDealer?: boolean;
   bank?: { bankName?: string; accountNo?: string; ifsc?: string; branch?: string };
   contactEmail?: string;
-  gmailAccountEmail?: string;
   invoiceNumbering?: { prefix?: string; history?: { fy: string; lastNumber: number }[] };
   createdAt: string;
 }
@@ -36,7 +35,6 @@ const emptyForm = {
   isCompositionDealer: false,
   bank: { bankName: "", accountNo: "", ifsc: "", branch: "" },
   contactEmail: "",
-  gmailAccountEmail: "",
   invoiceNumbering: { prefix: "" },
 };
 
@@ -132,7 +130,6 @@ export default function CompaniesPage() {
         branch: company.bank?.branch || "",
       },
       contactEmail: company.contactEmail || "",
-      gmailAccountEmail: company.gmailAccountEmail || "",
       invoiceNumbering: { prefix: company.invoiceNumbering?.prefix || "" },
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -351,23 +348,6 @@ export default function CompaniesPage() {
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
                   placeholder="firm@example.com"
                   onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
-                <span>GeM OTP Gmail Account</span>
-                <span className="text-slate-400 font-normal lowercase">(used by the Chrome extension for silent/pre-filled login)</span>
-              </label>
-              <div className="relative">
-                <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="email"
-                  value={formData.gmailAccountEmail}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
-                  placeholder="firm.otp@gmail.com"
-                  onChange={(e) => setFormData({ ...formData, gmailAccountEmail: e.target.value })}
                 />
               </div>
             </div>

@@ -19,6 +19,7 @@
     "https://fulfilment.gem.gov.in/*",
     "https://mkp.gem.gov.in/*",
     "https://bidplus.gem.gov.in/*",
+    "https://sso.gem.gov.in/*",
     "https://www.googleapis.com/*",
     "https://dev-oms-blush.vercel.app/*",
     "http://localhost:3000/*"
@@ -33,7 +34,8 @@
       "matches": [
         "https://fulfilment.gem.gov.in/*",
         "https://mkp.gem.gov.in/*",
-        "https://bidplus.gem.gov.in/*"
+        "https://bidplus.gem.gov.in/*",
+        "https://sso.gem.gov.in/*"
       ],
       "js": ["content/content-gem.js"],
       "run_at": "document_idle"
