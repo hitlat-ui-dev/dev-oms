@@ -114,6 +114,31 @@ export async function GET(req: Request) {
 
     const openPurchaseRequests = await db.collection("purchase_requests").countDocuments({ status: "Purchase Request" });
 
+    // Bills generated today, broken down by firm - counts the generation
+    // event itself (createdAt), not whether the bill is still valid, so a
+    // bill cancelled later the same day still counts here.
+    const billsMatch: Record<string, any> = { createdAt: { $gte: todayStart, $lt: todayEnd } };
+    if (firmCode) billsMatch.firmCode = firmCode;
+    const billsTodayAgg = await db
+      .collection("bills")
+      .aggregate([
+        { $match: billsMatch },
+        {
+          $group: {
+            _id: { $ifNull: ["$firmCode", "Unknown"] },
+            count: { $sum: 1 },
+            value: { $sum: { $ifNull: ["$grandTotal", 0] } },
+          },
+        },
+        { $sort: { count: -1 } },
+      ])
+      .toArray();
+    const billsToday = {
+      totalCount: billsTodayAgg.reduce((s: number, r: any) => s + r.count, 0),
+      totalValue: round2(billsTodayAgg.reduce((s: number, r: any) => s + r.value, 0)),
+      byFirm: billsTodayAgg.map((r: any) => ({ firmCode: r._id, count: r.count, value: round2(r.value) })),
+    };
+
     // Dashboard stats strip: bids still sitting untriaged, and items at/under their
     // reorder threshold — both cheap counts, computed alongside everything else here
     // so the dashboard has one summary endpoint to call rather than several small ones.
@@ -272,6 +297,7 @@ export async function GET(req: Request) {
         openPurchaseRequests,
       },
       teamActivity,
+      billsToday,
       bidsPendingAction,
       lowStockCount,
     });

@@ -13,6 +13,7 @@ import {
   FiUsers,
   FiTruck,
   FiPackage,
+  FiFileText,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -56,6 +57,11 @@ interface SummaryData {
     openPurchaseRequests: number;
   };
   teamActivity: TeamActivityRow[];
+  billsToday: {
+    totalCount: number;
+    totalValue: number;
+    byFirm: { firmCode: string; count: number; value: number }[];
+  };
 }
 
 const formatMoney = (n: number) =>
@@ -284,6 +290,34 @@ export default function SummaryDashboardPage() {
                         </div>
                         <span className="w-16 shrink-0 text-right text-[10px] font-bold text-slate-500">{formatInt(s.count)}</span>
                         <span className="w-28 shrink-0 text-right text-[11px] font-black text-slate-800">₹{formatMoney(s.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Bills Generated Today */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiFileText className="text-blue-600" size={14} /> Bills Generated Today
+                  </h3>
+                  <span className="text-[10px] font-black text-slate-500">
+                    {formatInt(data.billsToday.totalCount)} bills · ₹{formatMoney(data.billsToday.totalValue)}
+                  </span>
+                </div>
+                {data.billsToday.byFirm.length === 0 ? (
+                  <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-6">No bills generated today</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {data.billsToday.byFirm.map((f) => (
+                      <div
+                        key={f.firmCode}
+                        className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
+                      >
+                        <span className="text-[11px] font-black text-slate-800 uppercase">{f.firmCode}</span>
+                        <span className="text-[10px] font-bold text-blue-700">× {f.count}</span>
+                        <span className="text-[10px] font-bold text-slate-400">₹{formatMoney(f.value)}</span>
                       </div>
                     ))}
                   </div>
