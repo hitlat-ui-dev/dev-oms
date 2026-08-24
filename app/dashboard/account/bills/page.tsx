@@ -230,6 +230,41 @@ export default function GenerateBillPage() {
     return result;
   }, [groups, contractDateFrom, contractDateTo, contractSearchQuery]);
 
+  // Same date-range/search filter as the un-billed list above, applied to the
+  // exempted list too - the search box only ever filtered "still needs a
+  // bill" contracts, so searching a contract that had already been marked
+  // exempt correctly found nothing there, but the Exempted Contracts panel
+  // below it wasn't filtered at all, so it looked like the search just
+  // didn't work for that contract.
+  const filteredExemptedGroups = useMemo(() => {
+    let result = exemptedGroups;
+
+    if (contractDateFrom || contractDateTo) {
+      const from = contractDateFrom ? new Date(contractDateFrom) : null;
+      const to = contractDateTo ? new Date(contractDateTo) : null;
+      result = result.filter((g) => {
+        const d = parseContractDate(g.contractDate);
+        if (!d) return false;
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+    }
+
+    const q = contractSearchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((g) => {
+        if (g.contractNo?.toLowerCase().includes(q)) return true;
+        if (g.instituteName?.toLowerCase().includes(q)) return true;
+        return g.orders.some((o) =>
+          o.itemName?.toLowerCase().includes(q) || String(o.totalAmount ?? "").includes(q)
+        );
+      });
+    }
+
+    return result;
+  }, [exemptedGroups, contractDateFrom, contractDateTo, contractSearchQuery]);
+
   // The list can run into the hundreds for an old firm - show 20 at a time
   // instead of dumping everything on screen at once.
   const PAGE_SIZE = 20;
@@ -1120,9 +1155,13 @@ export default function GenerateBillPage() {
                       <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
                         No exempted contracts for this firm.
                       </p>
+                    ) : filteredExemptedGroups.length === 0 ? (
+                      <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                        No exempted contracts match that date range / search.
+                      </p>
                     ) : (
                       <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
-                        {exemptedGroups.map((g) => {
+                        {filteredExemptedGroups.map((g) => {
                           const first = g.orders[0];
                           const key = groupKey(g);
                           return (
