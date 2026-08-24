@@ -55,6 +55,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
   const blankFormData = {
     firmCode: "",
+    subParty: "",
     sellerId: "",
     instituteName: "",
     itemId: "",
@@ -103,6 +104,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
     setFormData({
       firmCode: initialData.firmCode || "",
+      subParty: initialData.subParty || "",
       sellerId: initialData.sellerId || "",
       instituteName: seller?.instituteName || initialData.instituteName || "",
       itemId: initialData.itemId || "",
@@ -374,6 +376,14 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                   </option>
                 ))}
               </datalist>
+              <input
+                type="text"
+                placeholder="party (optional) — e.g. vinay"
+                className="w-full px-3 py-1.5 bg-transparent text-[10px] lowercase text-slate-400 outline-none placeholder:text-slate-300"
+                value={formData.subParty}
+                onChange={(e) => setFormData({ ...formData, subParty: e.target.value.toLowerCase() })}
+                title="If an outside party actually supplied/handled this order (billed under this firm's GST), name them here — keeps Firm Code as the real firm for billing."
+              />
             </div>
 
             {/* <div className="space-y-2">

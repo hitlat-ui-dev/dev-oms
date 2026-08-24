@@ -119,9 +119,12 @@ export default function OrdersListPage() {
       const matchesCategory = (order.category || "").toLowerCase().trim()
         .includes(filters.category.toLowerCase().trim());
 
-      // Check both 'firmName' and 'firm' fields just in case
-      const matchesFirm = (order.firmCode || "").toLowerCase().trim()
-        .includes(filters.firm.toLowerCase().trim());
+      // Check both 'firmName' and 'firm' fields just in case - also matches
+      // subParty, so this same box finds orders tagged with an outside
+      // party (e.g. "vinay") without needing a separate filter control.
+      const firmQuery = filters.firm.toLowerCase().trim();
+      const matchesFirm = (order.firmCode || "").toLowerCase().trim().includes(firmQuery)
+        || (order.subParty || "").toLowerCase().trim().includes(firmQuery);
 
       const matchesBuyer = (order.instituteName || "").toLowerCase().trim()
         .includes(filters.buyerName.toLowerCase().trim());
@@ -1032,9 +1035,9 @@ const shippingLock = useRef(false);
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Firm</label>
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Firm / Party</label>
             <input
-              type="text" placeholder="Filter Firm..."
+              type="text" placeholder="Filter Firm or Party..."
               className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
               value={filters.firm}
               onChange={(e) => setFilters({ ...filters, firm: e.target.value })}
@@ -1252,6 +1255,9 @@ const shippingLock = useRef(false);
 
                 <td className="px-3 py-2 max-w-28">
                   <div className="font-black text-slate-800 uppercase truncate leading-tight">{order.firmCode}</div>
+                  {order.subParty && (
+                    <div className="text-[9px] font-bold text-slate-400 lowercase truncate leading-tight">{order.subParty}</div>
+                  )}
                 </td>
                 <td className="px-3 py-2 max-w-28">
                   <div className="text-[9px] font-bold text-slate-800 uppercase truncate">{order.instituteName}</div>

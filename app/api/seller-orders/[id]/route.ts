@@ -129,6 +129,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           rate: updateData.rate !== undefined ? Number(updateData.rate) : originalOrder.rate,
           totalAmount: updateData.totalAmount !== undefined ? Number(updateData.totalAmount) : newReQty * (originalOrder.rate || 0),
           firmCode: updateData.firmCode || originalOrder.firmCode,
+          subParty: updateData.subParty !== undefined ? updateData.subParty : originalOrder.subParty,
           sellerId: updateData.sellerId || originalOrder.sellerId,
           instituteName: updateData.instituteName || originalOrder.instituteName,
           contractDate: updateData.contractDate !== undefined ? updateData.contractDate : originalOrder.contractDate,

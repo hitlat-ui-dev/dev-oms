@@ -4,6 +4,11 @@ import mongoose, { Schema, model, models } from "mongoose";
 const SellerOrderSchema = new Schema({
   orderNo: { type: String, unique: true },
   firmCode: { type: String, required: true },
+  // Set when an outside party (not this firm itself) actually supplied/
+  // handled the order, but it's billed/paperworked under this firm's GST -
+  // kept separate from firmCode so billing/company lookups always resolve
+  // to a real, fully-configured firm instead of a placeholder "tag" company.
+  subParty: { type: String, default: "" },
   sellerId: { type: Schema.Types.ObjectId, ref: "Seller", required: true },
   instituteName: { type: String, required: true },
   itemId: { type: Schema.Types.ObjectId, ref: "Stock", required: true },
