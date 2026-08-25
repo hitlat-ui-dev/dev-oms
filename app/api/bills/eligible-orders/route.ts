@@ -41,9 +41,13 @@ export async function GET(req: Request) {
       : [];
     const sellerById = new Map(sellers.map((s) => [String(s._id), s]));
 
+    // SellerOrder.itemId is actually the stock collection's own _id (not the
+    // items collection's _id - stock docs separately carry an `itemId`
+    // field pointing there), so HSN/SAC and GST% must be looked up from
+    // stock, not items - querying items here always came back empty.
     const itemIds = [...new Set(orders.map((o) => o.itemId).filter(Boolean).map((id: any) => String(id)))];
     const items = itemIds.length
-      ? await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray()
+      ? await db.collection("stock").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray()
       : [];
     const itemById = new Map(items.map((it) => [String(it._id), it]));
 

@@ -10,10 +10,14 @@ export interface ICourierMatchedParcel {
   buyerName?: string;
   score: number;
   whatsappNumber?: string;
-  // Set at match time, not left to default to PENDING blindly - NO_NUMBER
-  // means the institute has no whatsappNumber on file yet, so the bridge
-  // should never pick it up (there's nothing to send it to).
-  whatsappStatus: "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
+  // Set at match time - NO_NUMBER means the institute has no whatsappNumber
+  // on file yet (nothing to send to). NOT_SENT means a number exists but no
+  // one has chosen to send it yet - sending is a manual, per-parcel decision
+  // (checkbox-select on the Courier Tracking page), never automatic. Only
+  // PENDING is what the whatsapp-bridge service actually polls for and
+  // sends - a parcel only reaches PENDING via POST /api/courier/queue-whatsapp,
+  // never automatically at match time.
+  whatsappStatus: "NOT_SENT" | "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
 }
 
 export interface ICourierReviewParcel {
@@ -50,7 +54,7 @@ const CourierMatchedParcelSchema = new Schema<ICourierMatchedParcel>(
     buyerName: { type: String },
     score: { type: Number, required: true },
     whatsappNumber: { type: String },
-    whatsappStatus: { type: String, enum: ["PENDING", "SENT", "FAILED", "NO_NUMBER"], default: "PENDING" },
+    whatsappStatus: { type: String, enum: ["NOT_SENT", "PENDING", "SENT", "FAILED", "NO_NUMBER"], default: "NOT_SENT" },
   },
   { _id: false }
 );

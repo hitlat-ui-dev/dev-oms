@@ -90,7 +90,18 @@ async function pollOnce(client) {
     for (const item of pending) {
       const number = normalizeNumber(item.whatsappNumber);
       try {
-        await client.sendMessage(`${number}@c.us`, buildMessage(item));
+        // Resolving the real chat ID via getNumberId first (rather than
+        // assuming `${number}@c.us`) is required now - confirmed live
+        // 25-Aug-2026: WhatsApp has moved at least some numbers onto a
+        // newer "@lid" (linked ID) addressing scheme, and sendMessage()
+        // against a stale/guessed "@c.us" id throws
+        // "Cannot read properties of undefined (reading 'id')" instead of
+        // actually sending.
+        const numberId = await client.getNumberId(number);
+        if (!numberId) {
+          throw new Error(`"${number}" is not registered on WhatsApp (or lookup failed).`);
+        }
+        await client.sendMessage(numberId._serialized, buildMessage(item));
         await markSent(item.date, item.docketNo, "SENT");
         log(`  Sent to ${item.instituteName} (${number}) - docket ${item.docketNo}`);
       } catch (err) {

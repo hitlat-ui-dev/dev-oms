@@ -33,6 +33,16 @@ interface TeamActivityRow {
   productsCompleted: number;
 }
 
+interface DailyBucket {
+  bucket: string; // "YYYY-MM-DD" (day) or "YYYY-MM" (month)
+  totalActions: number;
+  actions: Record<string, number>;
+  ordersCreated: number;
+  ordersCreatedQty: number;
+  filesUploaded: number;
+  productsCompleted: number;
+}
+
 interface SummaryData {
   totals: {
     totalOrderValue: number;
@@ -110,6 +120,14 @@ export default function SummaryDashboardPage() {
   const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [perfRange, setPerfRange] = useState<"month" | "year">("month");
+  const [perfData, setPerfData] = useState<TeamActivityRow[] | null>(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+  const [selectedMember, setSelectedMember] = useState("");
+  const [dailySeries, setDailySeries] = useState<DailyBucket[] | null>(null);
+  const [dailyBucketBy, setDailyBucketBy] = useState<"day" | "month">("day");
+  const [dailyLoading, setDailyLoading] = useState(false);
+
   useEffect(() => {
     fetch("/api/companies")
       .then((res) => res.json())
@@ -128,12 +146,69 @@ export default function SummaryDashboardPage() {
       .finally(() => setLoading(false));
   }, [firmFilter]);
 
+  const fetchTeamPerformance = useCallback((range: "month" | "year") => {
+    setPerfLoading(true);
+    const params = new URLSearchParams({ range });
+    if (firmFilter) params.set("firmCode", firmFilter);
+    fetch(`/api/team-performance?${params.toString()}`)
+      .then((res) => res.json())
+      .then((d) => setPerfData(Array.isArray(d.teamActivity) ? d.teamActivity : []))
+      .catch((err) => console.error("Failed to load team performance", err))
+      .finally(() => setPerfLoading(false));
+  }, [firmFilter]);
+
+  // Loads (or reloads) Team Performance right after the main "Scan Data" -
+  // gated the same way the rest of this page is (nothing runs until the
+  // user explicitly presses Scan Data), and again whenever the Month/Year
+  // toggle or firm filter changes afterwards.
+  useEffect(() => {
+    if (data) fetchTeamPerformance(perfRange);
+  }, [data, perfRange, fetchTeamPerformance]);
+
+  // Keeps the selected team member valid as perfData reloads (range/firm
+  // change) - defaults to the top scorer, but keeps whoever's already
+  // selected if they're still present in the new list.
+  useEffect(() => {
+    if (!perfData || perfData.length === 0) {
+      setSelectedMember("");
+      return;
+    }
+    setSelectedMember((prev) => (prev && perfData.some((r) => r.username === prev) ? prev : perfData[0].username));
+  }, [perfData]);
+
+  const fetchDailyPerformance = useCallback((username: string, range: "month" | "year") => {
+    setDailyLoading(true);
+    const params = new URLSearchParams({ username, range });
+    if (firmFilter) params.set("firmCode", firmFilter);
+    fetch(`/api/team-performance/daily?${params.toString()}`)
+      .then((res) => res.json())
+      .then((d) => {
+        setDailySeries(Array.isArray(d.series) ? d.series : []);
+        setDailyBucketBy(d.bucketBy === "month" ? "month" : "day");
+      })
+      .catch((err) => console.error("Failed to load daily team performance", err))
+      .finally(() => setDailyLoading(false));
+  }, [firmFilter]);
+
+  useEffect(() => {
+    if (selectedMember) fetchDailyPerformance(selectedMember, perfRange);
+  }, [selectedMember, perfRange, fetchDailyPerformance]);
+
   // No auto-run on mount - this aggregates across sellerorders/items/gem_sheets
   // in full, so it only scans when the button below is explicitly pressed.
   const maxStatusValue = useMemo(
     () => Math.max(1, ...(data?.statusBreakdown || []).map((s) => s.value)),
     [data]
   );
+
+  const dayScore = (r: DailyBucket) => r.totalActions + r.ordersCreated + r.filesUploaded + r.productsCompleted;
+  const maxDailyValue = useMemo(() => Math.max(1, ...(dailySeries || []).map(dayScore)), [dailySeries]);
+
+  const formatBucketLabel = (bucket: string, bucketBy: "day" | "month") => {
+    if (bucketBy === "day") return String(Number(bucket.split("-")[2]));
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return monthNames[Number(bucket.split("-")[1]) - 1] || bucket;
+  };
 
   return (
     <BlockGuard
@@ -378,6 +453,100 @@ export default function SummaryDashboardPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Team Performance - per-member day-wise / month-wise trend */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiTrendingUp className="text-blue-600" size={14} /> Team Performance
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {dailyBucketBy === "day" ? "Day-wise" : "Month-wise"} activity trend for the selected team member.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={selectedMember}
+                      onChange={(e) => setSelectedMember(e.target.value)}
+                      disabled={!perfData || perfData.length === 0}
+                      className="bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-[11px] font-black uppercase text-slate-700 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                    >
+                      {(perfData || []).map((r) => (
+                        <option key={r.username} value={r.username}>
+                          {r.username}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl p-1">
+                      <button
+                        onClick={() => setPerfRange("month")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
+                          perfRange === "month" ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        }`}
+                      >
+                        This Month
+                      </button>
+                      <button
+                        onClick={() => setPerfRange("year")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
+                          perfRange === "year" ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        }`}
+                      >
+                        This Year
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {perfLoading || dailyLoading ? (
+                  <div className="flex justify-center items-center py-10">
+                    <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-blue-500"></div>
+                  </div>
+                ) : !selectedMember || !dailySeries || dailySeries.length === 0 ? (
+                  <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-10">
+                    No activity logged {perfRange === "month" ? "this month" : "this year"} yet
+                  </p>
+                ) : (
+                  <div className="p-5">
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[560px]">
+                        <div className="flex items-end gap-1 h-48 border-b border-slate-200 pb-1">
+                          {dailySeries.map((d) => {
+                            const score = dayScore(d);
+                            return (
+                              <div key={d.bucket} className="flex-1 h-full flex items-end">
+                                <div
+                                  className={`w-full rounded-t transition-all ${score > 0 ? "bg-blue-600 hover:bg-blue-700" : "bg-slate-100"}`}
+                                  style={{ height: `${score > 0 ? Math.max(3, (score / maxDailyValue) * 100) : 2}%` }}
+                                  title={`${d.bucket}: ${score} actions — ${d.ordersCreated} orders, ${d.filesUploaded} files, ${d.productsCompleted} products`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex gap-1 mt-1">
+                          {dailySeries.map((d) => (
+                            <span key={d.bucket} className="flex-1 text-center text-[8px] font-bold text-slate-400">
+                              {formatBucketLabel(d.bucket, dailyBucketBy)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-500 mt-4">
+                      Total this {perfRange === "month" ? "month" : "year"}:{" "}
+                      <span className="text-slate-800">{formatInt(dailySeries.reduce((s, d) => s + dayScore(d), 0))} actions</span>
+                      {" · "}
+                      {formatInt(dailySeries.reduce((s, d) => s + d.ordersCreated, 0))} orders
+                      {" · "}
+                      {formatInt(dailySeries.reduce((s, d) => s + d.filesUploaded, 0))} files
+                      {" · "}
+                      {formatInt(dailySeries.reduce((s, d) => s + d.productsCompleted, 0))} products
+                    </p>
                   </div>
                 )}
               </div>

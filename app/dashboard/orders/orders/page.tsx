@@ -987,7 +987,16 @@ const shippingLock = useRef(false);
               Remaining Order
             </button>
           </div>
-          <div>
+          <div className="flex items-center">
+            {!ordersLoadedAll && (
+              <button
+                onClick={() => fetchOrders(true)}
+                disabled={loadingAllOrders}
+                className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-amber-200 mr-2 shrink-0"
+              >
+                {loadingAllOrders ? "Loading..." : "Load All Orders"}
+              </button>
+            )}
             <button
               onClick={() => setIsRequestModalOpen(true)}
               className="bg-blue-600 mr-2 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
@@ -1000,19 +1009,6 @@ const shippingLock = useRef(false);
             </button>
           </div>
         </div>
-
-        {!ordersLoadedAll && (
-          <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[11px] text-amber-800 font-bold">
-            <span>Showing orders from the last 45 days ({orders.length} orders loaded). Search/filters look within these — older history needs Load All.</span>
-            <button
-              onClick={() => fetchOrders(true)}
-              disabled={loadingAllOrders}
-              className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black uppercase tracking-widest text-[10px] px-4 py-2 rounded-lg transition-all shrink-0"
-            >
-              {loadingAllOrders ? "Loading..." : "Load All Orders"}
-            </button>
-          </div>
-        )}
 
         {/* Row 2: The New Filter Grid */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">

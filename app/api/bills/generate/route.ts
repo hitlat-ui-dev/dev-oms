@@ -149,9 +149,14 @@ export async function POST(req: Request) {
     const isTaxInvoice = billType === "TAX_INVOICE";
     const gstSplit = decideGstSplit(company.state, seller?.state);
 
+    // SellerOrder.itemId is actually the stock collection's own _id (not the
+    // items collection's _id - stock docs separately carry an `itemId`
+    // field pointing there), so HSN/SAC, GST% and the hidden-item check
+    // below must all look up stock, not items - querying items here always
+    // came back empty.
     const itemIds = orders.map((o) => o.itemId).filter(Boolean);
     const itemDocs = itemIds.length
-      ? await db.collection("items").find({ _id: { $in: itemIds.map((id: any) => new ObjectId(id)) } }).toArray()
+      ? await db.collection("stock").find({ _id: { $in: itemIds.map((id: any) => new ObjectId(id)) } }).toArray()
       : [];
     const itemById = new Map(itemDocs.map((it) => [String(it._id), it]));
 
@@ -178,6 +183,13 @@ export async function POST(req: Request) {
     let totalDiscount = 0;
     let totalGst = 0;
 
+    // Whatever HSN/SAC + GST% this bill ends up using (typed fresh, or just
+    // confirming a pre-filled value) becomes this item's new stored default
+    // - so the next bill for the same item pre-fills instead of coming up
+    // blank/0 again. Collected here, written after items/ below so a bad
+    // line elsewhere doesn't leave a partial write.
+    const hsnGstUpdates: { stockId: any; itemsId: any; hsnSac: string; gstPercent: number }[] = [];
+
     const items = orders.map((o, idx) => {
       const itemDoc = o.itemId ? itemById.get(String(o.itemId)) : null;
       const override: any = overridesByOrderId.get(String(o._id)) || {};
@@ -186,15 +198,23 @@ export async function POST(req: Request) {
       const rate = Number(o.rate || 0);
       const discount = Number(override.discount || 0);
       const gross = qty * rate;
-      const taxableAmount = gross - discount;
+      const grossAfterDiscount = gross - discount;
       const hsnSac = override.hsnSac !== undefined ? override.hsnSac : (itemDoc?.hsnSac || "");
       const gstPercent = override.gstPercent !== undefined ? Number(override.gstPercent) : Number(itemDoc?.gstPercent || 0);
-      const gstAmount = isTaxInvoice ? (taxableAmount * gstPercent) / 100 : 0;
-      const amount = taxableAmount + gstAmount;
+      // Rate is the GST-inclusive GeM contract price - GST is backed out of
+      // this final line value (not added on top of it), so the bill's Grand
+      // Total always matches the contract amount exactly.
+      const gstAmount = isTaxInvoice ? grossAfterDiscount - grossAfterDiscount / (1 + gstPercent / 100) : 0;
+      const taxableAmount = grossAfterDiscount - gstAmount;
+      const amount = grossAfterDiscount;
 
       subTotal += taxableAmount;
       totalDiscount += discount;
       totalGst += gstAmount;
+
+      if (itemDoc && (hsnSac !== (itemDoc.hsnSac || "") || gstPercent !== Number(itemDoc.gstPercent || 0))) {
+        hsnGstUpdates.push({ stockId: itemDoc._id, itemsId: itemDoc.itemId, hsnSac, gstPercent });
+      }
 
       return {
         srNo: idx + 1,
@@ -212,6 +232,28 @@ export async function POST(req: Request) {
       };
     });
     const grandTotal = subTotal + totalGst;
+
+    if (hsnGstUpdates.length) {
+      await Promise.all(
+        hsnGstUpdates.flatMap((u) => {
+          const ops = [
+            db.collection("stock").updateOne(
+              { _id: u.stockId },
+              { $set: { hsnSac: u.hsnSac, gstPercent: u.gstPercent, lastUpdated: new Date() } }
+            ),
+          ];
+          if (u.itemsId) {
+            ops.push(
+              db.collection("items").updateOne(
+                { _id: new ObjectId(u.itemsId) },
+                { $set: { hsnSac: u.hsnSac, gstPercent: u.gstPercent } }
+              )
+            );
+          }
+          return ops;
+        })
+      );
+    }
 
     const prefix = company.invoiceNumbering?.prefix || "";
     let invoiceNumber: string;

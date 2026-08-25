@@ -1,14 +1,11 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { computeTeamActivity } from "@/lib/teamActivity";
 
 // Orders in these statuses are void — never counted toward order value, payments, or activity.
 const RETURN_FAMILY = ["CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"];
 // Still "in the pipeline" — not yet billed/settled.
 const PENDING_STATUSES = ["TO CHECK", "READY TO SHIP", "DELIVERY"];
-
-// Stock-history entries record the actor as free text, e.g. "READY TO SHIP by Chintan" —
-// this is the only place in the current schema that attributes an action to a user.
-const ACTIVITY_SUFFIX = /\sby\s(.+)$/i;
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -149,129 +146,9 @@ export async function GET(req: Request) {
 
     // Team activity today — merged from every user-attributed signal the app writes:
     // order status/purchase actions (items.history), new orders created (sellerorders.createdBy),
-    // and GeM Sync file uploads / product completions (gem_sheets).
-    type ActivityBucket = {
-      username: string;
-      totalActions: number;
-      actions: Record<string, number>;
-      ordersCreated: number;
-      ordersCreatedQty: number;
-      filesUploaded: number;
-      productsCompleted: number;
-    };
-    const activityByUser = new Map<string, ActivityBucket>();
-    const getBucket = (username: string): ActivityBucket => {
-      let bucket = activityByUser.get(username);
-      if (!bucket) {
-        bucket = { username, totalActions: 0, actions: {}, ordersCreated: 0, ordersCreatedQty: 0, filesUploaded: 0, productsCompleted: 0 };
-        activityByUser.set(username, bucket);
-      }
-      return bucket;
-    };
-
-    // $elemMatch first so items with zero history entries in range are excluded
-    // before any $unwind runs, then $filter trims each surviving item's array
-    // down to just today's entries before unwinding - the old version unwound
-    // every history entry of every item (this app's audit-log field, unbounded
-    // for long-lived SKUs) and only filtered by date afterward.
-    const historyEntries = await db
-      .collection("items")
-      .aggregate([
-        { $match: { history: { $elemMatch: { date: { $gte: todayStart, $lt: todayEnd } } } } },
-        {
-          $project: {
-            history: {
-              $filter: {
-                input: "$history",
-                as: "h",
-                cond: { $and: [{ $gte: ["$$h.date", todayStart] }, { $lt: ["$$h.date", todayEnd] }] },
-              },
-            },
-          },
-        },
-        { $unwind: "$history" },
-        { $project: { _id: 0, type: "$history.type", byWhom: "$history.byWhom", qty: "$history.qty" } },
-      ])
-      .toArray();
-    for (const entry of historyEntries) {
-      const rawType: string = entry.type || "";
-      const username = (entry.byWhom && String(entry.byWhom).trim()) || rawType.match(ACTIVITY_SUFFIX)?.[1]?.trim() || "Unknown";
-      const actionLabel = rawType.replace(ACTIVITY_SUFFIX, "").trim() || "Activity";
-
-      const bucket = getBucket(username);
-      bucket.totalActions += 1;
-      bucket.actions[actionLabel] = (bucket.actions[actionLabel] || 0) + 1;
-    }
-
-    // New orders created today, by whoever placed/verified them (createdBy)
-    const orderCreationMatch: Record<string, any> = { createdAt: { $gte: todayStart, $lt: todayEnd }, createdBy: { $exists: true, $ne: "" } };
-    if (firmCode) orderCreationMatch.firmCode = firmCode;
-    const ordersCreatedAgg = await orders
-      .aggregate([
-        { $match: orderCreationMatch },
-        { $group: { _id: "$createdBy", ordersCreated: { $sum: 1 }, ordersCreatedQty: { $sum: { $ifNull: ["$reQty", 0] } } } },
-      ])
-      .toArray();
-    for (const row of ordersCreatedAgg) {
-      const bucket = getBucket(row._id);
-      bucket.ordersCreated += row.ordersCreated;
-      bucket.ordersCreatedQty += row.ordersCreatedQty;
-    }
-
-    // GeM Sync: files uploaded today + products marked completed today
-    const gemSheets = db.collection("gem_sheets");
-    const todayStartISO = todayStart.toISOString();
-    const todayEndISO = todayEnd.toISOString();
-
-    const uploadsAgg = await gemSheets
-      .aggregate([
-        { $match: { uploadedBy: { $exists: true, $ne: "" }, uploadedAt: { $gte: todayStartISO, $lt: todayEndISO } } },
-        { $group: { _id: "$uploadedBy", filesUploaded: { $sum: 1 } } },
-      ])
-      .toArray();
-    for (const row of uploadsAgg) {
-      getBucket(row._id).filesUploaded += row.filesUploaded;
-    }
-
-    const completionsAgg = await gemSheets
-      .aggregate([
-        {
-          $match: {
-            uploadedRows: {
-              $elemMatch: { completedBy: { $exists: true, $ne: "" }, completedAt: { $gte: todayStartISO, $lt: todayEndISO } },
-            },
-          },
-        },
-        {
-          $project: {
-            uploadedRows: {
-              $filter: {
-                input: "$uploadedRows",
-                as: "r",
-                cond: {
-                  $and: [
-                    { $ne: ["$$r.completedBy", ""] },
-                    { $gte: ["$$r.completedAt", todayStartISO] },
-                    { $lt: ["$$r.completedAt", todayEndISO] },
-                  ],
-                },
-              },
-            },
-          },
-        },
-        { $unwind: "$uploadedRows" },
-        { $group: { _id: "$uploadedRows.completedBy", productsCompleted: { $sum: 1 } } },
-      ])
-      .toArray();
-    for (const row of completionsAgg) {
-      getBucket(row._id).productsCompleted += row.productsCompleted;
-    }
-
-    const teamActivity = [...activityByUser.values()].sort(
-      (a, b) =>
-        b.totalActions + b.ordersCreated + b.filesUploaded + b.productsCompleted -
-        (a.totalActions + a.ordersCreated + a.filesUploaded + a.productsCompleted)
-    );
+    // and GeM Sync file uploads / product completions (gem_sheets). Shared with the
+    // Monthly/Yearly Team Performance view (see /api/team-performance) so both stay consistent.
+    const teamActivity = await computeTeamActivity(db, { start: todayStart, end: todayEnd, firmCode });
 
     return NextResponse.json({
       totals: {

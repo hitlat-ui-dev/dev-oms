@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FiTruck, FiCheckCircle, FiAlertTriangle, FiRefreshCw, FiPackage } from "react-icons/fi";
+import { FiTruck, FiCheckCircle, FiAlertTriangle, FiRefreshCw, FiPackage, FiSend } from "react-icons/fi";
 
 interface MatchedParcel {
   docketNo: string;
@@ -9,7 +9,7 @@ interface MatchedParcel {
   receiverName: string;
   score: number;
   whatsappNumber?: string;
-  whatsappStatus?: "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
+  whatsappStatus?: "NOT_SENT" | "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
 }
 
 interface ReviewParcel {
@@ -41,6 +41,8 @@ export default function CourierTrackingPage() {
     type: null,
     message: "",
   });
+  const [selectedDockets, setSelectedDockets] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState(false);
 
   const [autoStatus, setAutoStatus] = useState<{
     todayRunCompleted: boolean;
@@ -91,6 +93,7 @@ export default function CourierTrackingPage() {
       const data = await res.json();
       if (res.ok) {
         setStatus({ type: "success", message: data.message || "Courier run completed." });
+        setSelectedDockets(new Set());
         await fetchStatus();
       } else {
         throw new Error(data.error || "Failed to trigger courier run");
@@ -103,6 +106,56 @@ export default function CourierTrackingPage() {
   };
 
   const todayLog = autoStatus.todayLog;
+
+  // Only NOT_SENT/FAILED parcels can be selected - PENDING is already
+  // queued (waiting on the bridge), SENT is done, NO_NUMBER has nothing to
+  // send to.
+  const selectableDockets = (todayLog?.matched || [])
+    .filter((m) => m.whatsappStatus === "NOT_SENT" || m.whatsappStatus === "FAILED")
+    .map((m) => m.docketNo);
+
+  const toggleDocket = (docketNo: string) => {
+    setSelectedDockets((prev) => {
+      const next = new Set(prev);
+      if (next.has(docketNo)) next.delete(docketNo);
+      else next.add(docketNo);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedDockets((prev) =>
+      prev.size === selectableDockets.length ? new Set() : new Set(selectableDockets)
+    );
+  };
+
+  const handleSendWhatsApp = async () => {
+    if (sending || selectedDockets.size === 0 || !todayLog) return;
+    setSending(true);
+    setStatus({ type: null, message: "" });
+    try {
+      const res = await fetch("/api/courier/queue-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: todayLog.date, docketNos: [...selectedDockets] }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatus({
+          type: "success",
+          message: `Queued ${selectedDockets.size} WhatsApp message(s) - the bridge will send them shortly.`,
+        });
+        setSelectedDockets(new Set());
+        await fetchStatus();
+      } else {
+        throw new Error(data.error || "Failed to queue WhatsApp sends");
+      }
+    } catch (err: any) {
+      setStatus({ type: "error", message: err.message });
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
       <div className="min-h-screen bg-slate-50 p-6 flex justify-center">
@@ -170,8 +223,9 @@ export default function CourierTrackingPage() {
 
               <p className="text-slate-600 text-xs leading-relaxed mb-4">
                 Triggers automatically the first time OMS is opened each day - fetches yesterday&apos;s courier PDF,
-                parses each parcel, and matches it to an institute by receiver name + city. WhatsApp sending isn&apos;t
-                wired up yet - &quot;Matched&quot; below means confidently identified, ready to notify once enabled.
+                parses each parcel, and matches it to an institute by receiver name + city. WhatsApp sending is
+                always manual - select the parcels you want to notify below and press &quot;Send WhatsApp&quot;;
+                nothing gets messaged on its own.
               </p>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100 mb-6 space-y-2 text-xs">
@@ -227,11 +281,35 @@ export default function CourierTrackingPage() {
           {/* Matched */}
           {todayLog?.matched && todayLog.matched.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-              <h3 className="text-sm font-black text-slate-900 uppercase mb-4">Matched ({todayLog.matched.length})</h3>
+              <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                <h3 className="text-sm font-black text-slate-900 uppercase">Matched ({todayLog.matched.length})</h3>
+                <button
+                  type="button"
+                  disabled={selectedDockets.size === 0 || sending}
+                  onClick={handleSendWhatsApp}
+                  className="flex items-center gap-2 bg-emerald-600 text-white font-black uppercase text-[11px] tracking-wider px-4 py-2.5 rounded-xl transition-all hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {sending ? (
+                    <FiRefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <FiSend size={13} />
+                  )}
+                  {sending ? "Queueing..." : `Send WhatsApp (${selectedDockets.size} Selected)`}
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-slate-400 uppercase text-[10px] tracking-wide">
+                      <th className="pb-2 pr-3 w-8">
+                        <input
+                          type="checkbox"
+                          checked={selectableDockets.length > 0 && selectedDockets.size === selectableDockets.length}
+                          onChange={toggleSelectAll}
+                          disabled={selectableDockets.length === 0}
+                          className="w-3.5 h-3.5"
+                        />
+                      </th>
                       <th className="pb-2 pr-4">Docket No</th>
                       <th className="pb-2 pr-4">Institute</th>
                       <th className="pb-2 pr-4">City</th>
@@ -241,30 +319,50 @@ export default function CourierTrackingPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {todayLog.matched.map((m) => (
-                      <tr key={m.docketNo}>
-                        <td className="py-2 pr-4 font-mono">{m.docketNo}</td>
-                        <td className="py-2 pr-4 font-bold text-slate-800">{m.instituteName}</td>
-                        <td className="py-2 pr-4 text-slate-500">{m.city}</td>
-                        <td className="py-2 pr-4 text-slate-500">{m.receiverName}</td>
-                        <td className="py-2 pr-4 text-emerald-700 font-mono">{m.score.toFixed(2)}</td>
-                        <td className="py-2">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                              m.whatsappStatus === "SENT"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : m.whatsappStatus === "FAILED"
-                                ? "bg-red-100 text-red-700"
-                                : m.whatsappStatus === "NO_NUMBER"
-                                ? "bg-slate-100 text-slate-500"
-                                : "bg-amber-100 text-amber-700"
-                            }`}
-                          >
-                            {m.whatsappStatus === "NO_NUMBER" ? "No Number" : m.whatsappStatus || "Pending"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {todayLog.matched.map((m) => {
+                      const selectable = m.whatsappStatus === "NOT_SENT" || m.whatsappStatus === "FAILED";
+                      return (
+                        <tr key={m.docketNo}>
+                          <td className="py-2 pr-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedDockets.has(m.docketNo)}
+                              onChange={() => toggleDocket(m.docketNo)}
+                              disabled={!selectable}
+                              className="w-3.5 h-3.5"
+                            />
+                          </td>
+                          <td className="py-2 pr-4 font-mono">{m.docketNo}</td>
+                          <td className="py-2 pr-4 font-bold text-slate-800">{m.instituteName}</td>
+                          <td className="py-2 pr-4 text-slate-500">{m.city}</td>
+                          <td className="py-2 pr-4 text-slate-500">{m.receiverName}</td>
+                          <td className="py-2 pr-4 text-emerald-700 font-mono">{m.score.toFixed(2)}</td>
+                          <td className="py-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                m.whatsappStatus === "SENT"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : m.whatsappStatus === "FAILED"
+                                  ? "bg-red-100 text-red-700"
+                                  : m.whatsappStatus === "NO_NUMBER"
+                                  ? "bg-slate-100 text-slate-500"
+                                  : m.whatsappStatus === "PENDING"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-blue-100 text-blue-700"
+                              }`}
+                            >
+                              {m.whatsappStatus === "NO_NUMBER"
+                                ? "No Number"
+                                : m.whatsappStatus === "NOT_SENT"
+                                ? "Not Sent"
+                                : m.whatsappStatus === "PENDING"
+                                ? "Queued"
+                                : m.whatsappStatus || "Not Sent"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

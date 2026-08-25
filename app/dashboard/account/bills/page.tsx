@@ -562,10 +562,16 @@ export default function GenerateBillPage() {
     for (const o of selectedContract.orders) {
       const ov = overrides[o._id] || { hsnSac: "", gstPercent: 0, discount: 0 };
       const gross = o.reQty * o.rate;
-      const taxable = gross - (ov.discount || 0);
-      const gst = isTaxInvoice ? (taxable * (ov.gstPercent || 0)) / 100 : 0;
+      const discount = ov.discount || 0;
+      const grossAfterDiscount = gross - discount;
+      // Rate is the GST-inclusive GeM contract price - GST is backed out of
+      // this final line value (not added on top of it), so the bill's Grand
+      // Total always matches the contract amount exactly.
+      const gstPercent = ov.gstPercent || 0;
+      const gst = isTaxInvoice ? grossAfterDiscount - grossAfterDiscount / (1 + gstPercent / 100) : 0;
+      const taxable = grossAfterDiscount - gst;
       subTotal += taxable;
-      totalDiscount += ov.discount || 0;
+      totalDiscount += discount;
       totalGst += gst;
     }
     return { subTotal, totalDiscount, totalGst, grandTotal: subTotal + totalGst };

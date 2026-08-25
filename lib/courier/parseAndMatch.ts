@@ -200,7 +200,7 @@ export interface ProcessedMatchedParcel {
   buyerName?: string;
   score: number;
   whatsappNumber?: string;
-  whatsappStatus: "PENDING" | "NO_NUMBER";
+  whatsappStatus: "NOT_SENT" | "NO_NUMBER";
 }
 
 export interface ProcessedReviewParcel {
@@ -234,6 +234,14 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
   const path = await import("path");
   const { pathToFileURL } = await import("url");
   PDFParse.setWorker(pathToFileURL(path.join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs")).href);
+
+  // Some courier PDFs (Type3-font glyph paths, pattern fills) make
+  // pdfjs-dist reach for the browser-only DOMMatrix class even during plain
+  // text extraction, which throws "DOMMatrix is not defined" outside a
+  // browser (confirmed live: the 2026-08-21 and 2026-08-23 automated runs
+  // both failed with exactly this). See domMatrixPolyfill.ts for why.
+  const { installDOMMatrixPolyfillIfMissing } = await import("./domMatrixPolyfill");
+  installDOMMatrixPolyfillIfMissing();
 
   const pdfs = await fetchYesterdaysCourierPdfs();
 
@@ -281,7 +289,9 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
           buyerName: seller.buyerName || undefined,
           score,
           whatsappNumber: whatsappNumber || undefined,
-          whatsappStatus: whatsappNumber ? "PENDING" : "NO_NUMBER",
+          // NOT_SENT (not PENDING) - sending is a manual, per-parcel choice
+          // made on the Courier Tracking page, never automatic at match time.
+          whatsappStatus: whatsappNumber ? "NOT_SENT" : "NO_NUMBER",
         });
       } else {
         needsReview.push({
