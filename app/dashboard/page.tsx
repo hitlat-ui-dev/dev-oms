@@ -17,6 +17,7 @@ import {
   FiTruck
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
+import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
 
 // Which existing full-page tiles also get a hover "+" quick-add shortcut —
 // matches the reference mockup's card set.
@@ -45,6 +46,7 @@ export default function DashboardPage() {
 
     const parsedUser = JSON.parse(session);
     setUser(parsedUser);
+    syncCurrentUserToExtension(parsedUser.username);
 
     // Dynamic sync on dashboard load to capture changes immediately
     fetch(`/api/users?username=${encodeURIComponent(parsedUser.username)}`)

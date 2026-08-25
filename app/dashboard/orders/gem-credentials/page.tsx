@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { FiKey, FiUser, FiLock, FiMail, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiSearch, FiX, FiEye, FiEyeOff, FiTrash2, FiPlus, FiLogIn } from "react-icons/fi";
 import { useRouter } from "next/navigation";
-import { triggerGemLogin } from "@/lib/triggerGemSubmit";
+import { triggerGemLogin, syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
 
 interface Company {
   _id: string;
@@ -44,7 +44,9 @@ export default function GemCredentialsPage() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem("oms_user");
-      setUsername(stored ? JSON.parse(stored)?.username || "" : "");
+      const resolved = stored ? JSON.parse(stored)?.username || "" : "";
+      setUsername(resolved);
+      syncCurrentUserToExtension(resolved);
     } catch {
       setUsername("");
     }

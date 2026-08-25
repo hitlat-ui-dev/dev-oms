@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus, FiTrash2, FiMessageCircle } from "react-icons/fi";
+import { FiHome, FiUser, FiPhone, FiMapPin, FiSave, FiArrowLeft, FiCheckCircle, FiBriefcase, FiEdit3, FiSearch, FiChevronUp, FiChevronDown, FiX, FiFileText, FiTag, FiPlus, FiTrash2, FiMessageCircle, FiUserPlus } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -42,6 +42,7 @@ export default function AddSellerPage() {
     statementDescriptionName: [] as string[]
   });
   const [descInput, setDescInput] = useState("");
+  const [showModal, setShowModal] = useState(false);
 
   const fetchSellers = async () => {
     try {
@@ -112,6 +113,25 @@ export default function AddSellerPage() {
     setDescInput("");
   };
 
+  const closeModal = () => {
+    setShowModal(false);
+    resetForm();
+  };
+
+  const openAddModal = () => {
+    resetForm();
+    setShowModal(true);
+  };
+
+  useEffect(() => {
+    if (!showModal) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeModal();
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showModal]);
+
   const handleAddDescName = () => {
     const trimmed = descInput.trim();
     if (!trimmed) return;
@@ -143,9 +163,11 @@ export default function AddSellerPage() {
       });
       if (res.ok) {
         setStatus(formData._id ? "Seller Updated successfully!" : "Seller Registered successfully!");
-        resetForm();
         fetchSellers();
-        setTimeout(() => setStatus(""), 3000);
+        setTimeout(() => {
+          setStatus("");
+          closeModal();
+        }, 1200);
       }
     } catch (err) {
       setStatus("Error saving data.");
@@ -171,7 +193,7 @@ export default function AddSellerPage() {
       statementDescriptionName: descNames
     });
     setDescInput("");
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setShowModal(true);
   };
 
   return (
@@ -194,24 +216,26 @@ export default function AddSellerPage() {
           <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
             <FiArrowLeft /> Back
           </button>
-          {formData._id && (
-            <button onClick={resetForm} className="flex items-center gap-1 text-rose-500 hover:text-rose-600 transition-colors font-bold text-[10px] uppercase tracking-widest">
-              <FiX /> Cancel Edit
-            </button>
-          )}
         </div>
 
-        <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden">
-          <div className={`p-8 text-white flex items-center gap-4 transition-colors duration-500 ${formData._id ? 'bg-blue-600' : 'bg-[#0f172a]'}`}>
-            <div className="p-4 bg-white/20 rounded-2xl">
-              <FiUser size={32} />
+      {showModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+          <div className={`p-8 text-white flex items-center justify-between gap-4 transition-colors duration-500 ${formData._id ? 'bg-blue-600' : 'bg-[#0f172a]'}`}>
+            <div className="flex items-center gap-4">
+              <div className="p-4 bg-white/20 rounded-2xl">
+                <FiUser size={32} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black uppercase tracking-tight">
+                  {formData._id ? "Update Seller" : "Seller Registration"}
+                </h1>
+                <p className="opacity-70 text-[10px] font-black tracking-[0.2em] uppercase mt-1">Order Management System</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-black uppercase tracking-tight">
-                {formData._id ? "Update Seller" : "Seller Registration"}
-              </h1>
-              <p className="opacity-70 text-[10px] font-black tracking-[0.2em] uppercase mt-1">Order Management System</p>
-            </div>
+            <button onClick={closeModal} className="text-white/60 hover:text-white transition-colors">
+              <FiX size={22} />
+            </button>
           </div>
 
           <form onSubmit={handleSubmit} className="p-8 space-y-6">
@@ -364,14 +388,24 @@ export default function AddSellerPage() {
             </button>
           </form>
         </div>
+        </div>
+      )}
 
         {/* Table Section */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
             <h2 className="font-black text-slate-800 uppercase tracking-tight">Seller Directory</h2>
-            <div className="relative w-full md:w-72">
-              <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input type="text" placeholder="Search sellers..." className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="relative flex-1 md:w-72">
+                <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input type="text" placeholder="Search sellers..." className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <button
+                onClick={openAddModal}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black text-[11px] uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all shrink-0"
+              >
+                <FiUserPlus size={16} /> Add
+              </button>
             </div>
           </div>
 

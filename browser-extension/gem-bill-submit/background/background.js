@@ -71,6 +71,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  if (message.type === "SYNC_CURRENT_USER") {
+    // Lets the popup show THIS OMS user's own GeM Login Setup entries
+    // instead of a shared per-firm list - see popup/popup.js.
+    chrome.storage.local.set({ currentOmsUsername: message.payload?.username || "" }).then(() => sendResponse({ success: true }));
+    return true;
+  }
 });
 
 // GeM Login Setup page's "Login" button - stashes the saved Username/

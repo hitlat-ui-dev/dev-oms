@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiPhone, FiSearch, FiX, FiCreditCard, FiMail, FiFileText } from "react-icons/fi";
+import { FiBriefcase, FiHash, FiSave, FiArrowLeft, FiCheckCircle, FiEdit3, FiMapPin, FiPhone, FiSearch, FiX, FiCreditCard, FiMail, FiFileText, FiPlus } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -45,6 +45,7 @@ export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
   const [formData, setFormData] = useState(emptyForm);
+  const [showModal, setShowModal] = useState(false);
 
   // 1. Fetch existing companies
   const fetchCompanies = async () => {
@@ -82,6 +83,27 @@ export default function CompaniesPage() {
     setFormData(emptyForm);
   };
 
+  const closeModal = () => {
+    setShowModal(false);
+    resetForm();
+    setStatus("");
+  };
+
+  const openAddModal = () => {
+    resetForm();
+    setStatus("");
+    setShowModal(true);
+  };
+
+  useEffect(() => {
+    if (!showModal) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeModal();
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showModal]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.gstin.trim() && !formData.pan.trim()) {
@@ -98,9 +120,11 @@ export default function CompaniesPage() {
       const result = await res.json();
       if (res.ok) {
         setStatus(formData._id ? "Company Info Updated!" : "Company Registered!");
-        resetForm();
         fetchCompanies();
-        setTimeout(() => setStatus(""), 3000);
+        setTimeout(() => {
+          setStatus("");
+          closeModal();
+        }, 1200);
       } else {
         setStatus(result.error || "Error saving company.");
       }
@@ -132,7 +156,8 @@ export default function CompaniesPage() {
       contactEmail: company.contactEmail || "",
       invoiceNumbering: { prefix: company.invoiceNumbering?.prefix || "" },
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setStatus("");
+    setShowModal(true);
   };
 
   return (
@@ -156,27 +181,28 @@ export default function CompaniesPage() {
           <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors font-bold text-xs uppercase tracking-widest">
             <FiArrowLeft /> Back
           </button>
-          {formData._id && (
-            <button onClick={resetForm} className="flex items-center gap-1 text-rose-500 hover:text-rose-600 transition-colors font-bold text-[10px] uppercase tracking-widest">
-              <FiX /> Cancel Edit
-            </button>
-          )}
         </div>
 
-        {/* Registration / Edit Form */}
-        <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden">
-          <div className={`p-8 text-white flex items-center gap-4 transition-colors duration-500 ${formData._id ? 'bg-orange-600' : 'bg-[#0f172a]'}`}>
-            <div className="p-4 bg-orange-500/20 rounded-2xl text-orange-400">
-              <FiBriefcase size={32} />
+      {showModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+          <div className={`p-8 text-white flex items-center justify-between gap-4 transition-colors duration-500 ${formData._id ? 'bg-orange-600' : 'bg-[#0f172a]'}`}>
+            <div className="flex items-center gap-4">
+              <div className="p-4 bg-orange-500/20 rounded-2xl text-orange-400">
+                <FiBriefcase size={32} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black uppercase tracking-tight">
+                  {formData._id ? "Update Company" : "Company Setup"}
+                </h1>
+                <p className="text-orange-400 text-[10px] font-black tracking-[0.2em] uppercase mt-1">
+                  {formData._id ? "Edit Firm Information" : "Manual Firm Registration"}
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-black uppercase tracking-tight">
-                {formData._id ? "Update Company" : "Company Setup"}
-              </h1>
-              <p className="text-orange-400 text-[10px] font-black tracking-[0.2em] uppercase mt-1">
-                {formData._id ? "Edit Firm Information" : "Manual Firm Registration"}
-              </p>
-            </div>
+            <button onClick={closeModal} className="text-white/60 hover:text-white transition-colors">
+              <FiX size={22} />
+            </button>
           </div>
 
           <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -422,20 +448,30 @@ export default function CompaniesPage() {
             </button>
           </form>
         </div>
+        </div>
+      )}
 
         {/* Data Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
             <h2 className="font-black text-slate-800 uppercase tracking-tight">Registered Companies</h2>
-            <div className="relative w-full md:w-72">
-              <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search firm name, code, mobile..."
-                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="relative flex-1 md:w-72">
+                <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search firm name, code, mobile..."
+                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <button
+                onClick={openAddModal}
+                className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white font-black text-[11px] uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all shrink-0"
+              >
+                <FiPlus size={16} /> Add
+              </button>
             </div>
           </div>
           <div className="overflow-x-auto">

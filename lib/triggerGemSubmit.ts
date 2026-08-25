@@ -9,6 +9,20 @@
 
 const GEM_EXTENSION_ID = "lcadakplnhlmmkgajnojaaiimojnhbap"; // fixed via manifest.json "key" (22-Aug-2026)
 
+// Fire-and-forget: lets the extension's own popup ("Gmail Accounts") know
+// who's currently logged into OMS in this browser, so it can list THIS
+// user's own GeM Login Setup credentials (not a shared per-firm list) when
+// offering to link/re-link a Gmail account. Safe to call on every dashboard
+// page load - silently does nothing if the extension isn't installed.
+export function syncCurrentUserToExtension(username: string): void {
+  if (!username) return;
+  const chromeRuntime = (window as any).chrome?.runtime;
+  if (!chromeRuntime?.sendMessage) return;
+  chromeRuntime.sendMessage(GEM_EXTENSION_ID, { type: "SYNC_CURRENT_USER", payload: { username } }, () => {
+    void chromeRuntime.lastError; // swallow "receiving end does not exist" etc - this call is best-effort
+  });
+}
+
 export interface SubmitBillToGemParams {
   firmCode: string;
   billType: "TAX_INVOICE" | "BILL_OF_SUPPLY";
