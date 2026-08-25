@@ -20,6 +20,10 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
     remark: "",
     status: "Purchase Request"
   });
+  // Populated when the matched item belongs to a variant group (e.g. "White
+  // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
+  // its own stock, this just lets the user switch to the right one by label.
+  const [variantSiblings, setVariantSiblings] = useState<any[]>([]);
 
   // 1. Find the current item in the passed stockData for stock display
   // const currentStockInfo = useMemo(() => {
@@ -64,6 +68,15 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
       // Auto-fill unit only if a match is found
       unit: selectedItem?.unit || formData.unit || "",
     });
+
+    // If this item has color/size siblings, offer them below - matched on
+    // variantGroup (a real shared field), never on name, for the same
+    // reason hidden-duplicate matching is excluded above.
+    setVariantSiblings(
+      selectedItem?.variantGroup
+        ? stockData.filter((i: any) => i.variantGroup === selectedItem.variantGroup && i.hidden !== true)
+        : []
+    );
   };
 
   // const handleSave = async () => {
@@ -281,6 +294,25 @@ export default function PurchaseRequestModal({ isOpen, onClose, stockData }: Mod
                   </datalist>
                 </div>
               </div>
+
+              {variantSiblings.length > 1 && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Variant</label>
+                  <select
+                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 transition-all"
+                    value={formData.itemName}
+                    onChange={(e) => {
+                      const chosen = variantSiblings.find((v: any) => v.itemName === e.target.value);
+                      if (!chosen) return;
+                      setFormData({ ...formData, itemName: chosen.itemName, unit: chosen.unit || formData.unit });
+                    }}
+                  >
+                    {variantSiblings.map((v: any) => (
+                      <option key={v.itemName} value={v.itemName}>{v.variantLabel || v.sku}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Quantity */}
               <div className="space-y-2">

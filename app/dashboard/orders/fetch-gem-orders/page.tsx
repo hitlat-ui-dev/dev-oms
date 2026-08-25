@@ -66,6 +66,8 @@ interface StockItemOption {
   itemName: string;
   category: string;
   unit: string;
+  variantGroup?: string;
+  variantLabel?: string;
 }
 
 export default function FetchGeMOrdersPage() {
@@ -92,6 +94,10 @@ export default function FetchGeMOrdersPage() {
   const [itemQuery, setItemQuery] = useState("");
   const [showItemSuggestions, setShowItemSuggestions] = useState(false);
   const [selectedStockItem, setSelectedStockItem] = useState<StockItemOption | null>(null);
+  // Populated when the picked item belongs to a variant group (e.g. "White
+  // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
+  // its own stock, this just lets the user switch to the right one by label.
+  const [variantSiblings, setVariantSiblings] = useState<StockItemOption[]>([]);
   const [customQty, setCustomQty] = useState<number>(1);
   const [customRate, setCustomRate] = useState<number>(0);
   const [customRemark, setCustomRemark] = useState("");
@@ -371,10 +377,16 @@ export default function FetchGeMOrdersPage() {
       setSelectedStockItem(matchedStockItem);
       setCustomItemName(matchedStockItem.itemName);
       setItemQuery(matchedStockItem.itemName);
+      setVariantSiblings(
+        matchedStockItem.variantGroup
+          ? stockItems.filter((s) => s.variantGroup === matchedStockItem.variantGroup)
+          : []
+      );
     } else {
       setSelectedStockItem(null);
       setCustomItemName(order.itemName);
       setItemQuery(order.itemName || "");
+      setVariantSiblings([]);
     }
     setShowItemSuggestions(false);
     setCustomQty(order.qty || 1);
@@ -388,6 +400,14 @@ export default function FetchGeMOrdersPage() {
     setCustomItemName(item.itemName);
     setItemQuery(item.itemName);
     setShowItemSuggestions(false);
+    // If this item has color/size siblings, offer them below - matched on
+    // variantGroup (a real shared field), never on name, since a hidden
+    // duplicate can share the exact same itemName as its active replacement.
+    setVariantSiblings(
+      item.variantGroup
+        ? stockItems.filter((s) => s.variantGroup === item.variantGroup)
+        : []
+    );
   };
 
   const itemSuggestions = useMemo(() => {
@@ -741,6 +761,24 @@ export default function FetchGeMOrdersPage() {
                         <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {variantSiblings.length > 1 && (
+                  <div className="mt-2">
+                    <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">Variant</label>
+                    <select
+                      value={selectedStockItem?._id || ""}
+                      onChange={(e) => {
+                        const chosen = variantSiblings.find((v) => v._id === e.target.value);
+                        if (chosen) handleSelectStockItem(chosen);
+                      }}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                    >
+                      {variantSiblings.map((v) => (
+                        <option key={v._id} value={v._id}>{v.variantLabel || v.sku}</option>
+                      ))}
+                    </select>
                   </div>
                 )}
               </div>

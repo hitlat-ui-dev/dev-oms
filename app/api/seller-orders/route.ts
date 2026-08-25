@@ -45,9 +45,16 @@ export async function POST(req: Request) {
     await connectDB();
     const data = await req.json();
 
-    // Check for duplicate contract number
+    // Check for duplicate contract number - scoped to the same item so one
+    // contract can legitimately be split across several line items (e.g. a
+    // variant-quantity split: 10 Red + 10 Blue under the same contract no.),
+    // while still blocking an accidental double-submit of the exact same
+    // line. Falls back to contractNo-only when itemId isn't present (e.g.
+    // GeM Chrome Extension imports), matching the original behavior there.
     if (data.contractNo && data.contractNo.trim() !== "") {
-      const existingContract = await db.collection("sellerorders").findOne({ contractNo: data.contractNo.trim() });
+      const dupQuery: any = { contractNo: data.contractNo.trim() };
+      if (data.itemId) dupQuery.itemId = data.itemId;
+      const existingContract = await db.collection("sellerorders").findOne(dupQuery);
       if (existingContract) {
         return NextResponse.json({ error: "Duplicate contract number", duplicate: true }, { status: 409, headers: corsHeaders });
       }

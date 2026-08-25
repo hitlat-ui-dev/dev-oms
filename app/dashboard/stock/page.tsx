@@ -235,8 +235,9 @@ export default function StockPage() {
     if (visibleColumns.totalQty) count++;
     if (showRate && visibleColumns.lastRate) count++;
     if (showRate && visibleColumns.total) count++;
+    if (showAddNewItem) count++; // Edit column
     return count;
-  }, [visibleColumns, showRate, showHideColumn]);
+  }, [visibleColumns, showRate, showHideColumn, showAddNewItem]);
 
   const leftSummaryColspan = useMemo(() => {
     let count = 0;
@@ -264,7 +265,12 @@ export default function StockPage() {
         </div>
       }
     >
-      <div className="p-4 md:p-8 max-w-7xl mx-auto min-h-screen bg-slate-50/50">
+      {/* Full width instead of max-w-7xl - this table has enough columns
+          (SKU/Item Name/Category/Location/rates/quantities) that capping the
+          page at 1280px was leaving real screen space unused on either side
+          while the table itself still had to horizontally scroll inside its
+          own box to fit them all. */}
+      <div className="p-4 md:p-8 w-full min-h-screen bg-slate-50/50">
         {/* Page Header */}
         <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
@@ -555,6 +561,11 @@ export default function StockPage() {
                       )}
                     </>
                   )}
+                  {showAddNewItem && (
+                    <th className="py-5 px-4 text-[10px] font-black uppercase tracking-widest text-center select-none whitespace-nowrap">
+                      Edit
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -696,6 +707,17 @@ export default function StockPage() {
                         </>
                       )}
 
+                      {showAddNewItem && (
+                        <td className="py-4 px-4 text-center">
+                          <button
+                            onClick={() => handleEdit(item)}
+                            className="p-1.5 rounded-lg border bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 transition-all"
+                            title="Edit Item"
+                          >
+                            <FiEdit size={14} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -730,6 +752,9 @@ export default function StockPage() {
                           </td>
                         )}
                       </>
+                    )}
+                    {showAddNewItem && (
+                      <td>{/* Empty padding column for Edit header */}</td>
                     )}
                   </tr>
                 )}

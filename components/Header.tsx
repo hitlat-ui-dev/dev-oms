@@ -412,21 +412,21 @@ export default function Header() {
   if (!user) return null;
 
   return (
-    <header className="sticky top-0 z-50 flex items-center justify-between px-4 md:px-10 py-2 bg-[#0f172a] text-white shadow-lg">
+    <header className="sticky top-0 z-50 flex items-center justify-between gap-2 px-3 md:px-10 py-2 bg-[#0f172a] text-white shadow-lg">
       {/* Clickable Logo - Goes to Dashboard */}
-      <Link href="/dashboard" className="flex items-center gap-2.5 cursor-pointer group">
+      <Link href="/dashboard" className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group shrink-0 min-w-0">
         <img
           src="/logo-icon.png"
           alt="Dev Enterprise"
-          className="h-8 md:h-9 w-auto object-contain group-hover:opacity-90 transition-opacity"
+          className="h-7 sm:h-8 md:h-9 w-auto object-contain group-hover:opacity-90 transition-opacity shrink-0"
         />
-        <span className="flex items-baseline">
-          <span className="text-2xl md:text-3xl font-black tracking-tighter text-white group-hover:text-blue-400 transition-colors">Dev</span>
-          <span className="text-sm md:text-base font-bold tracking-tight text-blue-400 ml-1 uppercase">OMS</span>
+        <span className="flex items-baseline min-w-0">
+          <span className="text-lg sm:text-2xl md:text-3xl font-black tracking-tighter text-white group-hover:text-blue-400 transition-colors">Dev</span>
+          <span className="text-xs sm:text-sm md:text-base font-bold tracking-tight text-blue-400 ml-1 uppercase">OMS</span>
         </span>
       </Link>
 
-      <div className="flex items-center gap-4 md:gap-8">
+      <div className="flex items-center gap-1.5 sm:gap-4 md:gap-8 shrink-0">
 
         {/* Auto-refresh toggle — Chat/Workspace otherwise re-check every 8s on
             every page. Off still checks once per page visit / dropdown open,
@@ -453,10 +453,10 @@ export default function Header() {
                 setSelectedRecipient("all");
               }
             }}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
             title="Direct Messages"
           >
-            <FiMessageSquare size={13} /> Chat
+            <FiMessageSquare size={13} /> <span className="hidden sm:inline">Chat</span>
             {hasDmNotification && (
               <span className="absolute -top-1 -right-1 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -473,8 +473,11 @@ export default function Header() {
                 onClick={() => setShowChatDropdown(false)}
               />
               
-              {/* DM Card */}
-              <div className="absolute right-0 mt-2.5 w-[420px] sm:w-[480px] bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex gap-4 h-96">
+              {/* DM Card - capped to the viewport width (minus a small
+                  margin) so it can never push off the left edge on a narrow
+                  phone, where "right-0" alone would otherwise extend a fixed
+                  420-480px card further left than the screen has room for. */}
+              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-[420px] md:w-[480px] max-w-full bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex gap-4 h-96">
 
                 {/* Users List (Left Column, 35% width) */}
                 <div className="w-1/3 border-r border-slate-100 pr-2 flex flex-col min-h-0">
@@ -629,10 +632,10 @@ export default function Header() {
               setShowTodoDropdown(prev => !prev);
               setShowChatDropdown(false);
             }}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
             title="Workspace To-Do List"
           >
-            <FiCheckSquare size={13} /> Workspace
+            <FiCheckSquare size={13} /> <span className="hidden sm:inline">Workspace</span>
             {hasNotification && (
               <span className="absolute -top-1 -right-1 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -649,8 +652,8 @@ export default function Header() {
                 onClick={() => setShowTodoDropdown(false)}
               />
               
-              {/* Dropdown Card */}
-              <div className="absolute right-0 mt-2.5 w-80 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
+              {/* Dropdown Card - same viewport-safe positioning as the Chat card above */}
+              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-80 md:w-96 max-w-full bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
                 <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                     <FiCheckSquare className="text-blue-600" size={14} /> Team Tasks
@@ -743,16 +746,17 @@ export default function Header() {
           )}
         </div>
 
-        <div className="text-right border-r border-slate-700 pr-4 md:pr-8">
-          <h2 className="text-sm md:text-lg font-bold leading-none capitalize">{user.username}</h2>
+        <div className="text-right border-r border-slate-700 pr-2 sm:pr-4 md:pr-8 max-w-16 sm:max-w-none">
+          <h2 className="text-xs sm:text-sm md:text-lg font-bold leading-none capitalize truncate">{user.username}</h2>
         </div>
 
         <button
           onClick={handleLogout}
-          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-all rounded-full cursor-pointer flex items-center justify-center"
+          className="p-1.5 sm:p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-all rounded-full cursor-pointer flex items-center justify-center shrink-0"
           title="Logout"
         >
-          <FiLogOut size={20} />
+          <FiLogOut size={18} className="sm:hidden" />
+          <FiLogOut size={20} className="hidden sm:block" />
         </button>
       </div>
     </header>

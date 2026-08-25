@@ -39,6 +39,13 @@ interface EligibleOrderLine {
 
 interface EligibleGroup {
   contractNo: string;
+  // Set only for a merged group (2+ Un-billed Contracts combined via the
+  // "Combine Selected" action) - the real underlying contractNo values, so
+  // the backend can pull orders from all of them into one bill. contractNo
+  // above stays the single "primary" one (preferring whichever doesn't look
+  // like a manually-suffixed "-N" workaround) - used for GeM submission,
+  // where only one real contract can be searched/processed.
+  contractNos?: string[];
   contractDate?: string;
   sellerId?: string;
   instituteName: string;
@@ -502,6 +509,38 @@ export default function GenerateBillPage() {
     setOverrides(initial);
   };
 
+  // Combines 2+ checked Un-billed Contracts into one bill - built for the
+  // "-1"/"-2" workaround pattern (a single real GeM order that got saved as
+  // separate SellerOrder documents under manually-suffixed contract numbers,
+  // e.g. because OMS used to reject a second item under the same real
+  // contractNo). Doesn't touch any stored contractNo - purely combines the
+  // orders for this one bill; the primary contractNo (preferring whichever
+  // one doesn't look suffixed) is what gets used for GeM submission after.
+  const combineSelectedContracts = () => {
+    const selected = filteredGroups.filter((g) => selectedGroupKeys.has(groupKey(g)));
+    if (selected.length < 2) return;
+
+    const firstSellerId = selected[0].sellerId;
+    if (selected.some((g) => g.sellerId !== firstSellerId)) {
+      alert("Selected contracts don't all belong to the same buyer/institute - can't combine them into one bill.");
+      return;
+    }
+
+    const contractNos = selected.map((g) => g.contractNo).filter(Boolean);
+    const primary = contractNos.find((c) => !/-\d+$/.test(c)) || contractNos[0];
+
+    selectContract({
+      contractNo: primary,
+      contractNos,
+      contractDate: selected[0].contractDate,
+      sellerId: selected[0].sellerId,
+      instituteName: selected[0].instituteName,
+      buyerState: selected[0].buyerState,
+      orders: selected.flatMap((g) => g.orders),
+    });
+    setSelectedGroupKeys(new Set());
+  };
+
   const updateOverride = (orderId: string, field: keyof LineOverride, value: string) => {
     setOverrides((prev) => ({
       ...prev,
@@ -553,6 +592,7 @@ export default function GenerateBillPage() {
         body: JSON.stringify({
           firmCode: company.firmCode,
           contractNo: selectedContract.contractNo,
+          contractNos: selectedContract.contractNos,
           numberMode,
           manualNumber: numberMode === "manual" ? manualNumber.trim() : undefined,
           createdBy: currentUsername,
@@ -631,6 +671,7 @@ export default function GenerateBillPage() {
         contractNo: result.contractNo,
         contractDate: result.contractDate,
         buyerState: result.buyerState,
+        gstSplit: gstSplit as "CGST_SGST" | "IGST" | "UNKNOWN",
         billId: result.billId,
         billNo: result.invoiceNumber,
         billPdfUrl: `${window.location.origin}/api/bills/${result.billId}/pdf`,
@@ -662,6 +703,7 @@ export default function GenerateBillPage() {
         contractNo: bill.contractNo,
         contractDate: bill.contractDate || formatDateDDMMYYYY(bill.invoiceDate),
         buyerState: bill.buyerSnapshot.state,
+        gstSplit: bill.gstSplit as "CGST_SGST" | "IGST" | "UNKNOWN",
         billId: bill._id,
         billNo: bill.invoiceNumber,
         billPdfUrl: `${window.location.origin}/api/bills/${bill._id}/pdf`,
@@ -1047,10 +1089,19 @@ export default function GenerateBillPage() {
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
                         {selectedGroupKeys.size > 0 ? `${selectedGroupKeys.size} selected` : `Select all (showing ${visibleGroups.length} of ${filteredGroups.length})`}
                       </span>
+                      {selectedGroupKeys.size >= 2 && (
+                        <button
+                          onClick={combineSelectedContracts}
+                          className="ml-auto text-[10px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"
+                          title="Combine these into one bill - e.g. a single real GeM order that ended up split across contract numbers like X and X-1"
+                        >
+                          Combine {selectedGroupKeys.size} → Generate 1 Bill
+                        </button>
+                      )}
                       {selectedGroupKeys.size > 0 && (
                         <button
                           onClick={() => setExemptPanelOpen((v) => !v)}
-                          className="ml-auto text-[10px] font-black uppercase tracking-widest text-orange-600 hover:text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-1.5"
+                          className={`text-[10px] font-black uppercase tracking-widest text-orange-600 hover:text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-1.5 ${selectedGroupKeys.size >= 2 ? "" : "ml-auto"}`}
                         >
                           Mark as Exempt (No Bill Needed)
                         </button>
@@ -1215,6 +1266,11 @@ export default function GenerateBillPage() {
                 <div className="bg-slate-50 p-4 flex items-center justify-between border-b border-slate-200">
                   <div>
                     <p className="font-black text-slate-700 text-sm">{selectedContract.contractNo}</p>
+                    {selectedContract.contractNos && selectedContract.contractNos.length > 1 && (
+                      <p className="text-[10px] font-bold text-blue-600">
+                        Combining {selectedContract.contractNos.length} contracts: {selectedContract.contractNos.join(", ")}
+                      </p>
+                    )}
                     <p className="text-xs font-bold text-slate-400">
                       {selectedContract.instituteName}
                       {gstSplit !== "UNKNOWN" && isTaxInvoice ? ` · ${gstSplit === "IGST" ? "IGST" : "CGST + SGST"}` : ""}

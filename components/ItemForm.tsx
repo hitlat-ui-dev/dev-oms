@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import {
   FiBox, FiTag, FiSave, FiPlus, FiHash,
-  FiLayers, FiCheckCircle, FiX, FiMapPin
+  FiLayers, FiCheckCircle, FiX, FiMapPin, FiLock, FiPackage
 } from "react-icons/fi";
 import BlockGuard from "./BlockGuard";
 import Link from "next/link";
@@ -13,10 +13,19 @@ interface ItemFormProps {
 }
 
 export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
+  // Item Name/SKU/Category/Unit identify WHICH item this is - every order,
+  // purchase request, and stock history entry across the app resolves back
+  // to this record by sku, so changing them here on an existing item would
+  // silently detach it from all of that instead of updating it. Locked once
+  // editing; still freely set when first creating the item.
+  const isEditing = !!initialData?._id;
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [categories, setCategories] = useState<{ _id: string; name: string }[]>([]);
   const [units, setUnits] = useState<{ _id: string; name: string }[]>([]);
+  const [variantGroups, setVariantGroups] = useState<{ group: string; sampleName: string; count: number }[]>([]);
+  const [showAddGroup, setShowAddGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
 
   // Quick-add modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -47,7 +56,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
     rateDisplay: 0,
     itemId: "", // <--- ADD THIS
     hsnSac: "",
-    gstPercent: 0
+    gstPercent: 0,
+    variantGroup: "",
+    variantLabel: ""
   });
 
   useEffect(() => {
@@ -63,7 +74,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         rateDisplay: initialData.rateDisplay || "₹ 0",
         itemId: initialData.itemId || "", // <--- ADD THIS
         hsnSac: initialData.hsnSac || "",
-        gstPercent: initialData.gstPercent || 0
+        gstPercent: initialData.gstPercent || 0,
+        variantGroup: initialData.variantGroup || "",
+        variantLabel: initialData.variantLabel || ""
       });
     }
   }, [initialData]);
@@ -72,19 +85,22 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
   // Fetch Initial Data
   const fetchData = async () => {
     try {
-      const [itemRes, catRes, unitRes] = await Promise.all([
+      const [itemRes, catRes, unitRes, groupRes] = await Promise.all([
         fetch("/api/items"),
         fetch("/api/categories"),
-        fetch("/api/units")
+        fetch("/api/units"),
+        fetch("/api/variant-groups")
       ]);
 
       const itemData = await itemRes.json();
       const catData = await catRes.json();
       const unitData = await unitRes.json();
+      const groupData = await groupRes.json();
 
       setFormData(prev => ({ ...prev, sku: itemData.nextSku || "S1100" }));
       setCategories(catData);
       setUnits(unitData);
+      setVariantGroups(Array.isArray(groupData) ? groupData : []);
     } catch (error) {
       console.error("Error fetching form data:", error);
     }
@@ -131,7 +147,9 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
         location: formData.location,
         sku: formData.sku,
         hsnSac: formData.hsnSac,
-        gstPercent: formData.gstPercent
+        gstPercent: formData.gstPercent,
+        variantGroup: formData.variantGroup,
+        variantLabel: formData.variantLabel
       }
       : formData;
 
@@ -186,98 +204,147 @@ const result = await res.json();
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-            {/* Item Name */}
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Name</label>
-              <div className="relative">
-                <FiBox className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text" required value={formData.itemName}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
-                  placeholder="Enter product name"
-                  onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
-                />
+          {isEditing ? (
+            // Edit mode: identity fields (name/SKU/category/unit/opening
+            // stock) can't actually change here - every order and stock
+            // history entry resolves to this item by them, and Opening
+            // Stock specifically was never even wired to save from this
+            // form (real quantity changes only happen via Purchase
+            // Received / order fulfillment). Shown as a flat info strip
+            // instead of disabled-but-still-input-shaped fields, so it
+            // reads as "this is what the item is", not "half this form is
+            // broken".
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
+              <div className="flex items-center gap-1.5 text-slate-400 mb-4">
+                <FiLock size={11} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Item Identity — locked</span>
               </div>
-            </div>
-
-            {/* SKU Number */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">SKU Number</label>
-              <div className="h-[60px] flex items-center gap-3 px-6 bg-slate-100 border border-dashed border-slate-300 rounded-2xl">
-                <FiHash className="text-slate-400" />
-                <span className="font-black text-blue-600 tracking-widest">{formData.sku}</span>
-              </div>
-            </div>
-
-            {/* Category */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <select
-                    required value={formData.category}
-                    className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                  >
-                    <option value="">Category</option>
-                    {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                  </select>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="col-span-2 space-y-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Item Name</span>
+                  <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
+                    <FiBox className="text-slate-400 shrink-0" size={14} />
+                    <span className="truncate">{formData.itemName}</span>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCategoryModal(true)}
-                  className="p-4 bg-blue-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-200"
-                >
-                  <FiPlus size={24} />
-                </button>
-              </div>
-            </div>
-
-            {/* Unit */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unit</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <select
-                    required value={formData.unit}
-                    className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
-                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                  >
-                    <option value="">Unit</option>
-                    {units.map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
-                  </select>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">SKU</span>
+                  <div className="flex items-center gap-2 font-black text-blue-600 text-sm tracking-widest">
+                    <FiHash className="text-blue-300 shrink-0" size={14} />
+                    {formData.sku}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowUnitModal(true)}
-                  className="p-4 bg-emerald-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-emerald-200"
-                >
-                  <FiPlus size={24} />
-                </button>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Category</span>
+                  <div className="font-bold text-slate-700 text-sm truncate">{formData.category}</div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Unit</span>
+                  <div className="font-bold text-slate-700 text-sm">{formData.unit}</div>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-slate-200 flex items-center gap-2">
+                <FiPackage className="text-slate-400 shrink-0" size={14} />
+                <span className="text-[10px] font-bold text-slate-500">
+                  Opening stock was <span className="text-slate-700">{formData.currentStock}</span> — quantity now updates via Purchase Received / Order flows, not here.
+                </span>
               </div>
             </div>
-            {/* Current Stock */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                Opening Stock 
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  required
-                  min="0"
-                  value={formData.currentStock}
-                  className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-sm text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
-                  placeholder="0"
-                  onChange={(e) => setFormData({ ...formData, currentStock: Number(e.target.value) })}
-                />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Item Name */}
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Name</label>
+                <div className="relative">
+                  <FiBox className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text" required value={formData.itemName}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                    placeholder="Enter product name"
+                    onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
+                  />
+                </div>
               </div>
-            </div>
 
+              {/* SKU Number */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">SKU Number</label>
+                <div className="h-[60px] flex items-center gap-3 px-6 bg-slate-100 border border-dashed border-slate-300 rounded-2xl">
+                  <FiHash className="text-slate-400" />
+                  <span className="font-black text-blue-600 tracking-widest">{formData.sku}</span>
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <select
+                      required value={formData.category}
+                      className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    >
+                      <option value="">Category</option>
+                      {categories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryModal(true)}
+                    className="p-4 bg-blue-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-200"
+                  >
+                    <FiPlus size={24} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Unit */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unit</label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <select
+                      required value={formData.unit}
+                      className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
+                      onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    >
+                      <option value="">Unit</option>
+                      {units.map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowUnitModal(true)}
+                    className="p-4 bg-emerald-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-emerald-200"
+                  >
+                    <FiPlus size={24} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Current Stock */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Opening Stock</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.currentStock}
+                    className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-sm text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                    placeholder="0"
+                    onChange={(e) => setFormData({ ...formData, currentStock: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Item Location */}
-            <div className="space-y-2 md:col-span-3">
+            <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Item Location</label>
               <div className="relative">
                 <FiMapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -290,6 +357,82 @@ const result = await res.json();
                 />
               </div>
             </div>
+
+            {/* Variant Group - links this item with its color/size siblings
+                (e.g. "White Board Marker" Green/Red/Blue/Black) without
+                merging their stock - each still keeps its own SKU/quantity. */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                Variant Group <span className="text-slate-400 font-normal lowercase">(optional)</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={formData.variantGroup}
+                  className="flex-1 min-w-0 pl-4 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl appearance-none font-bold text-sm text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/5 transition-all"
+                  onChange={(e) => setFormData({ ...formData, variantGroup: e.target.value })}
+                >
+                  <option value="">Not a variant</option>
+                  {variantGroups.map((g) => (
+                    <option key={g.group} value={g.group}>{g.sampleName} ({g.count})</option>
+                  ))}
+                  {formData.variantGroup && !variantGroups.some((g) => g.group === formData.variantGroup) && (
+                    <option value={formData.variantGroup}>{formData.variantGroup}</option>
+                  )}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowAddGroup((v) => !v)}
+                  title="Start a new variant group"
+                  className="shrink-0 p-4 bg-slate-100 text-slate-500 rounded-2xl hover:bg-slate-200 transition-all"
+                >
+                  <FiPlus size={20} />
+                </button>
+              </div>
+              {showAddGroup && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="New group name, e.g. WHITE BOARD MARKER"
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    className="flex-1 min-w-0 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold text-xs text-slate-700 focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = newGroupName.trim();
+                      if (!trimmed) return;
+                      setFormData({ ...formData, variantGroup: trimmed });
+                      setNewGroupName("");
+                      setShowAddGroup(false);
+                    }}
+                    className="shrink-0 text-[10px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-700 border border-blue-200 rounded-xl px-3 py-3"
+                  >
+                    Use
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {formData.variantGroup && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                  Variant Label <span className="text-slate-400 font-normal lowercase">(e.g. "Green", "6x42 MM")</span>
+                </label>
+                <div className="relative">
+                  <FiTag className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={formData.variantLabel}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                    placeholder="This item's own color/size"
+                    onChange={(e) => setFormData({ ...formData, variantLabel: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* HSN/SAC (billing) */}
             <div className="space-y-2">
@@ -331,7 +474,7 @@ const result = await res.json();
             disabled={loading}
             className="w-full bg-[#0f172a] hover:bg-slate-800 text-white font-black py-5 rounded-2xl shadow-xl flex items-center justify-center gap-3 transition-all uppercase tracking-[0.2em] text-xs disabled:opacity-70"
           >
-            <FiSave size={18} /> {loading ? "Registering..." : "Save New Item"}
+            <FiSave size={18} /> {loading ? (isEditing ? "Saving..." : "Registering...") : (isEditing ? "Save Changes" : "Save New Item")}
           </button>
         </form>
 

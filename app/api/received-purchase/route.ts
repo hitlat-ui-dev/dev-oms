@@ -30,8 +30,13 @@ export async function POST(req: Request) {
     const itemFilter = itemId ? { _id: new ObjectId(itemId) } : { sku: sku };
 
     // 1. SAVE TO STOCK (Only increment by received quantity)
+    // Matched by itemId when available (same as the items-collection update
+    // below) rather than sku alone - sku isn't guaranteed unique across
+    // stock documents (real data has had duplicates), and a sku-only match
+    // can silently update the wrong item's stock record instead of this
+    // purchase's actual item.
     await db.collection("stock").updateOne(
-      { sku: sku }, 
+      itemFilter,
       {
         $inc: { quantity: Number(receivedQty) },
         $set: { itemName, vendor, unit, rate, category, lastUpdated: new Date() }
@@ -80,6 +85,7 @@ export async function POST(req: Request) {
     // 2. SAVE TO RECEIVED PURCHASE (Log History)
     await db.collection("Received purchase").insertOne({
       orderNumber,
+      itemId: itemId || null,
       itemName,
       sku,
       receivedQty: Number(receivedQty),
@@ -179,11 +185,17 @@ export async function PATCH(req: NextRequest) {
     );
 
     // 3. Sync with STOCK DB
-    // Use $inc with the difference (qtyDifference)
+    // Use $inc with the difference (qtyDifference). Matched by itemId when
+    // the original record has one - sku isn't guaranteed unique across
+    // stock documents (real data has had duplicates), and a sku-only match
+    // can silently update the wrong item's stock record.
+    const editItemFilter = existingRecord.itemId
+      ? { _id: new ObjectId(existingRecord.itemId) }
+      : { sku: existingRecord.sku };
     await db.collection("stock").updateOne(
-      { sku: existingRecord.sku },
+      editItemFilter,
       {
-        
+
         $inc: { quantity: qtyDifference },
         $set: { rate: Number(rate), lastUpdated: new Date() }
       }

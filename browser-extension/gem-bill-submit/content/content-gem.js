@@ -21,8 +21,14 @@
 // DevTools inspection. Invoice Details + Product Details field IDs
 // (INVOICE_CREATION_FORM-*, INVOICE_ITEMS_FORM-*) come from a standalone
 // "GeM Bill Auto Fill" extension that was hand-built and tested earlier
-// against this exact form - Tax Rate/HSN Code (Tax Invoice only) have no
-// confirmed ID yet and still fall back to <label> text matching.
+// against this exact form. Supply Type, Tax Rate, HSN Code and the
+// Product Details Preview button (Tax Invoice / Regular-scheme firms only -
+// the Composition/Without-GST flow never shows these) were confirmed live
+// 25-Aug-2026 via DevTools: #INVOICE_CREATION_FORM-SUPPLY_TYPE,
+// #INVOICE_ITEMS_FORM-TAX_RATE, #INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE,
+// #INVOICE_CREATION_FORM-PROCRESS_BTN (sic - that's GeM's own actual id,
+// misspelled "PROCRESS" not "PROCESS", confirmed live 25-Aug-2026 via
+// DevTools; do not "fix" this typo, it'll just stop matching).
 
 (function () {
   const MAX_WAIT_MS = 20000;
@@ -399,6 +405,23 @@
     // firm's own state instead.
     await selectDropdownByIdSubstringWithRetry("INVOICE_CREATION_FORM-PLACE_OF_SUPPLY_STATE_UT", "Gujarat");
 
+    // Supply Type only shows up (and is mandatory) for Tax Invoice/Regular-
+    // scheme firms - Composition/Without-GST bills never have this field.
+    // Driven by the same CGST_SGST/IGST decision OMS already made for the
+    // bill itself (gstSplit) rather than re-deriving it here - falls back to
+    // a plain "is the buyer in Gujarat" check (the seller firm's own state,
+    // hardcoded above) only if gstSplit wasn't passed through. Confirmed
+    // live 25-Aug-2026.
+    if (data.billType === "TAX_INVOICE") {
+      const isIntraState = data.gstSplit
+        ? data.gstSplit === "CGST_SGST"
+        : /gujarat/i.test(data.buyerState || "");
+      await setSelectValueByIdWithRetry(
+        "INVOICE_CREATION_FORM-SUPPLY_TYPE",
+        isIntraState ? "Intra-State" : "Inter-State"
+      );
+    }
+
     await sleep(300);
     const continueBtn = await waitForElementByText(["button"], /^continue$/i, MAX_WAIT_MS);
     continueBtn.click();
@@ -426,16 +449,24 @@
     await setSelectValueByIdWithRetry("INVOICE_ITEMS_FORM-GST_UQ_NAME", "NOS");
 
     if (data.billType === "TAX_INVOICE") {
-      if (firstItem?.gstPercent !== undefined) {
-        selectDropdownByLabel(/tax rate/i, `${firstItem.gstPercent}`, 0);
+      // Substring match (not exact) since GeM's option text format for the
+      // percentage isn't confirmed (e.g. could be "5%" vs "5.00%").
+      if (firstItem?.gstPercent !== undefined && firstItem?.gstPercent !== null) {
+        await selectDropdownByIdSubstringWithRetry("INVOICE_ITEMS_FORM-TAX_RATE", `${firstItem.gstPercent}`);
       }
       if (firstItem?.hsnSac) {
-        fillInputByLabel(/hsn code/i, firstItem.hsnSac, 0);
+        setTextValueById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
       }
     }
 
     await sleep(300);
-    const previewBtn = await waitForElementByText(["button"], /^preview$/i, MAX_WAIT_MS);
+    // Preview stays disabled until Tax Rate/HSN Code (Tax Invoice bills) are
+    // filled in above, so this waits for it to become enabled rather than
+    // just present on the page.
+    const previewBtn = await waitForElementMatching(() => {
+      const el = document.getElementById("INVOICE_CREATION_FORM-PROCRESS_BTN"); // sic - GeM's own typo, see file header
+      return el && isVisible(el) && !el.disabled ? el : null;
+    }, MAX_WAIT_MS);
     previewBtn.click();
     await sleep(1000);
   }
@@ -825,54 +856,5 @@
 
   function cssEscape(value) {
     return window.CSS && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
-  }
-
-  // ---- Label-based field lookups (for fields without a captured stable selector) ----
-
-  // Finds the Nth (0-indexed) visible <label> whose text matches labelRegex,
-  // then returns its associated input/select - either via a `for` attribute
-  // or the nearest input/select within the same form-group container
-  // (GeM's markup consistently places label + control together, e.g.
-  // <label>Seller GST Tax Invoice Number*</label> immediately followed by
-  // the input in the same .form-group wrapper).
-  function findFieldByLabel(labelRegex, occurrence = 0) {
-    const labels = Array.from(document.querySelectorAll("label")).filter(
-      (l) => labelRegex.test(l.textContent) && isVisible(l)
-    );
-    const label = labels[occurrence];
-    if (!label) return null;
-
-    if (label.htmlFor) {
-      const byFor = document.getElementById(label.htmlFor);
-      if (byFor) return byFor;
-    }
-
-    const container = label.closest(".form-group") || label.parentElement;
-    return container?.querySelector("input, select") || null;
-  }
-
-  function fillInputByLabel(labelRegex, value, occurrence = 0) {
-    const input = findFieldByLabel(labelRegex, occurrence);
-    if (!input) {
-      console.warn(`[GeM Bill Auto-Submit] Field for label ${labelRegex} (occurrence ${occurrence}) not found.`);
-      return;
-    }
-    setNativeValue(input, String(value));
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }
-
-  // Tax Rate / HSN Code (Tax Invoice only) have no confirmed field ID yet,
-  // so these still fall back to label-text matching.
-  function selectDropdownByLabel(labelRegex, optionText, occurrence = 0) {
-    const select = findFieldByLabel(labelRegex, occurrence);
-    if (!select || select.tagName !== "SELECT") return false;
-    const option = Array.from(select.options).find((o) =>
-      o.textContent.trim().toLowerCase().includes(String(optionText).trim().toLowerCase())
-    );
-    if (!option) return false;
-    select.value = option.value;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
   }
 })();

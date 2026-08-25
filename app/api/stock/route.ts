@@ -25,7 +25,9 @@ export async function GET() {
         unit: item.unit || "pcs",
         rateDisplay: rateDisplay,
         hidden: item.hidden || false,
-        rate: item.rate ?? ""
+        rate: item.rate ?? "",
+        variantGroup: item.variantGroup || "",
+        variantLabel: item.variantLabel || ""
       };
     });
 

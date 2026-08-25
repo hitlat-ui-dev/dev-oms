@@ -87,6 +87,8 @@ export async function POST(req: Request) {
       rate: 0,
       vendor: "Opening Stock",
       reQty: 0,
+      variantGroup: data.variantGroup || "",
+      variantLabel: data.variantLabel || "",
       lastUpdated: new Date()
     });
 

@@ -97,7 +97,7 @@ async function registerManualInvoiceNumber(db: any, firmCode: string, prefix: st
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { firmCode: rawFirmCode, contractNo, numberMode, manualNumber, lineOverrides, createdBy } = body;
+    const { firmCode: rawFirmCode, contractNo, contractNos, numberMode, manualNumber, lineOverrides, createdBy } = body;
     const firmCode = (rawFirmCode || "").trim().toUpperCase();
 
     if (!firmCode || !contractNo || !numberMode) {
@@ -118,9 +118,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "This firm has no GSTIN or PAN on file - complete Firm details first." }, { status: 400 });
     }
 
+    // contractNos (2+) covers "combine selected contracts into one bill" -
+    // e.g. a single real GeM order that got saved under manually-suffixed
+    // contract numbers like X and X-1 (OMS used to reject a second item
+    // under the same real contractNo). contractNo alone stays the normal
+    // single-contract path.
+    const contractNoFilter =
+      Array.isArray(contractNos) && contractNos.length > 1
+        ? { $in: contractNos }
+        : contractNo;
+
     const orders = await db
       .collection("sellerorders")
-      .find({ firmCode, contractNo, billId: null })
+      .find({ firmCode, contractNo: contractNoFilter, billId: null })
       .toArray();
     if (orders.length === 0) {
       return NextResponse.json({ error: "No un-billed orders found for this contract (already billed, or none exist)." }, { status: 404 });
@@ -227,6 +237,7 @@ export async function POST(req: Request) {
       invoiceDate,
       placeOfSupply: seller?.state || "",
       contractNo,
+      ...(Array.isArray(contractNos) && contractNos.length > 1 ? { mergedContractNos: contractNos } : {}),
       firmSnapshot: {
         name: company.firmName,
         address: firmAddressParts.join(", "),

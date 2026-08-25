@@ -43,6 +43,7 @@ const REDIRECT_URI = chrome.identity.getRedirectURL(); // extension khud generat
 //   contractNo: "GEMC-511687...",
 //   contractDate: "20/08/2026",           // dd/mm/yyyy - GeM's Invoice Date + Dispatch Date both use this
 //   buyerState: "Gujarat",                // for the Place of Supply (State/UT Code) dropdown
+//   gstSplit: "CGST_SGST" | "IGST" | "UNKNOWN", // Tax Invoice only - drives the Supply Type dropdown
 //   billId: "<mongo _id>",                // used to upload GeM's own e-signed invoice back to OMS
 //   billNo: "DEV048",
 //   billPdfUrl: "https://dev-oms-blush.vercel.app/api/bills/<id>/pdf",
@@ -101,7 +102,7 @@ async function handleGemLogin(payload) {
 async function handleSubmitBillToGem(payload) {
   const {
     firmCode, contractNo, billNo, billPdfUrl, firmName, gmailAccountEmail,
-    billType, contractDate, buyerState, items, billId,
+    billType, contractDate, buyerState, gstSplit, items, billId,
   } = payload;
 
   if (!firmCode || !contractNo || !billNo || !billPdfUrl) {
@@ -145,7 +146,7 @@ async function handleSubmitBillToGem(payload) {
   await chrome.storage.local.set({
     pendingBillSubmission: {
       firmCode, contractNo, billNo, billPdfUrl, firmName, gmailAccountEmail,
-      billType, contractDate, buyerState, items, billId, omsOrigin,
+      billType, contractDate, buyerState, gstSplit, items, billId, omsOrigin,
       step: "SEARCH",
       startedAt: Date.now(),
     },

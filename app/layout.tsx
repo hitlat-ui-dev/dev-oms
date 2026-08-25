@@ -52,6 +52,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (!isMounted) {
     return (
       <html lang="en">
+        <head>
+          {/* This layout is a Client Component (see the hydration-guard note
+              above document.title), so Next's Metadata API can't supply a
+              viewport export here - without this tag, mobile browsers assume
+              a ~980px desktop-width canvas and let the whole page pan/zoom
+              sideways instead of reflowing to the real screen width. */}
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+        </head>
         <body className="bg-[#f3f6f9]" suppressHydrationWarning>
           {/* Empty or a static splash screen to match the server */}
         </body>
@@ -61,6 +69,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+      </head>
       <body className="bg-[#f3f6f9] h-dvh overflow-hidden" suppressHydrationWarning>
         {isLoading && !isLoginPage ? (
           <div className="h-dvh flex items-center justify-center bg-[#f3f6f9]">

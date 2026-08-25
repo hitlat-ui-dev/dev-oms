@@ -17,6 +17,10 @@ interface SellerOrderFormProps {
 
 export default function SellerOrderForm({ onClose, initialData, isModal = false }: SellerOrderFormProps) {
   const router = useRouter();
+  // Editing an existing order is always a single record - variant selection
+  // there just re-points it at a different SKU (unchanged behavior). Only a
+  // brand-new order can be split across several variant quantities at once.
+  const isEditing = !!initialData?._id;
   const [loading, setLoading] = useState(false);
   const [sellers, setSellers] = useState<any[]>([]);
   const [stocks, setStocks] = useState<any[]>([]);
@@ -76,6 +80,17 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     remark: ""
   };
   const [formData, setFormData] = useState(blankFormData);
+  // Populated when the picked item belongs to a variant group (e.g. "White
+  // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
+  // its own stock, this just lets the user pick the right one by label
+  // instead of having to know/type the exact per-color/size item name.
+  const [variantSiblings, setVariantSiblings] = useState<any[]>([]);
+  // Create-mode only: per-variant _id -> qty (keyed by _id, not sku - some
+  // real variant groups share one sku across all their color/size siblings),
+  // so one contract can be split across several colors/sizes (e.g. 10 Red +
+  // 10 Blue + 5 Black + 5 Green) and saved as one seller-order line per
+  // variant with qty > 0.
+  const [variantQtyMap, setVariantQtyMap] = useState<Record<string, number>>({});
   // "Save & Add Another" clears the form to enter the next order back-to-back
   // - the button itself keeps focus after being clicked, so re-focusing Firm
   // Code here means the user can start typing immediately instead of tabbing
@@ -154,14 +169,22 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     loadData();
   }, []);
 
+  // Create-mode + a variant group with >1 sibling means this order is a
+  // per-variant quantity split, not a single-item order.
+  const isSplitMode = !isEditing && variantSiblings.length > 1;
+  const variantQtySum = useMemo(
+    () => Object.values(variantQtyMap).reduce((sum: number, q: any) => sum + (Number(q) || 0), 0),
+    [variantQtyMap]
+  );
+
   // const totalAmount = useMemo(() => formData.orderQty * formData.rate, [formData.orderQty, formData.rate]);
   const totalAmount = useMemo(() => {
     // Use reQty if available, otherwise orderQty, fallback to 0
-    const qty = formData.reQty ?? formData.orderQty ?? 0;
+    const qty = isSplitMode ? variantQtySum : (formData.reQty ?? formData.orderQty ?? 0);
     const rate = formData.rate ?? 0;
 
     return qty * rate;
-  }, [formData.reQty, formData.orderQty, formData.rate]);
+  }, [isSplitMode, variantQtySum, formData.reQty, formData.orderQty, formData.rate]);
 
   const handleAddParty = async () => {
     const name = newPartyName.trim().toLowerCase();
@@ -245,58 +268,90 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
       return false; // Block database submit action pipeline completely
     }
-    // Matched by itemId (not name) so an edit re-opened on an order that
-    // already references a hidden item gets caught too, not just the
-    // itemName datalist's own hidden-item selection.
-    const matchedStockItem = stocks.find((x: any) => x._id === formData.itemId);
-    if (!matchedStockItem) {
-      alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
-      return false;
-    }
-    if (matchedStockItem.hidden === true) {
-      alert(`❌ Error: "${matchedStockItem.itemName}" (SKU ${matchedStockItem.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
-      return false;
+
+    // Build the list of {item, qty} lines to save. Normally there's just one
+    // (the single selected item), but a variant-group item with per-variant
+    // quantities filled in (e.g. one GeM contract split 10 Red / 10 Blue / 5
+    // Black / 5 Green) saves one seller-order line per non-zero variant, all
+    // sharing this same contractNo/contractDate/firmCode/rate/remark.
+    let lines: { item: any; qty: number }[] = [];
+    if (isSplitMode) {
+      lines = variantSiblings
+        .map((v: any) => ({ item: v, qty: Number(variantQtyMap[v._id]) || 0 }))
+        .filter((l) => l.qty > 0);
+      if (lines.length === 0) {
+        alert("Please enter a quantity for at least one variant.");
+        return false;
+      }
+    } else {
+      // Matched by itemId (not name) so an edit re-opened on an order that
+      // already references a hidden item gets caught too, not just the
+      // itemName datalist's own hidden-item selection.
+      const matchedStockItem = stocks.find((x: any) => x._id === formData.itemId);
+      if (!matchedStockItem) {
+        alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
+        return false;
+      }
+      if (matchedStockItem.hidden === true) {
+        alert(`❌ Error: "${matchedStockItem.itemName}" (SKU ${matchedStockItem.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
+        return false;
+      }
+      if (!formData.reQty || formData.reQty <= 0) {
+        alert("Please enter a quantity more than 0");
+        return false; // STOP the function here
+      }
+      lines = [{ item: matchedStockItem, qty: formData.reQty }];
     }
 
-    if (!formData.reQty || formData.reQty <= 0) {
-      alert("Please enter a quantity more than 0");
-      return false; // STOP the function here
-    }
     setLoading(true);
     try {
-      // Decide if we are updating or creating
-      const isEditing = !!initialData?._id;
       const method = isEditing ? "PATCH" : "POST";
       const url = isEditing ? `/api/seller-orders/${initialData._id}` : "/api/seller-orders";
 
-      // sellerId is an ObjectId field server-side - "" (no institute match
-      // found, e.g. a GeM-verify order matched by name only) must not be
-      // sent as-is, or the update throws a Mongoose cast error. Omit the key
-      // entirely rather than nulling it: on an edit, that leaves whatever
-      // sellerId already exists on the order untouched instead of silently
-      // wiping out a valid link just because this save's institute-name
-      // match happened not to resolve.
-      const payload: any = { ...formData, totalAmount, ...(isEditing ? {} : { createdBy: currentUsername }) };
-      if (!payload.sellerId) delete payload.sellerId;
+      // Saved sequentially (not in parallel) since seller-orders generate
+      // their orderNo by reading the current highest one - concurrent POSTs
+      // could race and collide on the same orderNo.
+      for (const { item, qty } of lines) {
+        // sellerId is an ObjectId field server-side - "" (no institute match
+        // found, e.g. a GeM-verify order matched by name only) must not be
+        // sent as-is, or the update throws a Mongoose cast error. Omit the
+        // key entirely rather than nulling it: on an edit, that leaves
+        // whatever sellerId already exists on the order untouched instead of
+        // silently wiping out a valid link just because this save's
+        // institute-name match happened not to resolve.
+        const payload: any = {
+          ...formData,
+          itemId: item._id,
+          itemName: item.itemName,
+          category: item.category,
+          unit: item.unit,
+          sku: item.sku,
+          reQty: qty,
+          orderQty: qty,
+          totalAmount: qty * (formData.rate || 0),
+          ...(isEditing ? {} : { createdBy: currentUsername }),
+        };
+        if (!payload.sellerId) delete payload.sellerId;
 
-      const res = await fetch(url, {
-        method: method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+        const res = await fetch(url, {
+          method: method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-      if (res.ok) {
-        const result = await res.json();
-        if (result?.mergeWarning) {
-          alert(`⚠ ${result.mergeWarning}`);
+        if (res.ok) {
+          const result = await res.json();
+          if (result?.mergeWarning) {
+            alert(`⚠ ${result.mergeWarning}`);
+          }
+          if (result?._id) savedOrdersRef.current.push(result);
+        } else {
+          const err = await res.json();
+          alert(`Error saving ${item.variantLabel || item.itemName}: ${err.error || "Failed to save"}`);
+          return false; // lines already saved before this one stay saved
         }
-        if (result?._id) savedOrdersRef.current.push(result);
-        return true;
-      } else {
-        const err = await res.json();
-        alert(`Error: ${err.error || "Failed to save"}`);
-        return false;
       }
+      return true;
     } catch (error) {
       alert("Check your server connection.");
       return false;
@@ -326,6 +381,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     if (!ok) return;
 
     setFormData(blankFormData);
+    setVariantSiblings([]);
+    setVariantQtyMap({});
     setSavedFlash("✓ Order saved — add the next one");
     setTimeout(() => setSavedFlash(""), 2500);
     firmCodeInputRef.current?.focus();
@@ -528,6 +585,19 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                       unit: selectedItem.unit,
                       sku: selectedItem.sku
                     }));
+                    // If this item has color/size siblings, offer them below -
+                    // matched on variantGroup (a real shared field), never on
+                    // name, for the same reason hidden-duplicate matching was
+                    // banned elsewhere in this file.
+                    setVariantSiblings(
+                      selectedItem.variantGroup
+                        ? stocks.filter((x: any) => x.variantGroup === selectedItem.variantGroup && x.hidden !== true)
+                        : []
+                    );
+                    setVariantQtyMap({});
+                  } else {
+                    setVariantSiblings([]);
+                    setVariantQtyMap({});
                   }
                 }}
               />
@@ -539,6 +609,73 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 ))}
               </datalist>
             </div>
+
+            {/* Full-width (md:col-span-3) so this block always occupies its
+                own row - appearing/disappearing only pushes the fields below
+                it down as a whole row, instead of shifting them sideways
+                into different grid columns (the old "cells jump" bug). */}
+            {variantSiblings.length > 1 && (
+              isEditing ? (
+                <div className="md:col-span-3 space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Variant *</label>
+                  <select
+                    required
+                    className="w-full md:w-1/3 p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                    value={formData.itemId}
+                    onChange={(e) => {
+                      const chosen = variantSiblings.find((v: any) => v._id === e.target.value);
+                      if (!chosen) return;
+                      setFormData(prev => ({
+                        ...prev,
+                        itemId: chosen._id,
+                        itemName: chosen.itemName,
+                        category: chosen.category,
+                        unit: chosen.unit,
+                        sku: chosen.sku
+                      }));
+                    }}
+                  >
+                    {variantSiblings.map((v: any) => (
+                      <option key={v._id} value={v._id}>{v.variantLabel || v.sku}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="md:col-span-3 space-y-3 bg-blue-50/70 border border-blue-200 rounded-2xl p-5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                      Split This Order Across Variants
+                    </label>
+                    <span className="text-xs font-black text-blue-700">
+                      Total: {variantQtySum}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {variantSiblings.map((v: any) => (
+                      <div key={v._id} className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase truncate block" title={v.variantLabel || v.sku}>
+                          {v.variantLabel || v.sku}
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-full p-3 bg-white border border-blue-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                          placeholder="0"
+                          value={variantQtyMap[v._id] || ""}
+                          onChange={(e) => {
+                            const val = Number(e.target.value) || 0;
+                            setVariantQtyMap(prev => ({ ...prev, [v._id]: val }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-blue-600 font-semibold px-1">
+                    Enter the quantity for each color/size you're shipping under this one contract — one order line is created per variant filled in.
+                  </p>
+                </div>
+              )
+            )}
 
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
@@ -553,27 +690,32 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
-              {/* <input type="number" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter quantity" value={formData.orderQty} onChange={(e) => setFormData({...formData, orderQty: Number(e.target.value)})} /> */}
-              <input
-                type="number"
-                required
-                className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
-                placeholder="Enter quantity"
-                value={formData.reQty ?? formData.orderQty ?? ""}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setFormData({
-                    ...formData,
-                    reQty: val,   // Always update reQty so the UI stays in sync
-                    orderQty: val // Keep orderQty updated for new records
-                  });
-                }}
-              />
+              {isSplitMode ? (
+                <div className="w-full p-4 bg-slate-100 border rounded-xl text-sm text-slate-600 font-black">
+                  {variantQtySum} <span className="font-medium text-slate-400 normal-case">(sum of variants above)</span>
+                </div>
+              ) : (
+                <input
+                  type="number"
+                  required
+                  className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
+                  placeholder="Enter quantity"
+                  value={formData.reQty ?? formData.orderQty ?? ""}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setFormData({
+                      ...formData,
+                      reQty: val,   // Always update reQty so the UI stays in sync
+                      orderQty: val // Keep orderQty updated for new records
+                    });
+                  }}
+                />
+              )}
             </div>
 
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
-              <input type="number" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
+              <input type="number" step="0.01" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
             </div>
 
             <div className="px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white">

@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import ItemForm from "./ItemForm"; // This imports your form code
 import { FiX } from "react-icons/fi";
 
@@ -10,6 +11,15 @@ interface AddItemModalProps {
 }
 
 export default function AddItemModal({ isOpen, onClose, initialData }: AddItemModalProps) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
+
   // If isOpen is false, return nothing (popup is hidden)
   if (!isOpen) return null;
 

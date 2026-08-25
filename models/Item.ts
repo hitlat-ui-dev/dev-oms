@@ -25,6 +25,13 @@ const ItemSchema = new Schema({
   // Tax Invoice. Overridable per line on the Generate Bill screen.
   hsnSac: { type: String, required: false, default: "" },
   gstPercent: { type: Number, required: false, default: 0 },
+  // Variant grouping: several items (different color/size) of the same
+  // underlying product share one variantGroup value (the sku of whichever
+  // item first became the group's anchor) so they can be searched/selected
+  // together in Add Order etc., while each still keeps its own SKU and
+  // stock quantity - variantGroup links them, it never merges their stock.
+  variantGroup: { type: String, required: false, default: "" },
+  variantLabel: { type: String, required: false, default: "" },
   history: [HistorySchema]
 }, { timestamps: true });
 

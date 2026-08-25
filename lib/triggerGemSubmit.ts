@@ -29,6 +29,7 @@ export interface SubmitBillToGemParams {
   contractNo: string;
   contractDate?: string; // dd/mm/yyyy - GeM's Invoice Date + Dispatch Date both use this
   buyerState?: string; // for the Place of Supply (State/UT Code) dropdown
+  gstSplit?: "CGST_SGST" | "IGST" | "UNKNOWN"; // Tax Invoice only - drives GeM's "Supply Type" dropdown (CGST_SGST -> Intra-State, IGST -> Inter-State)
   billId: string; // Mongo _id of the Bill doc - used to upload GeM's own e-signed invoice back to OMS
   billNo: string;
   billPdfUrl: string;
