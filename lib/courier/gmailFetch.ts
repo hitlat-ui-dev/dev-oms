@@ -29,6 +29,10 @@ import { google } from "googleapis";
 export interface FetchedPdf {
   filename: string;
   buffer: Buffer;
+  // The Gmail message's own internalDate (when Gmail received it) - used both
+  // to show a per-parcel "dispatch date" in the UI and to advance the
+  // fetch-since checkpoint (see courier_fetch_state in parseAndMatch.ts).
+  emailDate: Date;
 }
 
 function getGmailClient() {
@@ -75,11 +79,22 @@ function findPdfParts(payload: any): any[] {
 
 /**
  * Searches Gmail for mail from the courier (COURIER_SENDER_EMAIL) with a PDF
- * attachment, dated the previous calendar day (the courier's mail for a
- * given day's dispatches arrives/gets processed the next morning), and
- * downloads every PDF attachment found.
+ * attachment that arrived strictly after `sinceDate` (exclusive), and
+ * downloads every PDF attachment found. If `sinceDate` is null (no checkpoint
+ * yet - first run ever), defaults to "yesterday" to match the original
+ * behaviour.
+ *
+ * Gmail's own after:/before: search operators are day-granularity, not exact
+ * timestamps, so a message on the same calendar day as `sinceDate` could
+ * legally be included by the query even though we already processed it (or
+ * legally excluded even though it's new, depending on server/Gmail timezone
+ * skew). To stay correct regardless of that, the query window is widened by
+ * one extra day on the "after" side, has no upper bound (fetch everything up
+ * to now - this is what lets a missed day get caught up automatically), and
+ * every message's exact `internalDate` is then filtered in code against
+ * `sinceDate` so nothing already processed is re-fetched.
  */
-export async function fetchYesterdaysCourierPdfs(): Promise<FetchedPdf[]> {
+export async function fetchNewCourierPdfsSince(sinceDate: Date | null): Promise<FetchedPdf[]> {
   const senderEmail = process.env.COURIER_SENDER_EMAIL;
   if (!senderEmail) {
     throw new Error("COURIER_SENDER_EMAIL is not set in .env.local.");
@@ -87,11 +102,17 @@ export async function fetchYesterdaysCourierPdfs(): Promise<FetchedPdf[]> {
 
   const gmail = getGmailClient();
 
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
+  const effectiveSince = sinceDate ?? (() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    return yesterday;
+  })();
 
-  const query = `from:${senderEmail} has:attachment filename:pdf after:${formatGmailDate(yesterday)} before:${formatGmailDate(today)}`;
+  const queryWindowStart = new Date(effectiveSince);
+  queryWindowStart.setDate(queryWindowStart.getDate() - 1);
+
+  const query = `from:${senderEmail} has:attachment filename:pdf after:${formatGmailDate(queryWindowStart)}`;
 
   const listRes = await gmail.users.messages.list({ userId: "me", q: query });
   const messages = listRes.data.messages || [];
@@ -101,6 +122,11 @@ export async function fetchYesterdaysCourierPdfs(): Promise<FetchedPdf[]> {
   for (const msgRef of messages) {
     if (!msgRef.id) continue;
     const msgRes = await gmail.users.messages.get({ userId: "me", id: msgRef.id, format: "full" });
+
+    const internalDateMs = Number(msgRes.data.internalDate);
+    if (!internalDateMs || internalDateMs <= effectiveSince.getTime()) continue; // already processed
+
+    const emailDate = new Date(internalDateMs);
     const pdfParts = findPdfParts(msgRes.data.payload);
 
     for (const part of pdfParts) {
@@ -112,7 +138,7 @@ export async function fetchYesterdaysCourierPdfs(): Promise<FetchedPdf[]> {
       });
       const data = attachRes.data.data;
       if (!data) continue;
-      pdfs.push({ filename: part.filename || `courier_${msgRef.id}.pdf`, buffer: decodeBase64Url(data) });
+      pdfs.push({ filename: part.filename || `courier_${msgRef.id}.pdf`, buffer: decodeBase64Url(data), emailDate });
     }
   }
 

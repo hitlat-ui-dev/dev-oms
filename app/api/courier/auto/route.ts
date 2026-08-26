@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import CourierRunLog from "@/models/CourierRunLog";
-import { processYesterdaysCourierParcels } from "@/lib/courier/parseAndMatch";
+import { processNewCourierParcels } from "@/lib/courier/parseAndMatch";
 
 // PDF fetch + parse + match can take a few seconds - stay under Vercel's
 // default 10s function timeout the same way /api/backup/auto does.
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
       throw new Error("Database instance unavailable");
     }
 
-    const result = await processYesterdaysCourierParcels(db);
+    const result = await processNewCourierParcels(db);
 
     const updatedLog = await CourierRunLog.findOneAndUpdate(
       { date: todayDate },
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
         matched: result.matched,
         needsReview: result.needsReview,
         timestamp: new Date(),
-        error: result.totalParcels === 0 ? "No courier parcels found for yesterday." : undefined,
+        error: result.totalParcels === 0 ? "No new courier parcels found since the last fetch." : undefined,
         triggeredBy: forceRun ? "MANUAL_RUN_NOW" : "AUTO_SITE_ACCESS",
       },
       { new: true }
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
       success: true,
       message:
         result.totalParcels === 0
-          ? "No courier mail/parcels found for yesterday - nothing to process."
+          ? "No new courier mail/parcels found since the last fetch - nothing to process."
           : `Processed ${result.totalParcels} parcels: ${result.matched.length} matched, ${result.needsReview.length} need review.`,
       log: updatedLog,
     });

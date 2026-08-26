@@ -2,7 +2,7 @@
 // fetch (gmailFetch.ts) and from any future WhatsApp-sending step, so a
 // courier format change only ever touches this file.
 //
-// processYesterdaysCourierParcels() is the orchestrator that ties fetch +
+// processNewCourierParcels() is the orchestrator that ties fetch +
 // parse + match together. WhatsApp sending is deferred (Phase 2, once a
 // WhatsApp Business Cloud API account exists) - "matched" here means
 // "confidently identified," not "sent."
@@ -201,6 +201,7 @@ export interface ProcessedMatchedParcel {
   score: number;
   whatsappNumber?: string;
   whatsappStatus: "NOT_SENT" | "NO_NUMBER";
+  emailDate: string; // YYYY-MM-DD - the courier email's own date, not the run date
 }
 
 export interface ProcessedReviewParcel {
@@ -211,6 +212,7 @@ export interface ProcessedReviewParcel {
   bestGuessSellerId?: string;
   score: number;
   reason: string;
+  emailDate: string; // YYYY-MM-DD
 }
 
 export interface ProcessResult {
@@ -219,9 +221,38 @@ export interface ProcessResult {
   totalParcels: number;
 }
 
+// Single-document checkpoint tracking the newest courier email we've
+// successfully fetched+parsed so far. Lets a run pick up "everything new
+// since last time" instead of a fixed "yesterday" window - if the courier
+// forgets to mail one day, the next run's window automatically widens to
+// cover the gap instead of silently skipping it.
+const FETCH_STATE_ID = "courier_checkpoint";
+
+function toDateOnly(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+
 /** Fetch + parse + match, tied together. No WhatsApp send here (deferred). */
-export async function processYesterdaysCourierParcels(db: any): Promise<ProcessResult> {
-  const { fetchYesterdaysCourierPdfs } = await import("./gmailFetch");
+export async function processNewCourierParcels(db: any): Promise<ProcessResult> {
+  const { fetchNewCourierPdfsSince } = await import("./gmailFetch");
+
+  // Some courier PDFs (Type3-font glyph paths, pattern fills) make
+  // pdfjs-dist reach for the browser-only DOMMatrix class even during plain
+  // text extraction, which throws "DOMMatrix is not defined" outside a
+  // browser (confirmed live: the 2026-08-21/08-23/08-27 automated runs all
+  // failed with exactly this). pdfjs-dist has its own fallback for this -
+  // it tries to load the optional `@napi-rs/canvas` native package - but
+  // that check runs ONCE, at module-import time (node_utils.js), and only
+  // if globalThis.DOMMatrix isn't already set; it never re-checks later.
+  // @napi-rs/canvas's platform-specific prebuilt binary loads fine on this
+  // Windows dev machine but fails on Vercel's Linux serverless runtime, so
+  // this MUST install before "pdf-parse" (and therefore pdfjs-dist) is even
+  // imported below - installing it after, like the first attempt at this
+  // fix did, is too late: pdfjs-dist's own (failing, on Vercel) attempt has
+  // already run and given up by then. See domMatrixPolyfill.ts for why.
+  const { installDOMMatrixPolyfillIfMissing } = await import("./domMatrixPolyfill");
+  installDOMMatrixPolyfillIfMissing();
+
   // pdf-parse v2 is a class-based API (PDFParse), not the old v1
   // require("pdf-parse")(buffer) function-call style. It's built on
   // pdfjs-dist, which normally resolves its worker script (pdf.worker.mjs)
@@ -235,15 +266,10 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
   const { pathToFileURL } = await import("url");
   PDFParse.setWorker(pathToFileURL(path.join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs")).href);
 
-  // Some courier PDFs (Type3-font glyph paths, pattern fills) make
-  // pdfjs-dist reach for the browser-only DOMMatrix class even during plain
-  // text extraction, which throws "DOMMatrix is not defined" outside a
-  // browser (confirmed live: the 2026-08-21 and 2026-08-23 automated runs
-  // both failed with exactly this). See domMatrixPolyfill.ts for why.
-  const { installDOMMatrixPolyfillIfMissing } = await import("./domMatrixPolyfill");
-  installDOMMatrixPolyfillIfMissing();
+  const fetchState = await db.collection("courier_fetch_state").findOne({ _id: FETCH_STATE_ID });
+  const sinceDate: Date | null = fetchState?.lastProcessedEmailDate ? new Date(fetchState.lastProcessedEmailDate) : null;
 
-  const pdfs = await fetchYesterdaysCourierPdfs();
+  const pdfs = await fetchNewCourierPdfsSince(sinceDate);
 
   const [sellersRaw, companiesRaw] = await Promise.all([
     db.collection("sellers").find({}, { projection: { instituteName: 1, buyerName: 1, place: 1, whatsappNumber: 1 } }).toArray(),
@@ -262,7 +288,12 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
   const needsReview: ProcessedReviewParcel[] = [];
   let totalParcels = 0;
 
+  let maxEmailDate: Date | null = null;
+
   for (const pdf of pdfs) {
+    if (!maxEmailDate || pdf.emailDate > maxEmailDate) maxEmailDate = pdf.emailDate;
+    const emailDate = toDateOnly(pdf.emailDate);
+
     const parser = new PDFParse({ data: pdf.buffer });
     let text: string;
     try {
@@ -292,6 +323,7 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
           // NOT_SENT (not PENDING) - sending is a manual, per-parcel choice
           // made on the Courier Tracking page, never automatic at match time.
           whatsappStatus: whatsappNumber ? "NOT_SENT" : "NO_NUMBER",
+          emailDate,
         });
       } else {
         needsReview.push({
@@ -302,9 +334,22 @@ export async function processYesterdaysCourierParcels(db: any): Promise<ProcessR
           bestGuessSellerId: seller ? String(seller._id) : undefined,
           score,
           reason: seller ? `Best match "${seller.instituteName}" scored ${score.toFixed(2)}, below the ${MATCH_THRESHOLD} threshold.` : "No institute matched at all.",
+          emailDate,
         });
       }
     }
+  }
+
+  // Only advance the checkpoint once everything above has succeeded - if
+  // parsing/matching had thrown partway through, this line is never reached,
+  // so a retried run naturally re-covers the same window instead of skipping
+  // whatever wasn't processed.
+  if (maxEmailDate) {
+    await db.collection("courier_fetch_state").updateOne(
+      { _id: FETCH_STATE_ID },
+      { $set: { lastProcessedEmailDate: maxEmailDate } },
+      { upsert: true }
+    );
   }
 
   return { matched, needsReview, totalParcels };

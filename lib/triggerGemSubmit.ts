@@ -134,6 +134,48 @@ export function triggerGemLogin(params: GemLoginParams): Promise<any> {
   });
 }
 
+export interface UpdateGemCatalogueItemParams {
+  gemUserId: string;
+  gemPassword: string;
+  gemMailId?: string;
+  firmCode: string;
+  productId: string; // GeM's own Product ID (e.g. "5116877-82744993124")
+  newRate?: number;
+  newStock?: number;
+  newMinQty?: number;
+  listingId: string; // the gem_listings entry's own "id" - so the extension can mark it Synced when done
+}
+
+// Sync Checklist's "Sync" button - opens a GeM login tab for the given firm's
+// saved credentials, then drives content-gem.js through Catalogue Search ->
+// Product ID -> Rate/Stock/Min Qty update -> back to OMS to auto-mark this
+// checklist row Synced. See content-gem.js's checkPendingCatalogueUpdate()
+// for the actual step-by-step automation and its current caveats (not yet
+// confirmed live against the real GeM portal).
+export function triggerGemCatalogueUpdate(params: UpdateGemCatalogueItemParams): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chromeRuntime = (window as any).chrome?.runtime;
+    if (!chromeRuntime?.sendMessage) {
+      reject(new Error("Extension detect nahi hua — install hai ya nahi check karo."));
+      return;
+    }
+
+    chromeRuntime.sendMessage(
+      GEM_EXTENSION_ID,
+      { type: "UPDATE_GEM_CATALOGUE_ITEM", payload: { ...params, omsOrigin: window.location.origin } },
+      (response: any) => {
+        if (chromeRuntime.lastError) {
+          reject(new Error(chromeRuntime.lastError.message));
+        } else if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || "Unknown error"));
+        }
+      }
+    );
+  });
+}
+
 // USAGE example (e.g. in app/dashboard/account/bills/page.tsx after a bill is generated):
 //
 // import { submitBillToGem } from "@/lib/triggerGemSubmit";

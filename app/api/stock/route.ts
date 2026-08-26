@@ -27,7 +27,10 @@ export async function GET() {
         hidden: item.hidden || false,
         rate: item.rate ?? "",
         variantGroup: item.variantGroup || "",
-        variantLabel: item.variantLabel || ""
+        variantLabel: item.variantLabel || "",
+        hsnSac: item.hsnSac || "",
+        gstPercent: item.gstPercent || 0,
+        hsnGstConfirmed: item.hsnGstConfirmed || false
       };
     });
 

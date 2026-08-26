@@ -144,6 +144,29 @@ export async function GET(req: Request) {
       .collection("stock")
       .countDocuments({ reQty: { $gt: 0 }, $expr: { $lte: ["$quantity", "$reQty"] } });
 
+    // GeM Sync report: how many Requirement Mapping Console rows were actioned
+    // via each of the 3 buttons (all-time, from the append-only gem_action_log),
+    // plus the current Sync Checklist snapshot (Pending vs Synced) for both of
+    // its portions - Stock Update (gem_listings) and New Upload Link.
+    const [okLinkCount, updateStockCount, newLinkActionCount] = await Promise.all([
+      db.collection("gem_action_log").countDocuments({ type: "ok_link" }),
+      db.collection("gem_action_log").countDocuments({ type: "update_stock" }),
+      db.collection("gem_action_log").countDocuments({ type: "new_link" }),
+    ]);
+    const [stockUpdatePending, stockUpdateSynced, newUploadLinkPending, newUploadLinkSynced] = await Promise.all([
+      db.collection("gem_listings").countDocuments({ status: "Pending" }),
+      db.collection("gem_listings").countDocuments({ status: "Synced" }),
+      db.collection("gem_new_link_checklist").countDocuments({ status: "Pending" }),
+      db.collection("gem_new_link_checklist").countDocuments({ status: "Synced" }),
+    ]);
+    const gemSync = {
+      actions: { okLink: okLinkCount, updateStock: updateStockCount, newLink: newLinkActionCount },
+      checklist: {
+        stockUpdate: { pending: stockUpdatePending, synced: stockUpdateSynced },
+        newUploadLink: { pending: newUploadLinkPending, synced: newUploadLinkSynced },
+      },
+    };
+
     // Team activity today — merged from every user-attributed signal the app writes:
     // order status/purchase actions (items.history), new orders created (sellerorders.createdBy),
     // and GeM Sync file uploads / product completions (gem_sheets). Shared with the
@@ -177,6 +200,7 @@ export async function GET(req: Request) {
       billsToday,
       bidsPendingAction,
       lowStockCount,
+      gemSync,
     });
   } catch (error: any) {
     console.error("Dashboard summary GET error:", error);

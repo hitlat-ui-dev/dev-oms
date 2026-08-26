@@ -93,7 +93,7 @@ export async function GET(req: Request) {
 
     // Fetch the remaining collections concurrently rather than one-at-a-time —
     // total wait becomes the slowest single query instead of the sum of all of them.
-    const [buyers, rawListings, customItems, sheets, rowMappings] = await Promise.all([
+    const [buyers, rawListings, customItems, sheets, rowMappings, newLinkChecklist] = await Promise.all([
       db.collection("gem_buyers").find({}).toArray(),
       db.collection("gem_listings").find({}).toArray(),
       db.collection("gem_custom_items").find({}).toArray(),
@@ -102,6 +102,12 @@ export async function GET(req: Request) {
       // powers "Quick Fill from Master List" across all past sheets without
       // needing every sheet's full uploadedRows (which now live in R2).
       db.collection("gem_row_mappings").find({}).toArray(),
+      // "New Upload Link" checklist portion - items that are completely new
+      // for a firm (no existing GeM listing yet), pushed here from the
+      // Requirement Mapping Console's "Add New Link" button. Separate from
+      // gem_listings (the "Stock Update" checklist portion), since these
+      // entries don't necessarily have a rate/inventory mapping yet.
+      db.collection("gem_new_link_checklist").find({}).toArray(),
     ]);
 
     // Clean MongoDB _id fields for React/JSON serialization
@@ -110,6 +116,7 @@ export async function GET(req: Request) {
     const cleanCustomItems = customItems.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanSheets = sheets.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanRowMappings = rowMappings.map(({ _id, ...rest }) => ({ ...rest }));
+    const cleanNewLinkChecklist = newLinkChecklist.map(({ _id, ...rest }) => ({ ...rest }));
 
     // Deduplicate listings
     const deduplicatedListings = deduplicateListings(cleanListings);
@@ -127,7 +134,8 @@ export async function GET(req: Request) {
       listings: deduplicatedListings,
       customItems: cleanCustomItems,
       sheets: cleanSheets,
-      rowMappings: cleanRowMappings
+      rowMappings: cleanRowMappings,
+      newLinkChecklist: cleanNewLinkChecklist
     });
   } catch (error) {
     console.error("GET gem-sync error:", error);
@@ -201,6 +209,55 @@ export async function POST(req: Request) {
       const sanitized = sanitizeBody(body);
       if (sanitized.length > 0) {
         await db.collection("gem_custom_items").insertMany(sanitized);
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // Append-only log of every Requirement Mapping Console row action (OK
+    // Link / Update Stock / New Link) - powers the GeM Sync report on the
+    // Summary dashboard. Never overwritten/deleted by normal use, so counts
+    // are a durable all-time record, not tied to any one sheet or session.
+    if (action === "log_gem_action") {
+      const type = body.type;
+      if (!["ok_link", "update_stock", "new_link"].includes(type)) {
+        return NextResponse.json({ error: "type must be ok_link, update_stock, or new_link" }, { status: 400 });
+      }
+      await db.collection("gem_action_log").insertOne({
+        id: "action_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+        type,
+        itemName: body.itemName || "",
+        firmCode: body.firmCode || "",
+        requiredQty: body.requiredQty ?? null,
+        rate: body.rate ?? null,
+        by: body.by || "",
+        sheetFileName: body.sheetFileName || "",
+        timestamp: new Date().toISOString(),
+      });
+      return NextResponse.json({ success: true });
+    }
+
+    // Called by the gem-bill-submit browser extension once it's actually
+    // pushed a Rate/Stock/Min Qty update through to GeM's own catalogue - no
+    // OMS login session available from there, so this is a plain POST action
+    // keyed by the listing's own id, same pattern as
+    // save_stock_fields/save_catalogue_links.
+    if (action === "mark_listing_synced") {
+      const id = (body.id || "").toString().trim();
+      if (!id) {
+        return NextResponse.json({ error: "id is required" }, { status: 400 });
+      }
+      const result = await db.collection("gem_listings").updateOne({ id }, { $set: { status: "Synced" } });
+      if (result.matchedCount === 0) {
+        return NextResponse.json({ error: `No listing found for id=${id}.` }, { status: 404 });
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "save_new_link_checklist") {
+      await db.collection("gem_new_link_checklist").deleteMany({});
+      const sanitized = sanitizeBody(body);
+      if (sanitized.length > 0) {
+        await db.collection("gem_new_link_checklist").insertMany(sanitized);
       }
       return NextResponse.json({ success: true });
     }
@@ -298,6 +355,99 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
+    // Links one GeM Catalogue row to an internal inventory item, creating a
+    // new Master List (gem_listings) entry. Uses gemCatalogueId+firmCode as
+    // the identity (not itemId+firmCode+buyerId like the general listings
+    // dedup does) so the auto-sync below can find this entry again on every
+    // future catalogue/stock re-fetch, purely from GeM's own product id -
+    // no buyer/requirement context needed for that.
+    if (action === "add_to_master_list") {
+      const gemCatalogueId = (body.gemCatalogueId || "").toString().trim();
+      const firmCode = (body.firmCode || "").toString().trim();
+      const itemId = (body.itemId || "").toString().trim();
+
+      if (!gemCatalogueId || !firmCode || !itemId) {
+        return NextResponse.json({ error: "gemCatalogueId, firmCode and itemId are required" }, { status: 400 });
+      }
+
+      const existing = await db.collection("gem_listings").findOne({
+        gemCatalogueId: { $regex: `^${gemCatalogueId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+        firmCode,
+      });
+      if (existing) {
+        return NextResponse.json({ error: "This product is already in the Master List for this firm." }, { status: 409 });
+      }
+
+      const newListing = {
+        id: "listing_" + Date.now(),
+        gemCatalogueId,
+        firmCode,
+        itemId,
+        itemName: body.itemName || "",
+        gemLink: body.gemLink || "",
+        rate: Number(body.rate) || 0,
+        availGemStock: Number(body.availGemStock) || 0,
+        minQty: Number(body.minQty) || 1,
+        status: "Synced",
+        buyerId: "",
+        date: new Date().toISOString(),
+      };
+      await db.collection("gem_listings").insertOne(newListing);
+      return NextResponse.json({ success: true, listing: newListing });
+    }
+
+    // Bulk-matches every GeM Catalogue row against the Master List by EXACT
+    // identity only - GeM's own Product ID (the "Gem Catalogue Id"/ProductID
+    // field, e.g. "5116877-82744993124" from a URL like
+    // .../p-5116877-82744993124-cat.html) plus firmCode. No name-similarity
+    // guessing here - a listing only gets matched if it's already tagged
+    // with this exact product id for this exact firm (via "Add to Master
+    // List" or a past run of this action), so there is zero risk of two
+    // different products getting cross-matched.
+    if (action === "sync_master_list_from_catalogue") {
+      const [catalogueLinks, listings] = await Promise.all([
+        db.collection("gem_catalogue_links").find({}).toArray(),
+        db.collection("gem_listings").find({ gemCatalogueId: { $exists: true, $ne: "" } }).toArray(),
+      ]);
+
+      const listingByKey = new Map<string, any>();
+      for (const listing of listings) {
+        const key = `${listing.gemCatalogueId.toString().trim().toLowerCase()}::${(listing.firmCode || "").toString().trim().toLowerCase()}`;
+        listingByKey.set(key, listing);
+      }
+
+      let updated = 0;
+      let unmatched = 0;
+
+      for (const row of catalogueLinks) {
+        const catalogueId = (row["Gem Catalogue Id"]?.text || row["ProductID"]?.text || "").toString().trim();
+        const firmCode = (row.firmCode || "").toString().trim();
+        if (!catalogueId || !firmCode) { unmatched++; continue; }
+
+        const listing = listingByKey.get(`${catalogueId.toLowerCase()}::${firmCode.toLowerCase()}`);
+        if (!listing) { unmatched++; continue; }
+
+        const setFields: any = {};
+        const priceText = row["Offer Price"]?.text;
+        const rate = priceText ? parseFloat(String(priceText).replace(/[^0-9.]/g, "")) : NaN;
+        if (!isNaN(rate)) setFields.rate = rate;
+        if (row.currentStock !== undefined && row.currentStock !== null) setFields.availGemStock = row.currentStock;
+        if (row.minQtyPerConsignee !== undefined && row.minQtyPerConsignee !== null) setFields.minQty = row.minQtyPerConsignee;
+
+        if (Object.keys(setFields).length > 0) {
+          await db.collection("gem_listings").updateOne({ id: listing.id }, { $set: setFields });
+          updated++;
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        updated,
+        unmatched,
+        totalCatalogueRows: catalogueLinks.length,
+      });
+    }
+
     if (action === "save_catalogue_links") {
       const firmCode = (body.firmCode || "").toString().trim().toUpperCase();
       if (!firmCode) {
@@ -349,6 +499,21 @@ export async function POST(req: Request) {
       if (deduped.length > 0) {
         await db.collection("gem_catalogue_links").insertMany(deduped);
       }
+
+      // Auto-sync: any Master List entry already linked to one of these
+      // products (via "Add to Master List" on the Catalogue page) gets its
+      // price refreshed from this fresh scrape - never itemId/itemName/other
+      // fields, since those represent a human's inventory mapping decision,
+      // not scraped data.
+      for (const row of deduped) {
+        const catalogueId = (row["Gem Catalogue Id"]?.text || row["ProductID"]?.text || "").toString().trim();
+        const priceText = row["Offer Price"]?.text;
+        const rate = priceText ? parseFloat(String(priceText).replace(/[^0-9.]/g, "")) : NaN;
+        if (catalogueId && !isNaN(rate)) {
+          await db.collection("gem_listings").updateMany({ gemCatalogueId: catalogueId, firmCode }, { $set: { rate } });
+        }
+      }
+
       return NextResponse.json({ success: true, count: deduped.length, firmCode });
     }
 
@@ -392,6 +557,19 @@ export async function POST(req: Request) {
           fetchedAt: new Date().toISOString()
         });
         inserted = true;
+      }
+
+      // Auto-sync: refresh availGemStock/minQty on any Master List entry
+      // already linked to this product - same rule as save_catalogue_links
+      // above (only these scraped fields, never the inventory mapping).
+      const syncKey = catalogueId || productId;
+      if (syncKey) {
+        const setFields: any = {};
+        if (body.currentStock !== undefined && body.currentStock !== null) setFields.availGemStock = body.currentStock;
+        if (body.minQtyPerConsignee !== undefined && body.minQtyPerConsignee !== null) setFields.minQty = body.minQtyPerConsignee;
+        if (Object.keys(setFields).length > 0) {
+          await db.collection("gem_listings").updateMany({ gemCatalogueId: syncKey, firmCode }, { $set: setFields });
+        }
       }
 
       return NextResponse.json({ success: true, matched: result.matchedCount, modified: result.modifiedCount, inserted });

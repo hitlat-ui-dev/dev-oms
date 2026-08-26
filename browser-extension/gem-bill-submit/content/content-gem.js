@@ -35,6 +35,7 @@
 
   init();
   checkPendingLogin();
+  checkPendingCatalogueUpdate();
 
   // GeM Login Setup's "Login" button - independent of the bill-submission
   // flow above (that only ever runs on fulfilment.gem.gov.in). GeM's real
@@ -184,6 +185,302 @@
 
     console.log("[GeM Bill Auto-Submit] Login Submit click kar raha hu.");
     submitBtn.click();
+  }
+
+  // ===== Sync Checklist "Sync" button: update Rate/Stock/Min Qty on GeM =====
+  // Reuses the exact same login (username/captcha, then password/OTP) as
+  // checkPendingLogin() above, but keeps going after login instead of
+  // stopping - navigates to admin-mkp.gem.gov.in's Catalogue Search, finds
+  // the product by Product ID, updates its Offer Price, then (assumed to be
+  // further down the SAME edit page, based on isStockUpdatePage()'s own
+  // detection needing no special URL) fills Current Stock / Min Qty Per
+  // Consignee too. NOT YET CONFIRMED LIVE - built from screenshots + the
+  // navigation steps described directly, not from DevTools inspection like
+  // the rest of this file. Expect to need real-run adjustments; every step
+  // logs clearly and degrades to "do this bit manually" rather than silently
+  // failing, same as the rest of this file.
+  const CATALOGUE_INDEX_URL = "https://admin-mkp.gem.gov.in/#!/catalog/index";
+
+  async function checkPendingCatalogueUpdate() {
+    const { data } = await chrome.runtime.sendMessage({ type: "GET_PENDING_CATALOGUE_UPDATE" });
+    if (!data) return;
+
+    if (Date.now() - data.startedAt > 15 * 60 * 1000) {
+      chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+      return;
+    }
+
+    try {
+      const step = data.step || "LOGIN_USERNAME";
+      if (step === "LOGIN_USERNAME") {
+        await catalogueLoginUsernameStep(data);
+      } else if (step === "LOGIN_PASSWORD") {
+        await catalogueLoginPasswordStep(data);
+      } else if (step === "CATALOGUE_NAV") {
+        console.log("[GeM Bill Auto-Submit] Login ho gaya, Catalogue Search par ja raha hu...");
+        await setCatalogueStep(data, "CATALOGUE_SEARCH");
+        window.location.href = CATALOGUE_INDEX_URL;
+      } else if (step === "CATALOGUE_SEARCH") {
+        await catalogueSearchStep(data);
+      } else if (step === "RATE_UPDATE") {
+        await catalogueRateUpdateStep(data);
+      } else if (step === "STOCK_UPDATE") {
+        await catalogueStockUpdateStep(data);
+      }
+    } catch (err) {
+      console.error("[GeM Bill Auto-Submit] Catalogue update automation fail hua:", err);
+      alert(`GeM catalogue update me error aaya: ${err.message}\n\nKripya manually complete karo, phir Sync Checklist me khud tick karo.`);
+      chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+    }
+  }
+
+  async function setCatalogueStep(data, step) {
+    data.step = step;
+    await chrome.runtime.sendMessage({ type: "SET_PENDING_CATALOGUE_UPDATE_STEP", step });
+  }
+
+  // Same #loginid/#captcha_math page as checkPendingLogin's username step,
+  // just advancing pendingCatalogueUpdate's own step instead.
+  async function catalogueLoginUsernameStep(data) {
+    const usernameField = await waitForElement("#loginid", 10000).catch(() => null);
+    if (!usernameField) {
+      console.warn("[GeM Bill Auto-Submit] #loginid field nahi mila.");
+      return;
+    }
+    setNativeValue(usernameField, data.gemUserId);
+    fireEvents(usernameField);
+    console.log("[GeM Bill Auto-Submit] (Catalogue update) User ID fill kar diya. Captcha manually daalo.");
+
+    const captchaField = await waitForElement("#captcha_math", 10000).catch(() => null);
+    if (!captchaField) {
+      console.warn("[GeM Bill Auto-Submit] #captcha_math field nahi mila.");
+      return;
+    }
+
+    await new Promise((resolve) => {
+      let debounceId;
+      const onInput = () => {
+        clearTimeout(debounceId);
+        if (captchaField.value.trim().length < 6) return;
+        debounceId = setTimeout(() => {
+          captchaField.removeEventListener("input", onInput);
+          resolve();
+        }, 600);
+      };
+      captchaField.addEventListener("input", onInput);
+    });
+
+    const submitBtn = Array.from(document.querySelectorAll("button")).find(
+      (b) => isVisible(b) && /^submit$/i.test(b.textContent.trim())
+    );
+    if (!submitBtn) {
+      console.warn("[GeM Bill Auto-Submit] Submit button nahi mila.");
+      return;
+    }
+
+    await setCatalogueStep(data, "LOGIN_PASSWORD");
+    submitBtn.click();
+  }
+
+  // Same #password/#resend/#otp/#finalSubmit page as checkPendingLogin's
+  // password step, but on success moves on to CATALOGUE_NAV instead of
+  // stopping - this is the whole point of a separate pending state.
+  async function catalogueLoginPasswordStep(data) {
+    const passwordField = await waitForElement("#password", 10000).catch(() => null);
+    if (!passwordField) {
+      console.warn("[GeM Bill Auto-Submit] #password field nahi mila.");
+      return;
+    }
+    setNativeValue(passwordField, data.gemPassword);
+    fireEvents(passwordField);
+
+    const generateOtpBtn = await waitForElement("#resend", 10000).catch(() => null);
+    if (!generateOtpBtn) {
+      console.warn("[GeM Bill Auto-Submit] #resend button nahi mila.");
+      return;
+    }
+
+    const sinceTs = Date.now() - 5000;
+    generateOtpBtn.click();
+
+    if (!data.gemMailId) {
+      console.warn("[GeM Bill Auto-Submit] Mail ID save nahi hai - OTP manually daalo.");
+      return;
+    }
+
+    const otpField = await waitForElementMatching(() => {
+      const el = document.querySelector("#otp");
+      return el && isVisible(el) && !el.disabled ? el : null;
+    }, 20000).catch(() => null);
+    if (!otpField) {
+      console.warn("[GeM Bill Auto-Submit] #otp field enable nahi hua.");
+      return;
+    }
+
+    const otpResponse = await chrome.runtime.sendMessage({ type: "FETCH_LOGIN_OTP", gemMailId: data.gemMailId, sinceTs });
+    if (!otpResponse?.success) {
+      console.warn("[GeM Bill Auto-Submit] OTP fetch fail hua:", otpResponse?.error);
+      return;
+    }
+    setNativeValue(otpField, otpResponse.otp);
+    fireEvents(otpField);
+
+    const submitBtn = await waitForElementMatching(() => {
+      const el = document.querySelector("#finalSubmit");
+      return el && isVisible(el) && !el.disabled ? el : null;
+    }, 10000).catch(() => null);
+    if (!submitBtn) {
+      console.warn("[GeM Bill Auto-Submit] #finalSubmit enable nahi hua.");
+      return;
+    }
+
+    await setCatalogueStep(data, "CATALOGUE_NAV");
+    submitBtn.click();
+  }
+
+  // Finds an <input> whose nearby row/label text matches labelRegex and sets
+  // its value - the write-side counterpart of the same label-proximity
+  // approach GEM-LINK-FETCH's content.js already uses to READ Current
+  // Stock/Min Qty (those fields have no stable id, per its own notes).
+  function setLabeledInputValue(labelRegex, value) {
+    const inputs = document.querySelectorAll(
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="file"])'
+    );
+    for (const input of inputs) {
+      let el = input.closest("tr") || input.parentElement;
+      let hops = 0;
+      while (el && hops < 4) {
+        const text = el.textContent.trim();
+        if (text.length < 300 && labelRegex.test(text)) {
+          setNativeValue(input, String(value));
+          fireEvents(input);
+          return true;
+        }
+        el = el.parentElement;
+        hops++;
+      }
+    }
+    return false;
+  }
+
+  function clickButtonByText(textRegex) {
+    const btn = Array.from(document.querySelectorAll("button, a.btn, input[type=submit]")).find(
+      (b) => isVisible(b) && textRegex.test((b.textContent || b.value || "").trim())
+    );
+    if (btn) btn.click();
+    return !!btn;
+  }
+
+  // admin-mkp.gem.gov.in/#!/catalog/index - the "Catalogue Search" box seen
+  // on the Published-listings page. Searches by Product ID, then clicks that
+  // row's own edit (pencil) action to reach the catalog/new?id=... page.
+  async function catalogueSearchStep(data) {
+    const searchInput = await waitForElementMatching(() => {
+      const heading = Array.from(document.querySelectorAll("h1,h2,h3,h4,legend,label")).find((h) => /catalogue search/i.test(h.textContent));
+      if (!heading) return null;
+      const container = heading.closest("div") || heading.parentElement;
+      return container ? container.querySelector('input[type="text"], input:not([type])') : null;
+    }, 15000).catch(() => null);
+
+    if (!searchInput) {
+      console.warn("[GeM Bill Auto-Submit] Catalogue Search box nahi mila.");
+      return;
+    }
+
+    setNativeValue(searchInput, data.productId);
+    fireEvents(searchInput);
+
+    const clicked = clickButtonByText(/^search$/i);
+    if (!clicked) {
+      console.warn("[GeM Bill Auto-Submit] Search button nahi mila.");
+      return;
+    }
+
+    // Wait for a results row containing this Product ID, then click its edit link.
+    const editLink = await waitForElementMatching(() => {
+      const rows = document.querySelectorAll("table tbody tr");
+      for (const tr of rows) {
+        if (tr.textContent.includes(data.productId)) {
+          return tr.querySelector('a[href*="catalog/new"]') || tr.querySelector("td:last-child a") || tr.querySelector("a");
+        }
+      }
+      return null;
+    }, 15000).catch(() => null);
+
+    if (!editLink) {
+      console.warn(`[GeM Bill Auto-Submit] Product ID "${data.productId}" search results me nahi mila.`);
+      return;
+    }
+
+    await setCatalogueStep(data, "RATE_UPDATE");
+    editLink.click();
+  }
+
+  // catalog/new?id=... edit page - "Offer Price Including Tax and Duties as
+  // INR" field. GeM blocks a price INCREASE for 30 days after the last
+  // change (own on-page text, seen live: "The price entered cant be
+  // increased for the next 30 days") - detected and logged rather than
+  // treated as a hard failure, since a decrease or an unrelated Stock/Min
+  // Qty update should still go through.
+  async function catalogueRateUpdateStep(data) {
+    if (data.newRate === undefined || data.newRate === null) {
+      console.log("[GeM Bill Auto-Submit] Naya Rate nahi diya gaya - is step ko skip kar raha hu.");
+      await setCatalogueStep(data, "STOCK_UPDATE");
+      return;
+    }
+
+    const found = await waitForElementMatching(() => {
+      return setLabeledInputValue(/offer price including tax/i, data.newRate) ? true : null;
+    }, 15000).catch(() => null);
+
+    if (!found) {
+      console.warn("[GeM Bill Auto-Submit] Offer Price field nahi mila.");
+    } else if (/price entered cant be increased|can increase the price only/i.test(document.body.textContent)) {
+      console.warn(
+        "[GeM Bill Auto-Submit] GeM ka 30-din price-increase restriction laga hua hai is product par - Rate update SKIP ho gaya, Stock/Min Qty phir bhi update hoga."
+      );
+    } else {
+      clickButtonByText(/^(save|update|submit)$/i);
+      await sleep(1500);
+    }
+
+    await setCatalogueStep(data, "STOCK_UPDATE");
+    catalogueStockUpdateStep(data);
+  }
+
+  // Current Stock / Minimum Quantity Per Consignee - assumed to be further
+  // down the SAME catalog/new?id=... edit page (isStockUpdatePage() in
+  // GEM-LINK-FETCH's content.js detects them by body text alone, with no
+  // separate URL, which is what this assumption is based on). If they
+  // genuinely live on a different page reached some other way, this step
+  // will find nothing and say so clearly rather than guess further.
+  async function catalogueStockUpdateStep(data) {
+    let didAnything = false;
+    if (data.newStock !== undefined && data.newStock !== null) {
+      didAnything = setLabeledInputValue(/current\s*stock.*maximum\s*quantity/i, data.newStock) || didAnything;
+    }
+    if (data.newMinQty !== undefined && data.newMinQty !== null) {
+      didAnything = setLabeledInputValue(/minimum\s*quantity\s*per\s*consignee/i, data.newMinQty) || didAnything;
+    }
+
+    if (didAnything) {
+      clickButtonByText(/^(save|update|submit)$/i);
+      await sleep(1500);
+      console.log("[GeM Bill Auto-Submit] Stock/Min Qty update kar diya.");
+    } else {
+      console.warn(
+        "[GeM Bill Auto-Submit] Current Stock / Min Qty fields is page par nahi mile - manually update karo, phir Sync Checklist me khud tick karo."
+      );
+    }
+
+    try {
+      await chrome.runtime.sendMessage({ type: "MARK_CHECKLIST_SYNCED", omsOrigin: data.omsOrigin, listingId: data.listingId });
+      console.log("[GeM Bill Auto-Submit] OMS Sync Checklist me is item ko Synced mark kar diya.");
+    } catch (err) {
+      console.warn("[GeM Bill Auto-Submit] OMS ko sync-mark bhejne me error:", err.message);
+    }
+
+    await chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
   }
 
   async function init() {

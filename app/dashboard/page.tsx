@@ -14,7 +14,8 @@ import {
   FiLayers,
   FiPlus,
   FiX,
-  FiTruck
+  FiTruck,
+  FiHash
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
@@ -28,7 +29,7 @@ const QUICKADD_ENABLED = new Set(["Orders", "Purchase", "Stock", "Manage Stock",
 const SECTIONS = [
   { label: "Daily Operations", items: ["Orders", "Purchase", "Stock", "Manage Stock", "Print Label", "Account"] },
   { label: "GeM", items: ["GeM Bids", "GeM Links"] },
-  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking"] }
+  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review"] }
 ];
 
 export default function DashboardPage() {
@@ -93,6 +94,7 @@ export default function DashboardPage() {
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"], permissionKey: "users" },
     { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" },
     { name: "Courier Tracking", path: "/dashboard/admin/courier-tracking", sub: "DAILY DISPATCH MATCHING", icon: <FiTruck />, color: "bg-[#16a34a]", role: ["Owner"] },
+    { name: "HSN & GST Review", path: "/dashboard/admin/hsn-gst-review", sub: "CONFIRM ITEM TAX DETAILS", icon: <FiHash />, color: "bg-[#7c3aed]", role: ["Owner", "Manager"] },
     { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" }
   ];
 

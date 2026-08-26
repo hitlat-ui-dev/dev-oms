@@ -25,6 +25,7 @@ export async function PATCH(
     if (data.rate !== undefined) updateFields.rate = data.rate !== "" ? Number(data.rate) : null;
     if (data.hsnSac !== undefined) updateFields.hsnSac = data.hsnSac;
     if (data.gstPercent !== undefined) updateFields.gstPercent = data.gstPercent !== "" ? Number(data.gstPercent) : 0;
+    if (data.hsnGstConfirmed !== undefined) updateFields.hsnGstConfirmed = !!data.hsnGstConfirmed;
     if (data.variantGroup !== undefined) updateFields.variantGroup = data.variantGroup;
     if (data.variantLabel !== undefined) updateFields.variantLabel = data.variantLabel;
 

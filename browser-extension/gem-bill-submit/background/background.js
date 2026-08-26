@@ -79,7 +79,58 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     chrome.storage.local.set({ currentOmsUsername: message.payload?.username || "" }).then(() => sendResponse({ success: true }));
     return true;
   }
+
+  if (message.type === "UPDATE_GEM_CATALOGUE_ITEM") {
+    handleUpdateGemCatalogueItem(message.payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
+
+// Sync Checklist's "Sync" button - logs into the given firm's GeM account
+// (same credential flow as GEM_LOGIN above), then drives content-gem.js
+// through Catalogue -> Products -> Search My Offerings -> Product ID search
+// -> Rate update -> Stock/Min Qty update, and finally reports back to OMS so
+// the checklist row can auto-tick. Unlike handleGemLogin (a one-shot "just
+// log me in" action), this pending state is NOT cleared once login
+// completes - checkPendingCatalogueUpdate() in content-gem.js keeps driving
+// it through every step below across each real page navigation.
+async function handleUpdateGemCatalogueItem(payload) {
+  const { gemUserId, gemPassword, gemMailId, firmCode, productId, newRate, newStock, newMinQty, listingId, omsOrigin } = payload || {};
+  if (!gemUserId || !gemPassword) throw new Error("gemUserId aur gemPassword zaroori hain.");
+  if (!productId) throw new Error("productId zaroori hai.");
+  if (!listingId || !omsOrigin) throw new Error("listingId aur omsOrigin zaroori hain (checklist row ko wapas sync-mark karne ke liye).");
+
+  await chrome.storage.local.set({
+    pendingCatalogueUpdate: {
+      gemUserId, gemPassword, gemMailId: gemMailId || "",
+      firmCode: firmCode || "", productId, newRate, newStock, newMinQty,
+      listingId, omsOrigin,
+      step: "LOGIN_USERNAME",
+      startedAt: Date.now(),
+    },
+  });
+
+  const tab = await chrome.tabs.create({ url: GEM_LOGIN_URL, active: true });
+  return { tabId: tab.id, message: "GeM login tab khola gaya, catalogue update automation shuru hogi login ke baad." };
+}
+
+// Called from content-gem.js once Rate/Stock/Min Qty are updated on GeM's
+// own side - marks the Stock Update checklist entry as Synced directly via
+// the plain POST action (no OMS login session needed, same as
+// save_stock_fields/save_catalogue_links already work from this extension).
+async function markChecklistSynced(omsOrigin, listingId) {
+  const res = await fetch(`${omsOrigin}/api/gem-sync?action=mark_listing_synced`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: listingId }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `OMS sync-mark fail hua (status ${res.status}).`);
+  }
+}
 
 // GeM Login Setup page's "Login" button - stashes the saved Username/
 // Password/Mail so content-gem.js can fill them in (and fetch the login OTP
@@ -235,6 +286,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "CLEAR_PENDING_LOGIN") {
     chrome.storage.local.remove("pendingGemLogin").then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === "GET_PENDING_CATALOGUE_UPDATE") {
+    chrome.storage.local.get("pendingCatalogueUpdate").then((data) => {
+      sendResponse({ success: true, data: data.pendingCatalogueUpdate || null });
+    });
+    return true;
+  }
+
+  if (message.type === "SET_PENDING_CATALOGUE_UPDATE_STEP") {
+    chrome.storage.local.get("pendingCatalogueUpdate").then(({ pendingCatalogueUpdate }) => {
+      if (pendingCatalogueUpdate) {
+        pendingCatalogueUpdate.step = message.step;
+        chrome.storage.local.set({ pendingCatalogueUpdate }).then(() => sendResponse({ success: true }));
+      } else {
+        sendResponse({ success: false });
+      }
+    });
+    return true;
+  }
+
+  if (message.type === "CLEAR_PENDING_CATALOGUE_UPDATE") {
+    chrome.storage.local.remove("pendingCatalogueUpdate").then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === "MARK_CHECKLIST_SYNCED") {
+    // payload: { omsOrigin, listingId } - sent once content-gem.js finishes
+    // (or gives up on) the catalogue update, so OMS's Sync Checklist reflects
+    // the outcome without the user having to tick it by hand.
+    markChecklistSynced(message.omsOrigin, message.listingId)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
 

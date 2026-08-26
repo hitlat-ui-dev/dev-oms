@@ -25,6 +25,12 @@ const ItemSchema = new Schema({
   // Tax Invoice. Overridable per line on the Generate Bill screen.
   hsnSac: { type: String, required: false, default: "" },
   gstPercent: { type: Number, required: false, default: 0 },
+  // Whether a human has actually verified this item's HSN/GST are correct -
+  // hsnSac/gstPercent above may just be an unverified suggestion (see the
+  // HSN & GST Review page) until this is true. Wrong HSN/GST on a real tax
+  // invoice is a compliance risk, so bills should be able to flag/filter on
+  // this rather than silently trusting every value.
+  hsnGstConfirmed: { type: Boolean, required: false, default: false },
   // Variant grouping: several items (different color/size) of the same
   // underlying product share one variantGroup value (the sku of whichever
   // item first became the group's anchor) so they can be searched/selected

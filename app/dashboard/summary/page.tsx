@@ -72,6 +72,13 @@ interface SummaryData {
     totalValue: number;
     byFirm: { firmCode: string; count: number; value: number }[];
   };
+  gemSync?: {
+    actions: { okLink: number; updateStock: number; newLink: number };
+    checklist: {
+      stockUpdate: { pending: number; synced: number };
+      newUploadLink: { pending: number; synced: number };
+    };
+  };
 }
 
 const formatMoney = (n: number) =>
@@ -398,6 +405,55 @@ export default function SummaryDashboardPage() {
                   </div>
                 )}
               </div>
+
+              {/* GeM Sync Report */}
+              {data.gemSync && (
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5 mb-4">
+                    <FiRefreshCw className="text-blue-600" size={14} /> GeM Sync Report
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-2">
+                        Requirement Mapping Actions (All-Time)
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                          <span className="text-[10px] font-black text-emerald-700 uppercase">OK Link</span>
+                          <span className="text-xs font-black text-emerald-800">{formatInt(data.gemSync.actions.okLink)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                          <span className="text-[10px] font-black text-amber-700 uppercase">Update Stock</span>
+                          <span className="text-xs font-black text-amber-800">{formatInt(data.gemSync.actions.updateStock)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                          <span className="text-[10px] font-black text-blue-700 uppercase">New Link</span>
+                          <span className="text-xs font-black text-blue-800">{formatInt(data.gemSync.actions.newLink)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-2">
+                        Sync Checklist (Current)
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                          <span className="text-[10px] font-black text-slate-600 uppercase">Stock Update</span>
+                          <span className="text-xs font-black text-amber-700">{formatInt(data.gemSync.checklist.stockUpdate.pending)} pending</span>
+                          <span className="text-xs font-black text-emerald-700">{formatInt(data.gemSync.checklist.stockUpdate.synced)} synced</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                          <span className="text-[10px] font-black text-slate-600 uppercase">New Upload Link</span>
+                          <span className="text-xs font-black text-amber-700">{formatInt(data.gemSync.checklist.newUploadLink.pending)} pending</span>
+                          <span className="text-xs font-black text-emerald-700">{formatInt(data.gemSync.checklist.newUploadLink.synced)} synced</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Team Activity Today */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">

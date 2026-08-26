@@ -18,6 +18,11 @@ export interface ICourierMatchedParcel {
   // sends - a parcel only reaches PENDING via POST /api/courier/queue-whatsapp,
   // never automatically at match time.
   whatsappStatus: "NOT_SENT" | "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
+  // The courier email's own date (YYYY-MM-DD), not the date this run
+  // happened - a run can catch up on more than one day's backlog at once
+  // (see fetchNewCourierPdfsSince in gmailFetch.ts), so this is what tells
+  // staff which day's dispatch a given entry actually belongs to.
+  emailDate?: string;
 }
 
 export interface ICourierReviewParcel {
@@ -28,6 +33,7 @@ export interface ICourierReviewParcel {
   bestGuessSellerId?: string;
   score: number;
   reason: string;
+  emailDate?: string;
 }
 
 export interface ICourierRunLog extends Document {
@@ -55,6 +61,7 @@ const CourierMatchedParcelSchema = new Schema<ICourierMatchedParcel>(
     score: { type: Number, required: true },
     whatsappNumber: { type: String },
     whatsappStatus: { type: String, enum: ["NOT_SENT", "PENDING", "SENT", "FAILED", "NO_NUMBER"], default: "NOT_SENT" },
+    emailDate: { type: String },
   },
   { _id: false }
 );
@@ -68,6 +75,7 @@ const CourierReviewParcelSchema = new Schema<ICourierReviewParcel>(
     bestGuessSellerId: { type: String },
     score: { type: Number, required: true },
     reason: { type: String, required: true },
+    emailDate: { type: String },
   },
   { _id: false }
 );

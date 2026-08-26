@@ -275,7 +275,12 @@ export default function FetchGeMOrdersPage() {
       const res = await fetch(`/api/stock?t=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
-        setStockItems(Array.isArray(data) ? data : []);
+        // Hidden items must never be reachable from this page - not as a
+        // search suggestion, not as an auto-match result, not as a variant
+        // sibling. Confirmed live: a GeM order auto-matched to a hidden
+        // duplicate SKU (via an old Sheet Library mapping saved before that
+        // SKU was hidden) because this list still included it.
+        setStockItems(Array.isArray(data) ? data.filter((item: any) => !item.hidden) : []);
       }
     } catch (err) {
       console.error("Error fetching stock items:", err);

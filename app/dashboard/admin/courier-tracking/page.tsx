@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FiTruck, FiCheckCircle, FiAlertTriangle, FiRefreshCw, FiPackage, FiSend } from "react-icons/fi";
+import { FiTruck, FiCheckCircle, FiAlertTriangle, FiRefreshCw, FiPackage, FiSend, FiEdit2 } from "react-icons/fi";
 
 interface MatchedParcel {
   docketNo: string;
@@ -10,6 +10,7 @@ interface MatchedParcel {
   score: number;
   whatsappNumber?: string;
   whatsappStatus?: "NOT_SENT" | "PENDING" | "SENT" | "FAILED" | "NO_NUMBER";
+  emailDate?: string;
 }
 
 interface ReviewParcel {
@@ -19,6 +20,14 @@ interface ReviewParcel {
   bestGuessInstituteName?: string;
   score: number;
   reason: string;
+  emailDate?: string;
+}
+
+/** "YYYY-MM-DD" -> "DD/MM/YYYY" for display. */
+function formatEmailDate(d?: string): string {
+  if (!d) return "-";
+  const [y, m, day] = d.split("-");
+  return y && m && day ? `${day}/${m}/${y}` : d;
 }
 
 interface CourierRunLog {
@@ -43,6 +52,9 @@ export default function CourierTrackingPage() {
   });
   const [selectedDockets, setSelectedDockets] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
+  const [sellers, setSellers] = useState<{ _id: string; instituteName: string; place?: string }[]>([]);
+  const [editingDocket, setEditingDocket] = useState<string | null>(null);
+  const [savingInstitute, setSavingInstitute] = useState(false);
 
   const [autoStatus, setAutoStatus] = useState<{
     todayRunCompleted: boolean;
@@ -78,6 +90,16 @@ export default function CourierTrackingPage() {
 
   useEffect(() => {
     fetchStatus();
+    fetch("/api/sellers")
+      .then((res) => res.json())
+      .then((data) => {
+        const list = (Array.isArray(data) ? data : [])
+          .map((s: any) => ({ _id: s._id, instituteName: s.instituteName, place: s.place }))
+          .filter((s: any) => s.instituteName)
+          .sort((a: any, b: any) => a.instituteName.localeCompare(b.instituteName));
+        setSellers(list);
+      })
+      .catch((e) => console.error("Failed to fetch sellers for institute correction", e));
   }, []);
 
   const handleRunNow = async () => {
@@ -157,6 +179,34 @@ export default function CourierTrackingPage() {
     }
   };
 
+  const handleInstituteChange = async (docketNo: string, sellerId: string) => {
+    if (!sellerId || !todayLog) {
+      setEditingDocket(null);
+      return;
+    }
+    setSavingInstitute(true);
+    setStatus({ type: null, message: "" });
+    try {
+      const res = await fetch("/api/courier/update-matched-institute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: todayLog.date, docketNo, sellerId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatus({ type: "success", message: "Institute corrected." });
+        setEditingDocket(null);
+        await fetchStatus();
+      } else {
+        throw new Error(data.error || "Failed to update institute");
+      }
+    } catch (err: any) {
+      setStatus({ type: "error", message: err.message });
+    } finally {
+      setSavingInstitute(false);
+    }
+  };
+
   return (
       <div className="min-h-screen bg-slate-50 p-6 flex justify-center">
         <div className="max-w-5xl w-full flex flex-col gap-6">
@@ -171,7 +221,7 @@ export default function CourierTrackingPage() {
                   Courier Tracking Automation
                 </h1>
                 <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                  Yesterday&apos;s dispatch register → institute matching
+                  Dispatch register → institute matching
                 </p>
               </div>
             </div>
@@ -222,10 +272,12 @@ export default function CourierTrackingPage() {
               </div>
 
               <p className="text-slate-600 text-xs leading-relaxed mb-4">
-                Triggers automatically the first time OMS is opened each day - fetches yesterday&apos;s courier PDF,
-                parses each parcel, and matches it to an institute by receiver name + city. WhatsApp sending is
-                always manual - select the parcels you want to notify below and press &quot;Send WhatsApp&quot;;
-                nothing gets messaged on its own.
+                Triggers automatically the first time OMS is opened each day - fetches every courier PDF mail
+                received since the last successful fetch (so a courier mail that arrives late or after a missed
+                day still gets picked up), parses each parcel, and matches it to an institute by receiver name +
+                city. Each entry shows the date of its own courier email. WhatsApp sending is always manual -
+                select the parcels you want to notify below and press &quot;Send WhatsApp&quot;; nothing gets
+                messaged on its own.
               </p>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100 mb-6 space-y-2 text-xs">
@@ -310,6 +362,7 @@ export default function CourierTrackingPage() {
                           className="w-3.5 h-3.5"
                         />
                       </th>
+                      <th className="pb-2 pr-4">Date</th>
                       <th className="pb-2 pr-4">Docket No</th>
                       <th className="pb-2 pr-4">Institute</th>
                       <th className="pb-2 pr-4">City</th>
@@ -332,8 +385,42 @@ export default function CourierTrackingPage() {
                               className="w-3.5 h-3.5"
                             />
                           </td>
+                          <td className="py-2 pr-4 text-slate-500 font-mono whitespace-nowrap">{formatEmailDate(m.emailDate)}</td>
                           <td className="py-2 pr-4 font-mono">{m.docketNo}</td>
-                          <td className="py-2 pr-4 font-bold text-slate-800">{m.instituteName}</td>
+                          <td className="py-2 pr-4 font-bold text-slate-800">
+                            {editingDocket === m.docketNo ? (
+                              <select
+                                autoFocus
+                                defaultValue=""
+                                disabled={savingInstitute}
+                                onChange={(e) => handleInstituteChange(m.docketNo, e.target.value)}
+                                onBlur={() => setEditingDocket(null)}
+                                className="text-xs font-semibold border border-slate-300 rounded-lg px-2 py-1 max-w-[220px] bg-white"
+                              >
+                                <option value="" disabled>
+                                  -- Select correct institute --
+                                </option>
+                                {sellers.map((s) => (
+                                  <option key={s._id} value={s._id}>
+                                    {s.instituteName}
+                                    {s.place ? ` (${s.place})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5">
+                                {m.instituteName}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingDocket(m.docketNo)}
+                                  className="text-slate-300 hover:text-slate-600 transition-colors"
+                                  title="Fix wrong institute match"
+                                >
+                                  <FiEdit2 size={11} />
+                                </button>
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2 pr-4 text-slate-500">{m.city}</td>
                           <td className="py-2 pr-4 text-slate-500">{m.receiverName}</td>
                           <td className="py-2 pr-4 text-emerald-700 font-mono">{m.score.toFixed(2)}</td>
@@ -379,6 +466,7 @@ export default function CourierTrackingPage() {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-slate-400 uppercase text-[10px] tracking-wide">
+                      <th className="pb-2 pr-4">Date</th>
                       <th className="pb-2 pr-4">Docket No</th>
                       <th className="pb-2 pr-4">Parsed City</th>
                       <th className="pb-2 pr-4">Parsed Receiver</th>
@@ -390,6 +478,7 @@ export default function CourierTrackingPage() {
                   <tbody className="divide-y divide-slate-100">
                     {todayLog.needsReview.map((r) => (
                       <tr key={r.docketNo}>
+                        <td className="py-2 pr-4 text-slate-500 font-mono whitespace-nowrap">{formatEmailDate(r.emailDate)}</td>
                         <td className="py-2 pr-4 font-mono">{r.docketNo}</td>
                         <td className="py-2 pr-4 text-slate-500">{r.parsedCity}</td>
                         <td className="py-2 pr-4 text-slate-500">{r.parsedReceiverName}</td>
