@@ -30,6 +30,19 @@ function formatEmailDate(d?: string): string {
   return y && m && day ? `${day}/${m}/${y}` : d;
 }
 
+interface DcWhatsappRecord {
+  _id: string;
+  instituteName: string;
+  whatsappNumber: string;
+  orderNos: string[];
+  fileName: string;
+  status: "PENDING" | "SENT" | "FAILED";
+  requestedBy?: string;
+  requestedAt: string;
+  sentAt?: string | null;
+  errorMessage?: string | null;
+}
+
 interface CourierRunLog {
   _id: string;
   date: string;
@@ -53,6 +66,7 @@ export default function CourierTrackingPage() {
   const [selectedDockets, setSelectedDockets] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
   const [sellers, setSellers] = useState<{ _id: string; instituteName: string; place?: string }[]>([]);
+  const [dcWhatsappRecords, setDcWhatsappRecords] = useState<DcWhatsappRecord[]>([]);
   const [editingDocket, setEditingDocket] = useState<string | null>(null);
   const [savingInstitute, setSavingInstitute] = useState(false);
 
@@ -88,8 +102,19 @@ export default function CourierTrackingPage() {
     }
   };
 
+  const fetchDcWhatsappStatus = async () => {
+    try {
+      const res = await fetch("/api/delivery-challan/whatsapp-status");
+      const data = await res.json();
+      if (res.ok) setDcWhatsappRecords(data.records || []);
+    } catch (e) {
+      console.error("Failed to fetch Delivery Challan WhatsApp status", e);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
+    fetchDcWhatsappStatus();
     fetch("/api/sellers")
       .then((res) => res.json())
       .then((data) => {
@@ -498,6 +523,71 @@ export default function CourierTrackingPage() {
               {todayLog.error || "No parcels processed yet today."}
             </p>
           )}
+
+          {/* Delivery Challan WhatsApp Status - separate from the courier
+              dispatch-notification tracking above; this is the Orders page's
+              "Send DC WhatsApp" button's send status. */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-black text-slate-700 uppercase flex items-center gap-2">
+                <FiSend className="text-emerald-600" /> Delivery Challan WhatsApp Status
+              </h3>
+              <button
+                onClick={fetchDcWhatsappStatus}
+                className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                title="Refresh"
+              >
+                <FiRefreshCw size={14} />
+              </button>
+            </div>
+            {dcWhatsappRecords.length === 0 ? (
+              <p className="text-xs font-bold text-slate-400 p-4 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                No Delivery Challan WhatsApp sends yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="text-slate-400 uppercase text-[10px] tracking-wide">
+                      <th className="pb-2 pr-4">Requested</th>
+                      <th className="pb-2 pr-4">Institute</th>
+                      <th className="pb-2 pr-4">Order No(s)</th>
+                      <th className="pb-2 pr-4">WhatsApp No.</th>
+                      <th className="pb-2 pr-4">Requested By</th>
+                      <th className="pb-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dcWhatsappRecords.map((r) => (
+                      <tr key={r._id}>
+                        <td className="py-2 pr-4 text-slate-500 font-mono whitespace-nowrap">
+                          {new Date(r.requestedAt).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="py-2 pr-4 text-slate-700 font-bold">{r.instituteName}</td>
+                        <td className="py-2 pr-4 text-slate-500">{(r.orderNos || []).join(", ")}</td>
+                        <td className="py-2 pr-4 text-slate-500 font-mono">{r.whatsappNumber}</td>
+                        <td className="py-2 pr-4 text-slate-500">{r.requestedBy || "-"}</td>
+                        <td className="py-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              r.status === "SENT"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : r.status === "FAILED"
+                                ? "bg-red-50 text-red-700"
+                                : "bg-amber-50 text-amber-700"
+                            }`}
+                            title={r.status === "FAILED" ? r.errorMessage || "" : ""}
+                          >
+                            {r.status === "PENDING" ? "Queued" : r.status === "SENT" ? "Sent" : "Failed"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       </div>
   );

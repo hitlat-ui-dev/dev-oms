@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft } from "react-icons/fi";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft, FiSend } from "react-icons/fi";
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 // jspdf, jspdf-autotable and xlsx are all heavy (500KB+) and only ever needed
 // when the user actually clicks an Export/Download button - dynamically
@@ -13,7 +13,7 @@ import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 // of this page.
 
 const TABS = [
-  "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
+  "ALL", "ADVANCE", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
 // Module level cache for static directories so navigation stays instant
@@ -78,6 +78,15 @@ export default function OrdersListPage() {
   const [isShipping, setIsShipping] = useState(false);
   const [reloading, setReloading] = useState(false);
 
+  // Advance Order Merge System: match-check is manual/on-demand only (never
+  // automatic) - one button runs a single bulk search across every un-merged
+  // Advance entry and suggests matches grouped by institute, instead of a
+  // per-row button/check on every regular order.
+  const [showAdvanceMatchModal, setShowAdvanceMatchModal] = useState(false);
+  const [advanceMatchGroups, setAdvanceMatchGroups] = useState<any[] | null>(null);
+  const [checkingAdvanceMatch, setCheckingAdvanceMatch] = useState(false);
+  const [mergingPairKey, setMergingPairKey] = useState<string | null>(null);
+
   interface StockItem {
     _id: string;
     sku: string;
@@ -109,8 +118,13 @@ export default function OrdersListPage() {
   // this large component does (opening a modal, toggling a row, etc. all re-render it).
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
-      // 1. Tab Status must match
-      const matchesTab = activeTab === "ALL" || (activeTab === "CANCEL" && order.status === "CANCELL ORDER") || order.status === activeTab;
+      // 1. Tab Status must match. "ADVANCE" is a separate boolean filter, not
+      // part of the real status pipeline - it shows un-merged advance
+      // shipments still waiting on the buyer's official GeM order.
+      const matchesTab = activeTab === "ALL"
+        || (activeTab === "ADVANCE" ? (order.isAdvance === true && !order.merged) : false)
+        || (activeTab === "CANCEL" && order.status === "CANCELL ORDER")
+        || (activeTab !== "ADVANCE" && order.status === activeTab);
 
       // 2. Safe and Trimmed Search Logic
       const matchesItem = (order.itemName || "").toLowerCase().trim()
@@ -719,6 +733,65 @@ const shippingLock = useRef(false);
     }
   };
 
+  // Fired only by the explicit "Check Advance Matches" button click - never
+  // automatically. Runs one bulk search across every un-merged Advance entry
+  // and groups whatever it finds by institute name, for a single suggestion
+  // pass instead of a check per order row.
+  const handleCheckAdvanceMatches = async () => {
+    setShowAdvanceMatchModal(true);
+    setAdvanceMatchGroups(null);
+    setCheckingAdvanceMatch(true);
+    try {
+      const res = await fetch(`/api/seller-orders/advance-matches`);
+      const data = await res.json();
+      setAdvanceMatchGroups(Array.isArray(data) ? data : []);
+    } catch (error) {
+      alert("Failed to check advance matches");
+      setShowAdvanceMatchModal(false);
+    } finally {
+      setCheckingAdvanceMatch(false);
+    }
+  };
+
+  const handleMergeAdvancePair = async (advanceOrderId: string, newOrderId: string) => {
+    if (!window.confirm("Merge this advance shipment into this order? The advance entry will be removed and its shipment details combined into this order.")) return;
+
+    const pairKey = `${advanceOrderId}_${newOrderId}`;
+    setMergingPairKey(pairKey);
+    try {
+      const res = await fetch("/api/seller-orders/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ advanceOrderId, newOrderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to merge orders");
+        return;
+      }
+
+      setOrders(prev => prev
+        .filter(o => o._id !== advanceOrderId)
+        .map(o => o._id === newOrderId ? { ...o, ...data.order } : o)
+      );
+      // Drop every remaining suggested pair involving either order - the
+      // advance entry is gone, and the surviving order is no longer "un-merged".
+      setAdvanceMatchGroups(prev => {
+        if (!prev) return prev;
+        return prev
+          .map(group => ({
+            ...group,
+            pairs: group.pairs.filter((p: any) => p.advanceOrder._id !== advanceOrderId && p.regularOrder._id !== newOrderId),
+          }))
+          .filter(group => group.pairs.length > 0);
+      });
+    } catch (error) {
+      alert("Failed to merge orders");
+    } finally {
+      setMergingPairKey(null);
+    }
+  };
+
   interface Seller {
     _id?: string;
     buyerName?: string;
@@ -908,6 +981,103 @@ const shippingLock = useRef(false);
     doc.save(`Challan_${safeName}_${formattedDate}.pdf`);
   };
 
+  // "Send DC WhatsApp" - same grouping-by-institute as downloadDeliveryChallan
+  // above, but one SEPARATE single-institute PDF per seller (not one combined
+  // multi-page download) since each institute's challan has to go to that
+  // institute's own WhatsApp number. Queues each PDF via
+  // /api/delivery-challan/queue-whatsapp - the local whatsapp-bridge service
+  // (already running for courier-tracking sends) polls and actually sends it.
+  const [sendingDcWhatsapp, setSendingDcWhatsapp] = useState(false);
+  const sendDeliveryChallanWhatsapp = async (filteredOrders: any[], sellers: any[], companies: any[], selectedOrderIds: string[] = []) => {
+    const activeOrders = selectedOrderIds.length > 0
+      ? filteredOrders.filter(order => selectedOrderIds.includes(order._id))
+      : filteredOrders;
+
+    if (!activeOrders || activeOrders.length === 0) {
+      alert("No orders selected to send.");
+      return;
+    }
+
+    setSendingDcWhatsapp(true);
+    try {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+
+      const today = new Date();
+      const dd = String(today.getDate()).padStart(2, '0');
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const yy = String(today.getFullYear()).slice(-2);
+      const formattedDate = `${dd}-${mm}-${yy}`;
+
+      const groupedBySeller = activeOrders.reduce((acc: any, order) => {
+        const key = order.sellerId || "unknown_seller";
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(order);
+        return acc;
+      }, {});
+
+      const currentUsername = JSON.parse(localStorage.getItem("oms_user") || "{}")?.username || "";
+
+      let queuedCount = 0;
+      const skipped: string[] = [];
+
+      for (const sellerId of Object.keys(groupedBySeller)) {
+        const items = groupedBySeller[sellerId];
+        if (!items || items.length === 0) continue;
+
+        const sellerInfo = sellers.find(s => s._id === sellerId) || {};
+        const instituteName = sellerInfo.instituteName || items[0].instituteName || items[0].buyerName || "Unknown Institute";
+        const whatsappNumber = (sellerInfo.whatsappNumber || "").trim();
+
+        if (!whatsappNumber) {
+          skipped.push(instituteName);
+          continue;
+        }
+
+        const doc = new jsPDF();
+        drawChallanPage(doc, autoTable, sellerInfo, items, companies, formattedDate, transporters);
+
+        const dataUri: string = doc.output("datauristring");
+        const pdfBase64 = dataUri.slice(dataUri.indexOf("base64,") + "base64,".length);
+        const safeName = instituteName.replace(/[^a-z0-9]/gi, '_');
+        const fileName = `Challan_${safeName}_${formattedDate}.pdf`;
+
+        const res = await fetch("/api/delivery-challan/queue-whatsapp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instituteName,
+            whatsappNumber,
+            sellerId,
+            orderNos: items.map((o: any) => o.orderNo),
+            fileName,
+            pdfBase64,
+            requestedBy: currentUsername,
+          }),
+        });
+
+        if (res.ok) {
+          queuedCount++;
+        } else {
+          const err = await res.json().catch(() => ({}));
+          skipped.push(`${instituteName} (${err.error || "queue failed"})`);
+        }
+      }
+
+      let message = queuedCount > 0
+        ? `✓ ${queuedCount} institute(s) queued for WhatsApp - the bridge will send them shortly.`
+        : "Nothing was queued.";
+      if (skipped.length > 0) {
+        message += `\n\nSkipped (no WhatsApp number or error): ${skipped.join(", ")}`;
+      }
+      alert(message);
+    } finally {
+      setSendingDcWhatsapp(false);
+    }
+  };
+
   const handleExportSellingReport = async () => {
     const reportData = filteredOrders.map((order) => {
       return {
@@ -987,23 +1157,27 @@ const shippingLock = useRef(false);
               Remaining Order
             </button>
           </div>
-          <div className="flex items-center">
+          <div className="flex flex-wrap items-center gap-2">
             {!ordersLoadedAll && (
               <button
                 onClick={() => fetchOrders(true)}
                 disabled={loadingAllOrders}
-                className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-amber-200 mr-2 shrink-0"
+                className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-amber-200 shrink-0"
               >
                 {loadingAllOrders ? "Loading..." : "Load All Orders"}
               </button>
             )}
             <button
+              onClick={handleCheckAdvanceMatches}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-amber-200"
+            >Check Advance Matches</button>
+            <button
               onClick={() => setIsRequestModalOpen(true)}
-              className="bg-blue-600 mr-2 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
             >Add Purchase Req</button>
             <button
               onClick={() => setShowOrderModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
             >
               Add New Order
             </button>
@@ -1048,21 +1222,21 @@ const shippingLock = useRef(false);
               onChange={(e) => setFilters({ ...filters, buyerName: e.target.value })}
             />
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 col-span-2 md:col-span-1">
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Order Date</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <input
                 type="date"
                 value={filters.startDate}
                 onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-                className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 min-w-0 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="From Date"
               />
               <input
                 type="date"
                 value={filters.endDate}
                 onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-                className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 min-w-0 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="To Date"
               />
             </div>
@@ -1070,7 +1244,7 @@ const shippingLock = useRef(false);
           </div>
           {/* Secured horizontal row container without forcing structural off-screen floating */}
           {/* This wrapper ensures the buttons stay grouped together and aligns them to the far right */}
-          <div className="w-full flex flex-row items-center justify-end gap-2 mt-2 md:mt-0">
+          <div className="w-full col-span-2 md:col-span-1 flex flex-row items-center justify-end gap-2 mt-2 md:mt-0">
             
             <div className="flex flex-row items-center gap-2 border border-slate-100 bg-slate-50/50 p-1 rounded-xl">
               {/* Reset Filter Button */}
@@ -1126,16 +1300,26 @@ const shippingLock = useRef(false);
           // >
           //   <FiDownload className="text-xl" /> Download Challan
           // </button>
-          <button
-            onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[], selectedOrderIds)}
-            className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 mb-1"
-          >
-            <FiDownload className="text-xl mr-1" />
-            {selectedOrderIds.length > 0
-              ? `Download Checked (${selectedOrderIds.length}) Items`
-              : `Download All (${filteredOrders.length}) Items`
-            }
-          </button>
+          <div className="flex items-center gap-2 mb-1">
+            <button
+              onClick={() => downloadDeliveryChallan(filteredOrders, sellers as any[], companies as any[], selectedOrderIds)}
+              className="flex items-center px-4 justify-end py-2 bg-red-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95"
+            >
+              <FiDownload className="text-xl mr-1" />
+              {selectedOrderIds.length > 0
+                ? `Download Checked (${selectedOrderIds.length}) Items`
+                : `Download All (${filteredOrders.length}) Items`
+              }
+            </button>
+            <button
+              onClick={() => sendDeliveryChallanWhatsapp(filteredOrders, sellers as any[], companies as any[], selectedOrderIds)}
+              disabled={sendingDcWhatsapp}
+              className="flex items-center px-4 justify-end py-2 bg-emerald-600 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
+            >
+              <FiSend className="text-lg mr-1" />
+              {sendingDcWhatsapp ? "Sending..." : "Send DC WhatsApp"}
+            </button>
+          </div>
         )}
         {activeTab === "READY TO SHIP" && selectedOrderIds.length > 0 && (
           <button
@@ -1253,6 +1437,12 @@ const shippingLock = useRef(false);
                   <div className="font-black text-slate-800 uppercase truncate leading-tight">{order.firmCode}</div>
                   {order.subParty && (
                     <div className="text-[9px] font-bold text-slate-400 lowercase truncate leading-tight">{order.subParty}</div>
+                  )}
+                  {order.isAdvance && !order.merged && (
+                    <div className="text-[8px] font-black text-amber-600 uppercase tracking-wide leading-tight">Advance</div>
+                  )}
+                  {order.mergedFromOrderId && (
+                    <div className="text-[8px] font-black text-emerald-600 uppercase tracking-wide leading-tight">Merged from Advance</div>
                   )}
                 </td>
                 <td className="px-3 py-2 max-w-28">
@@ -1754,6 +1944,84 @@ const shippingLock = useRef(false);
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showAdvanceMatchModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-[2.5rem] p-8 shadow-2xl border border-amber-100 relative">
+            <button
+              onClick={() => { setShowAdvanceMatchModal(false); setAdvanceMatchGroups(null); }}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <FiX size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-amber-500 text-white rounded-2xl"><FiTruck size={24} /></div>
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Advance Matches</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Grouped by Institute</p>
+              </div>
+            </div>
+
+            {checkingAdvanceMatch ? (
+              <p className="text-center text-slate-400 font-bold text-sm py-6">Checking...</p>
+            ) : advanceMatchGroups && advanceMatchGroups.length > 0 ? (
+              <div className="space-y-6">
+                {advanceMatchGroups.map((group) => (
+                  <div key={group.instituteName}>
+                    <h3 className="text-xs font-black text-slate-700 uppercase tracking-wide mb-2">{group.instituteName}</h3>
+                    <div className="space-y-3">
+                      {group.pairs.map((pair: any) => {
+                        const pairKey = `${pair.advanceOrder._id}_${pair.regularOrder._id}`;
+                        const qtyMatches = Number(pair.advanceOrder.reQty) === Number(pair.regularOrder.reQty);
+                        const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-') : "N/A";
+                        return (
+                          <div key={pairKey} className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <p className="font-black text-slate-800 text-sm">{pair.advanceOrder.itemName}</p>
+                              {qtyMatches && (
+                                <span className="shrink-0 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase">Qty Matches</span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-white/70 rounded-xl p-3">
+                                <p className="text-[9px] font-black text-amber-600 uppercase mb-1">Advance — {pair.advanceOrder.orderNo}</p>
+                                <p className="text-[10px] font-bold text-slate-600">Qty: {pair.advanceOrder.reQty} {pair.advanceOrder.unit}</p>
+                                <p className="text-[10px] font-bold text-slate-600">Sent: {fmtDate(pair.advanceOrder.deliveryDate)}</p>
+                              </div>
+                              <div className="bg-white/70 rounded-xl p-3">
+                                <p className="text-[9px] font-black text-blue-600 uppercase mb-1">Official — {pair.regularOrder.orderNo} ({pair.regularOrder.firmCode})</p>
+                                <p className="text-[10px] font-bold text-slate-600">Qty: {pair.regularOrder.reQty} {pair.regularOrder.unit}</p>
+                                <p className="text-[10px] font-bold text-slate-600 truncate" title={pair.regularOrder.contractNo || "N/A"}>
+                                  Contract: {pair.regularOrder.contractNo || "N/A"}
+                                </p>
+                                <p className="text-[10px] font-bold text-slate-600">
+                                  Contract Date: {fmtDate(pair.regularOrder.contractDate)}
+                                </p>
+                                <p className="text-[10px] font-bold text-slate-600">
+                                  Order Placed: {fmtDate(pair.regularOrder.createdAt)}
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              disabled={mergingPairKey === pairKey}
+                              onClick={() => handleMergeAdvancePair(pair.advanceOrder._id, pair.regularOrder._id)}
+                              className="w-full mt-3 px-4 py-2 bg-amber-500 text-white rounded-xl font-black uppercase text-[10px] hover:bg-amber-600 disabled:opacity-50 transition-all"
+                            >
+                              {mergingPairKey === pairKey ? "Merging..." : "Merge"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-center text-slate-400 font-bold text-sm py-6">No matching advance order found</p>
+            )}
           </div>
         </div>
       )}

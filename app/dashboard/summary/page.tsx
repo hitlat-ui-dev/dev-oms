@@ -114,8 +114,8 @@ function StatCard({
       <div className={`${color} text-white p-2.5 rounded-xl shrink-0`}>{icon}</div>
       <div className="min-w-0">
         <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block truncate">{label}</span>
-        <span className="text-lg font-black text-slate-800 block leading-tight mt-0.5">{value}</span>
-        {sub && <span className="text-[10px] text-slate-400 font-bold block mt-0.5">{sub}</span>}
+        <span className="text-base sm:text-lg font-black text-slate-800 block leading-tight mt-0.5 truncate" title={value}>{value}</span>
+        {sub && <span className="text-[10px] text-slate-400 font-bold block mt-0.5 truncate">{sub}</span>}
       </div>
     </div>
   );
@@ -247,11 +247,11 @@ export default function SummaryDashboardPage() {
                 Whole-System Business Overview
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <select
                 value={firmFilter}
                 onChange={(e) => setFirmFilter(e.target.value)}
-                className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-700 focus:outline-none focus:border-blue-500 font-bold"
+                className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-700 focus:outline-none focus:border-blue-500 font-bold min-w-0 max-w-[45vw] sm:max-w-[220px] truncate"
               >
                 <option value="">All Firms</option>
                 {companies.map((c) => (
@@ -263,7 +263,7 @@ export default function SummaryDashboardPage() {
               <button
                 onClick={fetchSummary}
                 disabled={loading}
-                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2 px-4 text-[11px] font-black uppercase tracking-wide transition-colors"
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2 px-4 text-[11px] font-black uppercase tracking-wide transition-colors shrink-0"
               >
                 <FiRefreshCw size={12} className={loading ? "animate-spin" : ""} />
                 {loading ? "Scanning..." : data ? "Rescan" : "Scan Data"}
@@ -362,16 +362,16 @@ export default function SummaryDashboardPage() {
                 ) : (
                   <div className="space-y-2.5">
                     {data.statusBreakdown.map((s) => (
-                      <div key={s.status} className="flex items-center gap-3">
-                        <span className="w-36 shrink-0 text-[10px] font-black uppercase text-slate-600 truncate">{s.status}</span>
-                        <div className="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
+                      <div key={s.status} className="flex items-center gap-1.5 sm:gap-3">
+                        <span className="w-16 sm:w-36 shrink-0 text-[8px] sm:text-[10px] font-black uppercase text-slate-600 truncate">{s.status}</span>
+                        <div className="flex-1 min-w-0 bg-slate-100 rounded-full h-5 overflow-hidden">
                           <div
                             className={`h-full ${STATUS_COLORS[s.status] || "bg-slate-500"} rounded-full transition-all`}
                             style={{ width: `${Math.max(4, (s.value / maxStatusValue) * 100)}%` }}
                           />
                         </div>
-                        <span className="w-16 shrink-0 text-right text-[10px] font-bold text-slate-500">{formatInt(s.count)}</span>
-                        <span className="w-28 shrink-0 text-right text-[11px] font-black text-slate-800">₹{formatMoney(s.value)}</span>
+                        <span className="w-8 sm:w-16 shrink-0 text-right text-[8px] sm:text-[10px] font-bold text-slate-500">{formatInt(s.count)}</span>
+                        <span className="w-20 sm:w-28 shrink-0 text-right text-[9px] sm:text-[11px] font-black text-slate-800 truncate" title={`₹${formatMoney(s.value)}`}>₹{formatMoney(s.value)}</span>
                       </div>
                     ))}
                   </div>

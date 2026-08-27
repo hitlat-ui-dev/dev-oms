@@ -77,7 +77,12 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     orderQty: "" as any,
     reQty: 0,
     rate: "" as any,
-    remark: ""
+    remark: "",
+    // Advance Order Merge System: material shipped before the buyer's
+    // official GeM order exists. deliveryDate doubles as "Material Sent
+    // Date" here - same schema field the ship flow already uses elsewhere.
+    isAdvance: false,
+    deliveryDate: ""
   };
   const [formData, setFormData] = useState(blankFormData);
   // Populated when the picked item belongs to a variant group (e.g. "White
@@ -137,7 +142,9 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       orderQty: initialData.orderQty || "",
       reQty: initialData.reQty || 0,
       rate: initialData.rate || "",
-      remark: initialData.remark || ""
+      remark: initialData.remark || "",
+      isAdvance: !!initialData.isAdvance,
+      deliveryDate: initialData.deliveryDate || ""
     });
     loadedRecordRef.current = recordKey;
   }, [initialData, sellers, stocks]);
@@ -263,7 +270,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       alert("Still loading firm/institute/item lists — please wait a second and press Save again.");
       return false;
     }
-    const isValidFirm = firms.some((f: any) => f.firmCode === formData.firmCode);
+    // Advance Order: firmCode is the literal placeholder "ADVANCE" (no real
+    // firm chosen yet - that happens later when the buyer's actual GeM order
+    // is merged in), so the normal known-firm-list check doesn't apply here.
+    const isValidFirm = formData.isAdvance || firms.some((f: any) => f.firmCode === formData.firmCode);
     if (!isValidFirm) {
       alert("❌ Error: Please select a valid Firm Code from the dropdown list suggestions.");
       return false; // Block database submit action pipeline completely
@@ -427,6 +437,26 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
           <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
 
+            {!isEditing && (
+              <label className="md:col-span-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 cursor-pointer w-fit">
+                <input
+                  type="checkbox"
+                  className="w-3.5 h-3.5 accent-amber-600"
+                  checked={formData.isAdvance}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    // "AD" is the real registered firm code (firmName "ADVANCE")
+                    // this firm's team already uses as the placeholder for
+                    // advance shipments - not an invented value.
+                    setFormData(prev => ({ ...prev, isAdvance: checked, firmCode: checked ? "AD" : "" }));
+                  }}
+                />
+                <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                  Advance Order — material shipped before official GeM order exists
+                </span>
+              </label>
+            )}
+
             {/* <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
               <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
@@ -440,16 +470,20 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 ref={firmCodeInputRef}
                 list="firm-options"
                 required
+                disabled={formData.isAdvance}
                 placeholder="Search Firm..."
-                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                 value={formData.firmCode}
                 onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}
                 onBlur={(e) => {
+                  if (formData.isAdvance) return; // "ADVANCE" is a valid placeholder, not a real firm to check
                   const typedVal = e.target.value.trim();
                   if (!typedVal) return; // Allow them to leave it blank if they want to fill it later
 
                   // Check if the typed word matches an actual code from the firms database
-                  const matchFound = firms.some((f: any) => f.firmCode === typedVal);
+                  // ("AD" excluded here too - it's the Advance placeholder, not
+                  // a firm to manually type/select outside Advance Order mode)
+                  const matchFound = typedVal !== "AD" && firms.some((f: any) => f.firmCode === typedVal);
 
                   if (!matchFound) {
                     alert(`❌ "${typedVal}" is not a valid firm code! Please pick an option from the list.`);
@@ -458,7 +492,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                 }}
               />
               <datalist id="firm-options">
-                {firms.map((f: any) => (
+                {/* "AD" (firmName "ADVANCE") is a placeholder, not a real firm
+                    to ship under - hidden from normal search so nobody picks
+                    it by hand. The Advance Order checkbox above sets it
+                    programmatically instead. */}
+                {firms.filter((f: any) => f.firmCode !== "AD").map((f: any) => (
                   <option key={f._id} value={f.firmCode}>
                     {f.firmName}
                   </option>
@@ -677,10 +715,17 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               )
             )}
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
-              <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({ ...formData, contractDate: e.target.value })} />
-            </div>
+            {formData.isAdvance ? (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Material Sent Date *</label>
+                <input type="date" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.deliveryDate} onChange={(e) => setFormData({ ...formData, deliveryDate: e.target.value })} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract Date</label>
+                <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.contractDate} onChange={(e) => setFormData({ ...formData, contractDate: e.target.value })} />
+              </div>
+            )}
 
             <div className="md:col-span-2 space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contract No. (Paste Link here)</label>

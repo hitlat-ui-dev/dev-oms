@@ -21,7 +21,7 @@
 // PM2 (see README.md) so it survives PC restarts.
 
 require("dotenv").config();
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrcodeTerminal = require("qrcode-terminal");
 const qrcodePng = require("qrcode");
 const path = require("path");
@@ -75,6 +75,56 @@ async function markSent(date, docketNo, status) {
     body: JSON.stringify({ date, docketNo, status }),
   });
   if (!res.ok) log(`  Warning: mark-whatsapp-sent failed for ${docketNo}: ${res.status} ${await res.text()}`);
+}
+
+// ===== Delivery Challan WhatsApp queue (Orders page "Send DC WhatsApp") =====
+// Separate queue from the courier-tracking one above - one document per
+// institute's Delivery Challan PDF, not per parcel - but the same pull model.
+async function fetchPendingChallans() {
+  const res = await fetch(`${DEV_OMS_BASE_URL}/api/delivery-challan/pending-whatsapp`, {
+    headers: { "x-bridge-secret": COURIER_BRIDGE_SECRET },
+  });
+  if (!res.ok) throw new Error(`delivery-challan pending-whatsapp fetch failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.pending || [];
+}
+
+async function markChallanSent(id, status, errorMessage) {
+  const res = await fetch(`${DEV_OMS_BASE_URL}/api/delivery-challan/mark-whatsapp-sent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-bridge-secret": COURIER_BRIDGE_SECRET },
+    body: JSON.stringify({ id, status, errorMessage }),
+  });
+  if (!res.ok) log(`  Warning: delivery-challan mark-whatsapp-sent failed for ${id}: ${res.status} ${await res.text()}`);
+}
+
+async function pollChallansOnce(client) {
+  try {
+    const pending = await fetchPendingChallans();
+    if (pending.length === 0) return;
+    log(`${pending.length} pending Delivery Challan WhatsApp send(s) found.`);
+
+    for (const item of pending) {
+      const number = normalizeNumber(item.whatsappNumber);
+      try {
+        const numberId = await client.getNumberId(number);
+        if (!numberId) {
+          throw new Error(`"${number}" is not registered on WhatsApp (or lookup failed).`);
+        }
+        const media = new MessageMedia("application/pdf", item.pdfBase64, item.fileName);
+        await client.sendMessage(numberId._serialized, media, {
+          caption: `Delivery Challan - ${item.instituteName}\nOrder(s): ${(item.orderNos || []).join(", ")}`,
+        });
+        await markChallanSent(item._id, "SENT");
+        log(`  Sent Delivery Challan to ${item.instituteName} (${number})`);
+      } catch (err) {
+        await markChallanSent(item._id, "FAILED", err.message);
+        log(`  FAILED sending Delivery Challan to ${item.instituteName} (${number}): ${err.message}`);
+      }
+    }
+  } catch (err) {
+    log(`Delivery Challan poll cycle error: ${err.message}`);
+  }
 }
 
 let polling = false;
@@ -154,7 +204,11 @@ client.on("ready", () => {
   // polled (and sent) by multiple overlapping timers at once.
   if (pollIntervalHandle) clearInterval(pollIntervalHandle);
   pollOnce(client);
-  pollIntervalHandle = setInterval(() => pollOnce(client), POLL_INTERVAL_MS);
+  pollChallansOnce(client);
+  pollIntervalHandle = setInterval(() => {
+    pollOnce(client);
+    pollChallansOnce(client);
+  }, POLL_INTERVAL_MS);
 });
 
 client.on("auth_failure", (msg) => log(`Auth failure: ${msg}`));

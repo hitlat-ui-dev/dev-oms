@@ -440,6 +440,7 @@
         "[GeM Bill Auto-Submit] GeM ka 30-din price-increase restriction laga hua hai is product par - Rate update SKIP ho gaya, Stock/Min Qty phir bhi update hoga."
       );
     } else {
+      await waitForCaptchaIfPresent();
       clickButtonByText(/^(save|update|submit)$/i);
       await sleep(1500);
     }
@@ -464,6 +465,7 @@
     }
 
     if (didAnything) {
+      await waitForCaptchaIfPresent();
       clickButtonByText(/^(save|update|submit)$/i);
       await sleep(1500);
       console.log("[GeM Bill Auto-Submit] Stock/Min Qty update kar diya.");
@@ -1128,6 +1130,44 @@
   function isVisible(el) {
     const style = window.getComputedStyle(el);
     return style.display !== "none" && style.visibility !== "hidden" && el.offsetParent !== null;
+  }
+
+  // The catalog edit page (Rate/Stock/Min Qty) has its own Captcha right
+  // before the final Save/Submit - confirmed live 27-Aug-2026, separate from
+  // the #captcha_math one on the login page. Its exact id isn't known yet
+  // (unverified against the live page), so this looks for ANY visible text
+  // input whose id/name/placeholder/nearby text mentions "captcha", the same
+  // broad way setLabeledInputValue finds fields by nearby label text. If
+  // found, waits for a human to type it in (like the login captcha) before
+  // the caller clicks Save/Submit; if genuinely absent, resolves immediately
+  // so pages without a captcha aren't blocked.
+  async function waitForCaptchaIfPresent() {
+    const captchaInput = Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find((inp) => {
+      if (!isVisible(inp)) return false;
+      const id = (inp.id || "").toLowerCase();
+      const name = (inp.name || "").toLowerCase();
+      const placeholder = (inp.placeholder || "").toLowerCase();
+      if (/captcha/.test(id) || /captcha/.test(name) || /captcha/.test(placeholder)) return true;
+      const container = inp.closest("div, td, li, form") || inp.parentElement;
+      return !!(container && /captcha/i.test(container.textContent || ""));
+    });
+
+    if (!captchaInput) return;
+
+    console.log("[GeM Bill Auto-Submit] Is page par bhi Captcha hai - manually bhar do, bharte hi Save/Submit apne aap ho jayega.");
+
+    await new Promise((resolve) => {
+      let debounceId;
+      const onInput = () => {
+        clearTimeout(debounceId);
+        if (captchaInput.value.trim().length < 3) return; // wait for a real-looking entry, not one stray keystroke
+        debounceId = setTimeout(() => {
+          captchaInput.removeEventListener("input", onInput);
+          resolve();
+        }, 600);
+      };
+      captchaInput.addEventListener("input", onInput);
+    });
   }
 
   function sleep(ms) {

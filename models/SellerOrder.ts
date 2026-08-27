@@ -62,6 +62,17 @@ const SellerOrderSchema = new Schema({
   billExemptNote: { type: String, default: "" },
   billExemptAt: { type: Date, default: null },
   billExemptBy: { type: String, default: "" },
+  // Advance Order Merge System: an order created before the buyer's official
+  // GeM order exists (material shipped on trust, firmCode is literally
+  // "ADVANCE") is flagged isAdvance=true. Once the real GeM order later
+  // appears, POST /api/seller-orders/merge folds the two into a single
+  // surviving record and deletes the other - merged stays false forever on
+  // an advance entry that never got matched (that's the "still outstanding"
+  // signal the Advance-Pending filter uses), and mergedFromOrderId is set on
+  // the SURVIVING record only, as an audit trail + the "Merged from Advance" tag.
+  isAdvance: { type: Boolean, default: false },
+  merged: { type: Boolean, default: false },
+  mergedFromOrderId: { type: Schema.Types.ObjectId, ref: "SellerOrder", default: null },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 SellerOrderSchema.index({ firmCode: 1, createdAt: -1 });
@@ -72,5 +83,6 @@ SellerOrderSchema.index({ createdAt: -1 });
 SellerOrderSchema.index({ contractNo: 1, firmCode: 1 });
 SellerOrderSchema.index({ billId: 1 });
 SellerOrderSchema.index({ firmCode: 1, billExempt: 1 });
+SellerOrderSchema.index({ isAdvance: 1, merged: 1, instituteName: 1 });
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

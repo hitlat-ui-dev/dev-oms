@@ -1199,9 +1199,13 @@ export default function GeMSyncPage() {
 
     if (newUnmatchedItem.gemLink && newUnmatchedItem.gemLink.trim() !== "") {
       const trimmedLink = newUnmatchedItem.gemLink.trim();
-      const duplicateLink = listings.find(lst => 
-        lst.firmCode === newUnmatchedItem.firmCode && 
-        lst.gemLink && 
+      // Scoped to this same buyer - the same real GeM product page is
+      // legitimately reused across different buyers' own Master List entries
+      // (each buyer gets its own listing row), so that alone isn't a duplicate.
+      const duplicateLink = listings.find(lst =>
+        lst.firmCode === newUnmatchedItem.firmCode &&
+        lst.buyerId === selectedBuyerId &&
+        lst.gemLink &&
         lst.gemLink.trim() === trimmedLink
       );
 
@@ -1331,8 +1335,12 @@ export default function GeMSyncPage() {
         row.firmCode
       )?.id;
 
+      // Scoped to this same buyer - the same real GeM product page is
+      // legitimately reused across different buyers' own Master List entries
+      // (each buyer gets its own listing row), so that alone isn't a duplicate.
       const duplicateLink = listings.find(lst =>
         lst.firmCode === row.firmCode &&
+        lst.buyerId === selectedBuyerId &&
         lst.gemLink &&
         lst.gemLink.trim() === trimmedLink &&
         (existingListingId ? lst.id !== existingListingId : true)
@@ -1580,9 +1588,13 @@ export default function GeMSyncPage() {
 
     if (newGemLinkValue && newGemLinkValue.trim() !== "") {
       const trimmedLink = newGemLinkValue.trim();
-      const duplicateLink = listings.find(lst => 
-        lst.firmCode === selectedListingForRevision.firmCode && 
-        lst.gemLink && 
+      // Scoped to this same buyer - the same real GeM product page is
+      // legitimately reused across different buyers' own Master List entries
+      // (each buyer gets its own listing row), so that alone isn't a duplicate.
+      const duplicateLink = listings.find(lst =>
+        lst.firmCode === selectedListingForRevision.firmCode &&
+        lst.buyerId === selectedListingForRevision.buyerId &&
+        lst.gemLink &&
         lst.gemLink.trim() === trimmedLink &&
         lst.id !== selectedListingForRevision.id
       );
@@ -1646,12 +1658,22 @@ export default function GeMSyncPage() {
     saveListings(updatedListings);
   };
 
-  // Sync Checklist's "Sync" button - only meaningful for listings created via
-  // "Add to Master List" (they alone carry gemCatalogueId, GeM's own product
-  // identifier the extension needs to find the right listing on GeM's side).
+  // Sync Checklist's "Sync" button needs GeM's own Product ID to find the
+  // right listing on GeM's side. Normally that's gemCatalogueId (set only via
+  // "Add to Master List" exact-match). As a fallback for listings that never
+  // went through that flow but do have a gemLink someone pasted in by hand
+  // (e.g. .../p-5116877-80326758773-cat.html), the same Product ID is parsed
+  // straight out of that URL - not a guess, just reading the id a human
+  // already confirmed belongs to this exact item.
+  const extractProductIdFromGemLink = (gemLink: string): string => {
+    const match = gemLink.match(/\/p-([^/]+?)-cat\.html/i);
+    return match ? match[1] : "";
+  };
+
   const handleSyncToGem = async (lst: FirmItemListing) => {
-    if (!lst.gemCatalogueId) {
-      alert("Ye listing GeM Catalogue se 'Add to Master List' ke through link nahi hui - is button se sync nahi ho sakta. Manually GeM par update karo.");
+    const productId = lst.gemCatalogueId || (lst.gemLink ? extractProductIdFromGemLink(lst.gemLink) : "");
+    if (!productId) {
+      alert("Ye listing GeM Catalogue se 'Add to Master List' ke through link nahi hui aur gemLink me se bhi Product ID nahi mila - is button se sync nahi ho sakta. Manually GeM par update karo.");
       return;
     }
     const cred = gemCredentials.find(c => c.firmCode === lst.firmCode);
@@ -1667,7 +1689,7 @@ export default function GeMSyncPage() {
         gemPassword: cred.gemPassword,
         gemMailId: cred.gemMailId,
         firmCode: lst.firmCode,
-        productId: lst.gemCatalogueId,
+        productId,
         newRate: lst.rate,
         newStock: lst.availGemStock,
         newMinQty: lst.minQty,

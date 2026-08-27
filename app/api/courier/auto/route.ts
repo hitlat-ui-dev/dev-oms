@@ -41,7 +41,6 @@ export async function POST(req: Request) {
     }
 
     const todayDate = new Date().toISOString().split("T")[0];
-    const existingLog = await CourierRunLog.findOne({ date: todayDate, status: "SUCCESS" });
 
     let forceRun = false;
     try {
@@ -51,11 +50,23 @@ export async function POST(req: Request) {
       // Body empty or invalid JSON, ignore
     }
 
-    if (existingLog && !forceRun) {
+    // Auto-triggered (app/layout.tsx, on every site access) is rate-limited by
+    // a cooldown rather than "once per calendar day" - the courier can send
+    // more than one email in a day (confirmed live 26-Aug-2026: mails at
+    // 06:21 and 15:31 the same day), and a calendar-day gate meant whichever
+    // one arrived AFTER the day's first auto-check sat unprocessed until
+    // someone happened to hit "Run Now" or the next day's first login. The
+    // cooldown still stops every single page navigation from hitting the
+    // Gmail API, without silently going quiet for the rest of the day.
+    const COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours
+    const lastSuccess = await CourierRunLog.findOne({ status: "SUCCESS" }).sort({ timestamp: -1 });
+    const withinCooldown = !!lastSuccess && Date.now() - new Date(lastSuccess.timestamp).getTime() < COOLDOWN_MS;
+
+    if (withinCooldown && !forceRun) {
       return NextResponse.json({
         skipped: true,
-        message: `Courier run already completed for today (${todayDate}).`,
-        log: existingLog,
+        message: `Courier already checked recently (at ${new Date(lastSuccess!.timestamp).toISOString()}) - next auto-check in a bit, or use Run Now.`,
+        log: lastSuccess,
       });
     }
 
