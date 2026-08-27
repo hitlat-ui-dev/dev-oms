@@ -127,6 +127,23 @@ async function pollChallansOnce(client) {
   }
 }
 
+// Pushes connection state (and the QR itself, when re-login is needed) to
+// dev-oms so the Courier Tracking page can show it - Vercel can't reach this
+// PC directly, so this is a push (unlike the pending-sends queues above,
+// which the bridge polls FOR).
+async function pushStatus(status, qrDataUrl) {
+  try {
+    const res = await fetch(`${DEV_OMS_BASE_URL}/api/whatsapp-bridge/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-bridge-secret": COURIER_BRIDGE_SECRET },
+      body: JSON.stringify({ status, qrDataUrl: qrDataUrl || null }),
+    });
+    if (!res.ok) log(`  Warning: whatsapp-bridge/status push failed: ${res.status} ${await res.text()}`);
+  } catch (err) {
+    log(`  Warning: whatsapp-bridge/status push error: ${err.message}`);
+  }
+}
+
 let polling = false;
 
 async function pollOnce(client) {
@@ -192,12 +209,22 @@ client.on("qr", async (qr) => {
   } catch (err) {
     log(`Could not save QR PNG: ${err.message}`);
   }
+
+  // Pushed to dev-oms as a data: URL so the Courier Tracking page can render
+  // it directly in an <img> - scan it from there, no PC/terminal access needed.
+  try {
+    const qrDataUrl = await qrcodePng.toDataURL(qr, { width: 400 });
+    await pushStatus("NEEDS_QR", qrDataUrl);
+  } catch (err) {
+    log(`Could not push QR status: ${err.message}`);
+  }
 });
 
 let pollIntervalHandle = null;
 
 client.on("ready", () => {
   log("WhatsApp bridge ready. Polling dev-oms every " + POLL_INTERVAL_MS / 1000 + "s for pending sends.");
+  pushStatus("CONNECTED", null);
   // "ready" can fire more than once per process (e.g. after a reconnect) -
   // without clearing the previous timer first, each re-fire stacks another
   // interval on top of the existing one, so the same pending items get
@@ -211,7 +238,13 @@ client.on("ready", () => {
   }, POLL_INTERVAL_MS);
 });
 
-client.on("auth_failure", (msg) => log(`Auth failure: ${msg}`));
-client.on("disconnected", (reason) => log(`Disconnected: ${reason}`));
+client.on("auth_failure", (msg) => {
+  log(`Auth failure: ${msg}`);
+  pushStatus("DISCONNECTED", null);
+});
+client.on("disconnected", (reason) => {
+  log(`Disconnected: ${reason}`);
+  pushStatus("DISCONNECTED", null);
+});
 
 client.initialize();

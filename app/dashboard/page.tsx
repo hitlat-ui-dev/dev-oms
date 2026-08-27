@@ -15,7 +15,8 @@ import {
   FiPlus,
   FiX,
   FiTruck,
-  FiHash
+  FiHash,
+  FiKey
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
@@ -163,13 +164,13 @@ export default function DashboardPage() {
       }
     },
     {
-      key: "print",
-      title: "Print Label",
-      sub: "Quick print job",
-      icon: <FiPrinter />,
+      key: "gemLogin",
+      title: "GeM Login Setup",
+      sub: "Firm-wise GeM credentials",
+      icon: <FiKey />,
       action: () => {
         setQuickAddOpen(false);
-        router.push("/dashboard/print-labels");
+        router.push("/dashboard/orders/gem-credentials");
       }
     },
     {

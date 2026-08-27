@@ -67,6 +67,11 @@ export default function CourierTrackingPage() {
   const [sending, setSending] = useState(false);
   const [sellers, setSellers] = useState<{ _id: string; instituteName: string; place?: string }[]>([]);
   const [dcWhatsappRecords, setDcWhatsappRecords] = useState<DcWhatsappRecord[]>([]);
+  const [bridgeStatus, setBridgeStatus] = useState<{ status: string; qrDataUrl: string | null; updatedAt: string | null }>({
+    status: "UNKNOWN",
+    qrDataUrl: null,
+    updatedAt: null,
+  });
   const [editingDocket, setEditingDocket] = useState<string | null>(null);
   const [savingInstitute, setSavingInstitute] = useState(false);
 
@@ -111,6 +116,25 @@ export default function CourierTrackingPage() {
       console.error("Failed to fetch Delivery Challan WhatsApp status", e);
     }
   };
+
+  const fetchBridgeStatus = async () => {
+    try {
+      const res = await fetch("/api/whatsapp-bridge/status");
+      const data = await res.json();
+      if (res.ok) setBridgeStatus({ status: data.status, qrDataUrl: data.qrDataUrl, updatedAt: data.updatedAt });
+    } catch (e) {
+      console.error("Failed to fetch WhatsApp bridge status", e);
+    }
+  };
+
+  // Polled every 10s while this page is open - a QR code expires after a
+  // short while and whatsapp-web.js issues a fresh one automatically, so the
+  // image shown here needs to keep itself current without a manual refresh.
+  useEffect(() => {
+    fetchBridgeStatus();
+    const interval = setInterval(fetchBridgeStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     fetchStatus();
@@ -270,8 +294,42 @@ export default function CourierTrackingPage() {
               >
                 {autoStatus.courierSenderConfigured ? "Courier Sender Set" : "Courier Sender Pending"}
               </span>
+              <span
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
+                  bridgeStatus.status === "CONNECTED"
+                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                    : "bg-red-100 text-red-800 border border-red-300"
+                }`}
+              >
+                {bridgeStatus.status === "CONNECTED"
+                  ? "WhatsApp Bridge Connected"
+                  : bridgeStatus.status === "NEEDS_QR"
+                  ? "WhatsApp Login Needed"
+                  : bridgeStatus.status === "DISCONNECTED"
+                  ? "WhatsApp Disconnected"
+                  : "WhatsApp Status Unknown"}
+              </span>
             </div>
           </div>
+
+          {/* WhatsApp re-login needed - scan right here, no PC/terminal access required */}
+          {(bridgeStatus.status === "NEEDS_QR" || bridgeStatus.status === "DISCONNECTED") && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-6 flex flex-col sm:flex-row items-center gap-6">
+              <FiAlertTriangle size={28} className="text-red-600 shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-sm font-black text-red-800 uppercase mb-1">WhatsApp session logged out</h3>
+                <p className="text-xs text-red-700 font-bold">
+                  Courier tracking aur Delivery Challan WhatsApp bhejna ruk gaya hai - dobara login karna hoga.
+                  {bridgeStatus.status === "NEEDS_QR"
+                    ? " Neeche diye QR code ko apne phone se WhatsApp → Settings → Linked Devices → Link a Device se scan karo."
+                    : " Login QR thodi der me yahan apne aap aa jayega - agar 30 second me nahi aaya, page refresh karo."}
+                </p>
+              </div>
+              {bridgeStatus.qrDataUrl && (
+                <img src={bridgeStatus.qrDataUrl} alt="WhatsApp login QR code" className="w-44 h-44 rounded-xl border border-red-200 bg-white p-2 shrink-0" />
+              )}
+            </div>
+          )}
 
           {status.type === "success" && (
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 text-emerald-800 text-xs font-bold leading-normal">
