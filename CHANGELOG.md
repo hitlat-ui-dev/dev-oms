@@ -2,6 +2,33 @@
 
 All notable changes to the **Dev OMS** project will be documented in this file.
 
+## [1.3.2] - 2026-08-28
+
+### Added
+- **🧾 Bank Reconciliation — Match Details Drawer**:
+  - Added a "Details" button on each Pending Review row ([reconciliation/page.tsx](file:///d:/dev_oms/dev-oms/app/dashboard/account/reconciliation/page.tsx)) opening a modal with the credited transaction's date, description, and amount alongside a full line-item breakdown (bill no, item name, qty, rate, total) for every matched bill.
+  - Combo matches (a payment settled across multiple bills) list each bill's line item individually with a summed "Combo Total" footer row.
+  - Added a `GET` handler on `/api/reconciliation/matches/[id]` ([route.ts](file:///d:/dev_oms/dev-oms/app/api/reconciliation/matches/%5Bid%5D/route.ts)) returning the match plus its resolved `sellerorders` line items.
+
+- **🔗 GeM Catalogue — Auto-Filled "Link to Inventory"**:
+  - A catalogue row whose GeM product is already mapped in the Master List now shows **which inventory item** it's linked to (SKU + item name, with a "Linked" badge) instead of an empty "Search or select stock..." box.
+  - Matching is on GeM's own **product id + firm**, normalized from either side via a new shared `normalizeGemProductId` helper in [lib/gemSync/catalogueMatch.ts](file:///d:/dev_oms/dev-oms/lib/gemSync/catalogueMatch.ts) — it reads the id out of a product URL (`.../p-5116877-9610340384-cat.html#variant_id=...`) or a bare catalogue-id cell, so a hand-pasted `gemLink` and GeM's own href resolve to the same key.
+  - Previously [catalogue/page.tsx](file:///d:/dev_oms/dev-oms/app/dashboard/gem-sync/catalogue/page.tsx) keyed this off `gemCatalogueId` alone, which is written only by its own "Add to Master List" button — so just **2** of 858 live listings were reachable and the other **847** (every listing created through the Sheet Library / Requirement Mapping flow) always rendered as unlinked. **441** catalogue rows now resolve correctly.
+  - The Name column's green check now prefers this exact product-id match over the old name-similarity guess, falling back to fuzzy matching only for unlinked rows.
+  - Display-only — no writes. Note the filled name is the *internal* inventory name and often differs from GeM's product title (e.g. GeM "General Breadboard Circuit board" → "BREAD BOARD"); the tooltip states which id it matched on.
+
+### Fixed
+- **🙈 GeM Sync — Hidden Inventory Items Still Offered in Pickers**:
+  - Items hidden in Inventory no longer appear in the Requirement Mapping Console's "Search or select stock..." dropdown, the "Build From Scratch" item picker ([gem-sync/page.tsx](file:///d:/dev_oms/dev-oms/app/dashboard/gem-sync/page.tsx)), or the GeM Catalogue's "Link to Inventory" picker ([catalogue/page.tsx](file:///d:/dev_oms/dev-oms/app/dashboard/gem-sync/catalogue/page.tsx)) — 27 hidden items were previously selectable in all three.
+  - Typing a hidden item's exact name no longer selects it either, not just the dropdown options.
+  - Filtering is applied **only at the point of selection**, via new `selectableItemsList` / `selectableStockItems` memos — the underlying lists stay whole on purpose: 11 existing Master List entries are mapped to items that were hidden after the fact and must still resolve to their name, and the custom-item SKU counter (`"S" + (1100 + stockItems.length + customItems.length)`) would start reissuing taken SKUs if hidden items stopped being counted.
+  - The equivalent filter already existed on the GeM Orders verify screen ([fetch-gem-orders/page.tsx:283](file:///d:/dev_oms/dev-oms/app/dashboard/orders/fetch-gem-orders/page.tsx)); that page needs only a redeploy.
+
+- **📄 GeM Sync — Sheet Library Losing Saved Rows**:
+  - Root cause was two separate races between the debounced auto-save effect and an async load/parse in [gem-sync/page.tsx](file:///d:/dev_oms/dev-oms/app/dashboard/gem-sync/page.tsx): (1) a freshly-picked Excel file being auto-saved before its `FileReader` parse finished, and (2) opening a sheet via "Resume Mapping" (or the page's auto-open-last-sheet-on-load) auto-saving the *previously* open sheet's stale/empty rows under the *newly* opened sheet's id, before its real content had finished loading from R2. Both now set a skip-next-autosave flag *before* switching the active sheet, not after its content arrives, so opening/resuming a sheet can never itself trigger a save.
+  - Hardened `save_sheet` in [api/gem-sync/route.ts](file:///d:/dev_oms/dev-oms/app/api/gem-sync/route.ts) as a backstop at the data layer: it now refuses **any** save whose row count is lower than what's already stored for that sheet id — not just a full wipe to 0 — since no legitimate flow in this app ever shrinks an existing sheet's row count (a new upload always gets a fresh id; there's no per-row delete). Content can now only shrink to nothing via the explicit, confirm()-gated Delete Sheet action, never a silent auto-save.
+  - Note: 9 sheets already stuck at `0` from before this fix (their R2-stored content was confirmed genuinely empty) need to be re-uploaded — the original parsed data was never durably saved, so there was nothing to recover.
+
 ## [1.3.1] - 2026-07-22
 
 ### Added

@@ -101,6 +101,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   // Code here means the user can start typing immediately instead of tabbing
   // back to the top of the form.
   const firmCodeInputRef = useRef<HTMLInputElement>(null);
+  // "Save & Add Another" focuses here (not Firm Code) so back-to-back
+  // Advance Order entries can Tab straight into it without reaching back up
+  // past Firm Code/Institute/Item.
+  const advanceCheckboxRef = useRef<HTMLInputElement>(null);
   // Brief inline confirmation shown after "Save & Add Another" instead of a
   // blocking alert() - a blocking dialog on every entry would defeat the
   // point of typing several orders back-to-back without leaving the modal.
@@ -395,7 +399,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     setVariantQtyMap({});
     setSavedFlash("✓ Order saved — add the next one");
     setTimeout(() => setSavedFlash(""), 2500);
-    firmCodeInputRef.current?.focus();
+    advanceCheckboxRef.current?.focus();
   };
 
   return (
@@ -440,6 +444,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
             {!isEditing && (
               <label className="md:col-span-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 cursor-pointer w-fit">
                 <input
+                  ref={advanceCheckboxRef}
                   type="checkbox"
                   className="w-3.5 h-3.5 accent-amber-600"
                   checked={formData.isAdvance}

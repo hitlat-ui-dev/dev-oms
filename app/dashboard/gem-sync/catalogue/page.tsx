@@ -11,7 +11,7 @@ import {
   FiAlertTriangle
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
-import { tokenizeMatchText, scoreTokenSimilarity, formatDate } from "@/lib/gemSync/catalogueMatch";
+import { tokenizeMatchText, scoreTokenSimilarity, formatDate, normalizeGemProductId } from "@/lib/gemSync/catalogueMatch";
 
 interface FirmItemListing {
   id: string;
@@ -94,14 +94,54 @@ export default function GeMCataloguePage() {
       .catch((err) => console.error("Error fetching stock for inventory link:", err));
   }, []);
 
-  // productId::firmCode -> true, for O(1) "already added" lookups per row.
-  const masterListedKeys = useMemo(() => {
-    const keys = new Set<string>();
+  // An item hidden in Inventory must never be offered as a new pick here, but
+  // stockItems itself stays whole so an already-linked row whose item was
+  // hidden later still resolves to its SKU/name below.
+  const selectableStockItems = useMemo(
+    () => stockItems.filter((item: any) => !item?.hidden),
+    [stockItems]
+  );
+
+  // normalizedProductId::firmCode -> the Master List entry that already maps
+  // this GeM product to an inventory item, for O(1) per-row lookups.
+  //
+  // Keyed off gemCatalogueId when it's set, otherwise off the product id parsed
+  // out of the hand-pasted gemLink. That fallback is the whole point: this used
+  // to key on gemCatalogueId alone, which is written ONLY by this page's own
+  // "Add to Master List" button - so of 858 live listings just 2 were reachable,
+  // and the other 847 (every listing created through the Sheet Library /
+  // Requirement Mapping flow, which stores a gemLink and leaves gemCatalogueId
+  // empty) always read as "not linked". Their Link to Inventory box rendered
+  // blank even though the mapping already existed.
+  const listingByProductKey = useMemo(() => {
+    const map = new Map<string, FirmItemListing>();
     listings.forEach((lst) => {
-      if (lst.gemCatalogueId) keys.add(`${lst.gemCatalogueId.trim().toLowerCase()}::${(lst.firmCode || "").trim().toLowerCase()}`);
+      const productId = normalizeGemProductId(lst.gemCatalogueId || lst.gemLink || "");
+      if (!productId) return;
+      const key = `${productId}::${(lst.firmCode || "").trim().toLowerCase()}`;
+      const existing = map.get(key);
+      // Deterministic pick when one product id maps to more than one listing
+      // (exactly 1 such key in live data - two PVC sleeve sizes under different
+      // buyers): an explicit catalogue link wins, otherwise the newest entry.
+      if (
+        !existing ||
+        (!existing.gemCatalogueId && lst.gemCatalogueId) ||
+        (existing.date || "") < (lst.date || "")
+      ) {
+        map.set(key, lst);
+      }
     });
-    return keys;
+    return map;
   }, [listings]);
+
+  // The Master List entry (if any) already linked to a given catalogue row.
+  const findLinkedListing = (row: any): FirmItemListing | undefined => {
+    const productId = normalizeGemProductId(
+      getPublicProductLink(row)?.href || getCatalogueProductId(row)
+    );
+    if (!productId) return undefined;
+    return listingByProductKey.get(`${productId}::${(row.firmCode || "").trim().toLowerCase()}`);
+  };
 
   const handleAddToMasterList = async (row: any, rowKey: string, itemId: string) => {
     const item = stockItems.find((i: any) => i._id === itemId);
@@ -371,11 +411,25 @@ export default function GeMCataloguePage() {
                             <div className="flex items-center gap-1.5">
                               <span>{row["Name"]?.text || "—"}</span>
                               {(() => {
+                                // An exact GeM product id + firm link is far stronger evidence
+                                // than the name-similarity guess below, so it wins when present;
+                                // the fuzzy match stays as the fallback for unlinked rows.
+                                const linkedListing = findLinkedListing(row);
+                                if (linkedListing) {
+                                  return (
+                                    <span
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0"
+                                      title={`Linked in Master List to "${linkedListing.itemName}" (exact GeM product id match)`}
+                                    >
+                                      <FiCheckCircle size={11} />
+                                    </span>
+                                  );
+                                }
                                 const masterMatch = catalogueMasterListMatches.get(idx);
                                 return masterMatch ? (
                                   <span
                                     className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0"
-                                    title={`In Master List as "${masterMatch.lst.itemName}" (${Math.round(masterMatch.score * 100)}% match)`}
+                                    title={`In Master List as "${masterMatch.lst.itemName}" (${Math.round(masterMatch.score * 100)}% name match)`}
                                   >
                                     <FiCheckCircle size={11} />
                                   </span>
@@ -404,20 +458,44 @@ export default function GeMCataloguePage() {
                           <td className="py-4 px-6 min-w-[220px]">
                             {(() => {
                               const productId = getCatalogueProductId(row);
-                              const dedupeKey = `${productId.trim().toLowerCase()}::${(row.firmCode || "").trim().toLowerCase()}`;
-                              const alreadyAdded = productId && masterListedKeys.has(dedupeKey);
                               const rowKey = `${row.firmCode || ""}::${productId}`;
                               const selectedId = selectedInventoryByRow[rowKey] || "";
                               const selectedItem = stockItems.find((i: any) => i._id === selectedId);
+                              const linkedListing = findLinkedListing(row);
 
-                              if (alreadyAdded) {
+                              // Already mapped to an inventory item - show WHICH item, rather
+                              // than a bare "Already Added" that made the user re-look it up.
+                              // The name shown is the internal inventory name, so it often
+                              // reads nothing like GeM's own product title in the Name column
+                              // (e.g. GeM "General Breadboard Circuit board" -> "BREAD BOARD").
+                              // That's expected: the match is on GeM's exact product id, not
+                              // on names - the tooltip spells out which id it matched on.
+                              if (linkedListing) {
+                                const linkedStock = stockItems.find(
+                                  (i: any) => i._id === String(linkedListing.itemId)
+                                );
+                                // Falls back to the listing's own itemName when itemId points at
+                                // a gem_custom_items row - this page only fetches /api/stock, so
+                                // custom items never resolve to a SKU here.
+                                const label = linkedStock
+                                  ? `${linkedStock.sku} - ${linkedListing.itemName}`
+                                  : linkedListing.itemName;
                                 return (
-                                  <button
-                                    disabled
-                                    className="w-full text-[10px] font-black uppercase tracking-wider py-2 px-3 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
-                                  >
-                                    Already Added
-                                  </button>
+                                  <div className="space-y-1.5">
+                                    <div
+                                      title={
+                                        linkedListing.gemCatalogueId
+                                          ? `Linked via GeM Catalogue Id ${linkedListing.gemCatalogueId}`
+                                          : `Linked via the GeM link saved on this Master List entry (${linkedListing.gemLink})`
+                                      }
+                                      className="w-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-900 rounded-lg p-1.5 truncate"
+                                    >
+                                      {label || "—"}
+                                    </div>
+                                    <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-700">
+                                      <FiCheckCircle size={10} /> Linked
+                                    </span>
+                                  </div>
                                 );
                               }
 
@@ -435,14 +513,14 @@ export default function GeMCataloguePage() {
                                         setSelectedInventoryByRow((prev) => ({ ...prev, [rowKey]: "" }));
                                         return;
                                       }
-                                      const match = stockItems.find(
+                                      const match = selectableStockItems.find(
                                         (item: any) => `${item.sku} - ${item.itemName}` === val || item.itemName === val
                                       );
                                       setSelectedInventoryByRow((prev) => ({ ...prev, [rowKey]: match ? match._id : "" }));
                                     }}
                                   />
                                   <datalist id={`inv-options-${idx}`}>
-                                    {stockItems.map((item: any) => (
+                                    {selectableStockItems.map((item: any) => (
                                       <option key={item._id} value={`${item.sku} - ${item.itemName}`} />
                                     ))}
                                   </datalist>

@@ -44,7 +44,7 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
   const existing: any[] = await db
     .collection("bank_reconciliation_matches")
     .find(firmCode ? { firmCode } : {})
-    .project({ transactionKey: 1, status: 1, _id: 1, createdAt: 1 })
+    .project({ transactionKey: 1, status: 1, _id: 1, createdAt: 1, rejectedBillIds: 1 })
     .toArray();
   const existingByKey = new Map(existing.map((m: any) => [m.transactionKey, m]));
 
@@ -56,7 +56,12 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       if (!t.credit || t.credit <= 0) continue;
       const key = `${statement._id}|${txnKey(t)}`;
       const existingMatch = existingByKey.get(key);
-      if (existingMatch && existingMatch.status !== "pending") continue; // final, don't touch
+      // Confirmed is final - already posted to a bill, never touched again.
+      // Rejected is NOT final - re-tried every run (excluding whichever
+      // bill(s) were rejected for it before) so a wrong suggestion doesn't
+      // permanently strand the transaction with no way to ever match it.
+      if (existingMatch && existingMatch.status === "confirmed") continue;
+      const rejectedBillIds: string[] = existingMatch?.rejectedBillIds || [];
 
       // A payer keyword can legitimately belong to more than one institute (shared
       // district-treasury style names, or the same institute paying under a different
@@ -87,6 +92,7 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
             score: c.score,
             amountFit: c.amountFit,
             dateFit: c.dateFit,
+            matchedBillNos: c.matchedBillNos,
           }));
         }
       }
@@ -102,10 +108,16 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       let deductionUsedHistory = false;
 
       if (instituteMatch) {
-        const openBills = await findOpenBills(db, {
+        const allOpenBills = await findOpenBills(db, {
           instituteName: instituteMatch.instituteName,
           firmCode: statement.firmCode,
         });
+        // Never re-suggest a bill this same transaction's match was already
+        // rejected against - the rest of that institute's open bills still
+        // matches normally.
+        const openBills = rejectedBillIds.length > 0
+          ? allOpenBills.filter((b: any) => !rejectedBillIds.includes(String(b._id)))
+          : allOpenBills;
 
         const single = findAmountMatch(openBills, t.credit);
         if (single) {
@@ -307,8 +319,12 @@ export async function POST(req: Request) {
     const matchesCollection = db.collection("bank_reconciliation_matches");
     const match = await matchesCollection.findOne({ _id: new ObjectId(matchId) });
     if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
-    if (match.status !== "pending") {
-      return NextResponse.json({ error: "Only a pending match can be reassigned" }, { status: 400 });
+    // A rejected transaction is allowed here too - rejecting only means "don't
+    // suggest that specific wrong bill again," not "never touch this
+    // transaction again." Manually pointing it at the correct bill moves it
+    // back to pending, same as any fresh suggestion.
+    if (match.status !== "pending" && match.status !== "rejected") {
+      return NextResponse.json({ error: "Only a pending or rejected match can be reassigned" }, { status: 400 });
     }
 
     const seller = await Seller.findById(sellerId);
@@ -346,6 +362,7 @@ export async function POST(req: Request) {
     }
 
     const update = {
+      status: "pending",
       instituteName: seller.instituteName,
       sellerId: String(seller._id),
       billIds,

@@ -287,6 +287,11 @@ export interface ScoredInstituteCandidate extends InstituteCandidate {
   amountFit: boolean;
   dateFit: boolean;
   score: number;
+  // Concrete evidence for amountFit - which bill(s) actually add up to the
+  // credited amount for this candidate, shown to the user instead of just a
+  // "fits/unclear" label so they can see WHY before picking between institutes
+  // sharing the same keyword.
+  matchedBillNos?: string[];
 }
 
 // How close (in days) a payment date needs to be to one of the institute's open
@@ -316,7 +321,14 @@ export async function scoreInstituteCandidates(
   const scored = await Promise.all(
     candidates.map(async (c) => {
       const openBills = await findOpenBills(db, { instituteName: c.instituteName, firmCode });
-      const amountFit = !!(findAmountMatch(openBills, creditedAmount) || findCombinationMatch(openBills, creditedAmount));
+      const singleMatch = findAmountMatch(openBills, creditedAmount);
+      const comboMatch = singleMatch ? null : findCombinationMatch(openBills, creditedAmount);
+      const amountFit = !!(singleMatch || comboMatch);
+      const matchedBillNos = singleMatch
+        ? [singleMatch.bill.orderNo]
+        : comboMatch
+        ? comboMatch.bills.map((b) => b.orderNo)
+        : undefined;
 
       let dateFit = false;
       if (txnDateValid) {
@@ -332,7 +344,7 @@ export async function scoreInstituteCandidates(
       }
 
       const score = (amountFit ? 100 : 0) + (dateFit ? 20 : 0) + Math.min(c.matchLength, 15);
-      return { ...c, amountFit, dateFit, score };
+      return { ...c, amountFit, dateFit, score, matchedBillNos };
     })
   );
 

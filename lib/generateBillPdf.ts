@@ -184,6 +184,7 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     text(l, sheetLeft, ty, { size: 9.5, align: "center", maxWidth: CW });
     ty -= 12;
   }
+  ty -= 6; // breathing room between the address block and Mobile/Email below it
   if (billData.firm.mobile) {
     text(`Mobile No : ${billData.firm.mobile}`, sheetLeft + 6, ty, { size: 9.5 });
   }
@@ -290,7 +291,9 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   line(sheetLeft, y, sheetRight);
   drawTableHeader();
 
-  for (const it of billData.items) {
+  for (let itemIdx = 0; itemIdx < billData.items.length; itemIdx++) {
+    const it = billData.items[itemIdx];
+    const isLastItem = itemIdx === billData.items.length - 1;
     const nameLines = wrapText(font, it.productName, 9, cols.find((c) => c.key === "name")!.w - 8);
     const rowH = Math.max(16, nameLines.length * 11 + 6);
 
@@ -332,7 +335,11 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     });
 
     y -= rowH;
-    line(sheetLeft, y, sheetRight);
+    // The last item's own closing line is skipped - when it's followed by
+    // blank space before the bottom section (see the restored column
+    // dividers below), that line read as a stray horizontal bar floating
+    // above the ruled gap instead of a real row boundary.
+    if (!isLastItem) line(sheetLeft, y, sheetRight);
     cols.forEach((_, i) => {
       if (i > 0 && i !== hsnColIndex) vline(colX[i], rowTop, y);
     });
@@ -360,13 +367,12 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   // Split into distinct row groups - each group boundary gets its own full-
   // width divider line (GSTIN/PAN/Bank | GST | Bill Amount | Note), matching
   // the grid-like row separation the user pointed out was missing.
-  const identityRows: { label: string; value: string }[] = [
-    { label: "GSTIN No.", value: billData.firm.gstin || "" },
-  ];
+  const gstinRow: { label: string; value: string } = { label: "GSTIN No.", value: billData.firm.gstin || "" };
+  const bankDetailRows: { label: string; value: string }[] = [];
   if (billData.firm.pan) {
-    identityRows.push({ label: "PAN", value: billData.firm.pan });
+    bankDetailRows.push({ label: "PAN", value: billData.firm.pan });
   }
-  identityRows.push(
+  bankDetailRows.push(
     { label: "Bank Name", value: bank.bankName || "" },
     { label: "Bank A/c. No.", value: bank.accountNo || "" },
     { label: "RTGS/IFSC Code", value: bank.ifsc || "" },
@@ -394,8 +400,8 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   const GAP_BEFORE_LINE = 4;
   const GAP_AFTER_LINE = 12;
   const SECTION_GAP = GAP_BEFORE_LINE + GAP_AFTER_LINE;
-  const bottomLeftLineCount = identityRows.length + gstRows.length + 1 /* amount words */ + 1 /* note */;
-  const bottomGridH = bottomLeftLineCount * 14 + SECTION_GAP * 3 + 16;
+  const bottomLeftLineCount = 1 /* GSTIN */ + bankDetailRows.length + gstRows.length + 1 /* amount words */ + 1 /* note */;
+  const bottomGridH = bottomLeftLineCount * 14 + SECTION_GAP * 4 + 16;
 
   // Pin the whole stack (grid + terms + footer) to the page bottom. When the
   // item table leaves the sheet mostly empty, that blank space stays ABOVE
@@ -415,7 +421,9 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   }
   if (!addedNewPage && y < itemsEndY) {
     // Extend the item table's column dividers through the blank gap so it
-    // reads as ruled space ready for more rows, not a truncated table.
+    // reads as ruled space ready for more rows, not a truncated table -
+    // this is the SAME ruled space the skipped last-row closing line above
+    // now flows straight into, instead of being cut off by a stray bar.
     cols.forEach((_, i) => {
       if (i > 0 && i !== hsnColIndex) vline(colX[i], itemsEndY, y);
     });
@@ -423,25 +431,35 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   line(sheetLeft, y, sheetRight);
   const bottomTop = y;
 
+  // These separators only belong to the LEFT column's own row groups
+  // (GSTIN | PAN/Bank | GST breakdown | Bill Amount) - kept left-column-only
+  // (sheetLeft to bColSplit) so they don't cut through the right column's
+  // Sub Total/Grand Total area, which gets its own two dividers below instead.
   let bly = bottomTop - 14;
-  for (const r of identityRows) {
+  labelValue(gstinRow.label, gstinRow.value, sheetLeft + 8, bly, 9.5);
+  bly -= 14;
+  bly -= GAP_BEFORE_LINE;
+  line(sheetLeft, bly, bColSplit);
+  bly -= GAP_AFTER_LINE;
+  for (const r of bankDetailRows) {
     labelValue(r.label, r.value, sheetLeft + 8, bly, 9.5);
     bly -= 14;
   }
   bly -= GAP_BEFORE_LINE;
-  line(sheetLeft, bly, sheetRight);
+  line(sheetLeft, bly, bColSplit);
   bly -= GAP_AFTER_LINE;
   for (const r of gstRows) {
     labelValue(r.label, r.value, sheetLeft + 8, bly, 9.5);
     bly -= 14;
   }
   bly -= GAP_BEFORE_LINE;
-  line(sheetLeft, bly, sheetRight);
+  line(sheetLeft, bly, bColSplit);
   bly -= GAP_AFTER_LINE;
   text(`Bill Amount : ${numberToWords(billData.grandTotal)} Only`, sheetLeft + 8, bly, { size: 9.5, f: bold });
   bly -= 14;
   bly -= GAP_BEFORE_LINE;
-  line(sheetLeft, bly, sheetRight);
+  const grandTotalLineY = bly;
+  line(sheetLeft, bly, bColSplit);
   bly -= GAP_AFTER_LINE;
   labelValue("Note", "", sheetLeft + 8, bly, 9.5);
   const noteY = bly;
@@ -449,6 +467,12 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
   const totalsColW = sheetRight - bColSplit - 16;
   text("Sub Total", bColSplit + 8, bottomTop - 14, { size: 9.5 });
   text(fmt2(billData.subTotal), bColSplit + 8, bottomTop - 14, { size: 9.5, align: "right", maxWidth: totalsColW });
+  // Right column's own two lines, directly under Sub Total and directly
+  // above Grand Total - previously this column had no dividers of its own
+  // at all, just the left column's lines bleeding through the blank space
+  // between them.
+  line(bColSplit, bottomTop - 14 - 6, sheetRight);
+  line(bColSplit, grandTotalLineY, sheetRight);
   text("Grand Total", bColSplit + 8, noteY, { size: 11, f: bold });
   text(fmtGrand(billData.grandTotal), bColSplit + 8, noteY, { size: 11, f: bold, align: "right", maxWidth: totalsColW });
 

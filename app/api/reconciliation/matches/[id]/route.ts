@@ -19,6 +19,49 @@ async function connectMongoose() {
   }
 }
 
+// Detail drawer for a single match: the credited transaction itself plus the
+// full line-item detail (item name, qty, rate, total) for every bill it's
+// matched against - a combo match resolves to more than one SellerOrder here.
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    if (!ObjectId.isValid(id)) {
+      return NextResponse.json({ error: "Invalid match id" }, { status: 400 });
+    }
+
+    await connectMongoose();
+    const client = await clientPromise;
+    const db = client.db();
+
+    const match = await db.collection("bank_reconciliation_matches").findOne({ _id: new ObjectId(id) });
+    if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+
+    const billIds: string[] = (match.billIds || []).filter((bid: string) => ObjectId.isValid(bid));
+    const bills = billIds.length
+      ? await db
+          .collection("sellerorders")
+          .find({ _id: { $in: billIds.map((bid) => new ObjectId(bid)) } })
+          .project({
+            orderNo: 1,
+            itemName: 1,
+            reQty: 1,
+            unit: 1,
+            rate: 1,
+            totalAmount: 1,
+            paidAmount: 1,
+            contractDate: 1,
+            contractNo: 1,
+          })
+          .toArray()
+      : [];
+
+    return NextResponse.json({ match, bills });
+  } catch (error: any) {
+    console.error("Reconciliation match GET error:", error);
+    return NextResponse.json({ error: error.message || "Failed to load match detail" }, { status: 500 });
+  }
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -48,9 +91,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (match.status !== "pending") {
         return NextResponse.json({ error: "Only a pending match can be confirmed" }, { status: 400 });
       }
-      if (!match.sellerId || !match.billIds || match.billIds.length === 0) {
+      if (!match.sellerId) {
         return NextResponse.json(
-          { error: "This transaction has no institute/bill assigned yet — resolve it first" },
+          { error: "This transaction has no institute assigned yet — resolve it first" },
           { status: 400 }
         );
       }
@@ -73,7 +116,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // learning hook below can record the gap between the orders it settled.
       let comboOrderDates: string[] = [];
 
-      if (match.billIds.length === 1) {
+      if (!match.billIds || match.billIds.length === 0) {
+        // Link-only confirm - the credit is now attributed to this institute,
+        // but there's no specific bill to post the payment against (e.g. an
+        // advance/unallocated credit). Nothing to apply, just record it.
+      } else if (match.billIds.length === 1) {
         await applyPaymentToBill(
           match.billIds[0],
           match.creditedAmount,
@@ -155,9 +202,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         return NextResponse.json({ error: "Only a pending match can be rejected" }, { status: 400 });
       }
 
+      // Records which bill(s) this specific suggestion pointed at, so the next
+      // "Run Matching" pass can rule those bills out for THIS transaction and
+      // try again, instead of either re-suggesting the exact same wrong match
+      // or abandoning the transaction entirely (previously rejected meant
+      // "final" - never reconsidered, never manually reassignable).
       const reserved = await matchesCollection.findOneAndUpdate(
         { _id: match._id, status: "pending" },
-        { $set: { status: "rejected", updatedAt: new Date() } }
+        {
+          $set: { status: "rejected", updatedAt: new Date() },
+          $addToSet: { rejectedBillIds: { $each: match.billIds || [] } },
+        }
       );
       if (!reserved) {
         return NextResponse.json({ error: "This match was already processed" }, { status: 409 });

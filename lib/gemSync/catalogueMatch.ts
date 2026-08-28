@@ -31,6 +31,22 @@ export function scoreTokenSimilarity(tokensA: string[], tokensB: string[]) {
   return { score: Math.max(0, jaccard - numericPenalty), overlap };
 }
 
+// GeM's own product id, read out of either a product URL
+// (.../p-5116877-9610340384-cat.html#variant_id=...) or a bare catalogue-id
+// cell ("5116877-9610340384-cat"). Lowercased with the "-cat" suffix stripped
+// so both sides of a catalogue<->listing comparison land on the same string.
+//
+// This is what makes matching a GeM Catalogue row to a Master List entry work
+// at all: catalogue hrefs come from GeM's own Name cell, while a listing's
+// gemLink was pasted in by hand during sheet mapping, so the two differ by
+// #variant_id= fragments and path slugs even when they point at the exact same
+// product. Comparing raw URL strings misses nearly all of them.
+export function normalizeGemProductId(source: string): string {
+  if (!source) return "";
+  const fromUrl = source.match(/\/p-([^/]+?)-cat\.html/i);
+  return (fromUrl ? fromUrl[1] : source).toString().trim().replace(/-cat$/i, "").toLowerCase();
+}
+
 export function formatDate(dateInput: Date | string) {
   if (!dateInput) return "—";
   const d = new Date(dateInput);

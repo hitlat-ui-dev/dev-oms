@@ -40,6 +40,7 @@ dev-oms/
 │   │   ├── units/                  # Unit of measure management
 │   │   ├── users/                  # User account management
 │   │   ├── login/                  # Authentication endpoint
+│   │   ├── reconciliation/         # Bank statement <-> bill auto-matching & confirmation
 │   │   └── backup/                 # Data backup utilities
 │   ├── dashboard/
 │   │   ├── page.tsx                # Dashboard home (role-gated menu)
@@ -115,6 +116,13 @@ Orders move through a defined pipeline of statuses:
 ### ⚙️ Settings & Admin (`/dashboard/settings`, `/dashboard/admin`)
 - Manage user accounts and their module-level permissions (including the new `GeM Links` access control).
 
+
+### 🧾 Bank Reconciliation Module (`/dashboard/account/reconciliation`)
+- **Auto-Matching Engine** — scans uploaded bank statement transactions against open seller-order bills, scoring institute/keyword/amount/date fit and suggesting single or combo (multi-bill) matches, including deduction (TDS / TDS+GST / Kasar) classification.
+- **Pending Review Queue** — review, edit deduction amount/type, and Confirm or Reject each suggested match; unresolved/rejected transactions drop into a manual institute + bill picker.
+- **Match Details Drawer** — a "Details" button on each pending match opens the credited transaction's date/description/amount plus a full line-item breakdown (item name, qty, rate, total) for every matched bill, with a combined total for combo matches.
+- **Correction Alerts** — flags a leftover unmatched payment against an institute with confirmed history, suggesting a swap when an earlier confirmed match likely picked the wrong bill.
+- **Order Cluster View & Learned Patterns** — inspect an institute's date-burst order clusters and its learned keyword aliases / deduction history.
 
 ### 🔔 Team Workspace & Direct Chat
 - **Instant Workspace Checklist** — Manage pending checklist items, toggle completion, and check assignees directly from the header "Workspace" button dropdown.

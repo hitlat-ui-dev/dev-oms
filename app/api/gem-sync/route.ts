@@ -286,8 +286,30 @@ export async function POST(req: Request) {
       };
 
       let sanitizedRows: any[] = [];
+      let persistContent = hasContent;
       if (hasContent) {
         sanitizedRows = sanitizeBody(body.uploadedRows);
+
+        // A racy auto-save (debounced effect firing on stale/still-loading
+        // state — see page.tsx) can land here with fewer rows than the sheet
+        // already has saved, right down to a completely empty array.
+        // Confirmed live: several Sheet Library rows got permanently stuck
+        // at "0" total items this way. No legitimate flow in this app ever
+        // shrinks an EXISTING sheet id's row count — a fresh upload/rebuild
+        // always gets a brand-new id (Date.now()-based), and there's no
+        // per-row delete once a sheet is uploaded — so a save carrying fewer
+        // rows than what's on file is always a stale/racy write, never a
+        // deliberate edit. Once a sheet has N rows saved, the only way its
+        // content actually shrinks is the user pressing Delete Sheet
+        // (action=delete_sheet, its own explicit confirm() step below) —
+        // never a silent auto-save.
+        const existing = await db.collection("gem_sheets").findOne({ id: body.id }, { projection: { totalRows: 1 } });
+        if (existing && sanitizedRows.length < (existing.totalRows || 0)) {
+          persistContent = false;
+        }
+      }
+
+      if (persistContent) {
         const originalExcelData = body.originalExcelData || [];
 
         // The heavy payload lives in R2, keyed by sheet id — Mongo only ever
@@ -320,12 +342,12 @@ export async function POST(req: Request) {
             uploadedAt: new Date().toISOString()
           },
           // Clean up any pre-migration doc that still had the heavy fields embedded.
-          ...(hasContent ? { $unset: { uploadedRows: "", originalExcelData: "" } } : {})
+          ...(persistContent ? { $unset: { uploadedRows: "", originalExcelData: "" } } : {})
         },
         { upsert: true }
       );
 
-      if (hasContent) {
+      if (persistContent) {
         // Keep this sheet's stripped mapping-history in sync too — only the two
         // fields "Quick Fill from Master List" actually needs, not the full row.
         const mappings = sanitizedRows

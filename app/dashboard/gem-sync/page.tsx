@@ -276,6 +276,10 @@ export default function GeMSyncPage() {
             if (state.sheets.length > 0) {
               const sorted = [...state.sheets].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
               const latest = sorted[0];
+              // Same race as the Resume Mapping button below - must be set
+              // BEFORE activeSheetId/fileName so the auto-save effect skips
+              // its very first (stale, pre-fetch) run instead of saving [].
+              skipNextAutoSaveRef.current = true;
               setActiveSheetId(latest.id);
               setFileName(latest.fileName);
               setSelectedBuyerId(latest.selectedBuyerId);
@@ -627,6 +631,22 @@ export default function GeMSyncPage() {
   const allItemsList = useMemo(() => {
     return [...stockItems, ...customItems];
   }, [stockItems, customItems]);
+
+  // An item hidden in Inventory must never be OFFERED as a new pick (dropdown
+  // options, typed-name matching, Build From Scratch), but the unfiltered lists
+  // above are deliberately kept whole for everything else: mappings saved
+  // before an item was hidden still have to resolve to its name (Master List,
+  // Sync Checklist, the mapped-row label), and the custom-item SKU counter at
+  // "S" + (1100 + stockItems.length + customItems.length) would start handing
+  // out already-taken SKUs if hidden items stopped being counted.
+  const selectableItemsList = useMemo(
+    () => allItemsList.filter((item: any) => !item?.hidden),
+    [allItemsList]
+  );
+  const selectableStockItems = useMemo(
+    () => stockItems.filter((item: any) => !item?.hidden),
+    [stockItems]
+  );
 
   // O(1) lookups for the per-row render loop below - a 200+ row sheet was
   // re-scanning the full allItemsList/listings/rateHistory arrays (via
@@ -2114,7 +2134,7 @@ export default function GeMSyncPage() {
                                           setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: "" } : r));
                                           return;
                                         }
-                                        const match = allItemsList.find(item =>
+                                        const match = selectableItemsList.find(item =>
                                           `${item.sku} - ${item.itemName}` === val ||
                                           item.itemName === val
                                         );
@@ -2148,7 +2168,7 @@ export default function GeMSyncPage() {
                                       }}
                                     />
                                     <datalist id={`stock-options-${row.index}`}>
-                                      {allItemsList.map((item, idx) => (
+                                      {selectableItemsList.map((item, idx) => (
                                         <option key={item._id || idx} value={`${item.sku} - ${item.itemName}`} />
                                       ))}
                                     </datalist>
@@ -2847,7 +2867,19 @@ export default function GeMSyncPage() {
                                     setOpenBuyerSelectSheetId(null);
                                   } else {
                                     const rect = e.currentTarget.getBoundingClientRect();
-                                    setBuyerPopoverPos({ top: rect.bottom + 6, left: rect.left });
+                                    // Search box + result list (max-h-60) + padding - roughly
+                                    // this tall. When the trigger row is near the bottom of the
+                                    // viewport (e.g. the last row of a long sheet list), opening
+                                    // downward as usual pushes the whole popover off-screen -
+                                    // the search box stays visible but every matching result is
+                                    // rendered below the visible window. Flip upward instead
+                                    // whenever there isn't enough room below.
+                                    const estimatedPopoverHeight = 340;
+                                    const spaceBelow = window.innerHeight - rect.bottom;
+                                    const top = spaceBelow < estimatedPopoverHeight
+                                      ? Math.max(8, rect.top - estimatedPopoverHeight - 6)
+                                      : rect.bottom + 6;
+                                    setBuyerPopoverPos({ top, left: rect.left });
                                     setOpenBuyerSelectSheetId(sheet.id);
                                     setBuyerSearchFilter("");
                                   }
@@ -2970,6 +3002,18 @@ export default function GeMSyncPage() {
                                 <button
                                   disabled={loadingSheetContent}
                                   onClick={() => {
+                                    // Set BEFORE the activeSheetId/fileName switch below, not
+                                    // after fetchSheetContent resolves - the debounced auto-save
+                                    // effect (keyed off activeSheetId/fileName/uploadedRows) fires
+                                    // the instant those two change, while uploadedRows is still
+                                    // whatever the PREVIOUSLY active sheet left behind (often [],
+                                    // e.g. right after mount's auto-loaded sheet). Left unguarded,
+                                    // that stale/empty uploadedRows can get auto-saved under this
+                                    // sheet's id before its real content ever loads, permanently
+                                    // zeroing out an otherwise-fine sheet - confirmed live
+                                    // 28-Aug-2026 (this exact race is what stuck several Sheet
+                                    // Library rows at "0 total items").
+                                    skipNextAutoSaveRef.current = true;
                                     setActiveSheetId(sheet.id);
                                     setFileName(sheet.fileName);
                                     setSelectedBuyerId(sheet.selectedBuyerId);
@@ -2977,6 +3021,9 @@ export default function GeMSyncPage() {
                                     setLoadingSheetContent(true);
                                     fetchSheetContent(sheet.id)
                                       .then(({ uploadedRows, originalExcelData }) => {
+                                        // Skip once more for the effect run this real content
+                                        // triggers too - opening a sheet should never itself
+                                        // produce a save, only actual edits should.
                                         skipNextAutoSaveRef.current = true;
                                         setUploadedRows(uploadedRows);
                                         setOriginalExcelData(originalExcelData);
@@ -3176,7 +3223,7 @@ export default function GeMSyncPage() {
           {/* =================== BUILD SHEET FROM SCRATCH MODAL =================== */}
           {showBuildSheetModal && (
             <BuildSheetModal
-              stockItems={stockItems}
+              stockItems={selectableStockItems}
               onClose={() => setShowBuildSheetModal(false)}
               onCreate={handleCreateSheetFromScratch}
             />

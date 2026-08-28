@@ -266,7 +266,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
 
-    const firmAddressParts = [company.sellerRegisterAddress, company.state].filter(Boolean);
+    // dispatchAddress ("My Companies") is the firm's real full postal address
+    // - sellerRegisterAddress is often just a city name (e.g. "MAHESANA"),
+    // which was printing on the bill instead of the actual address.
+    const firmAddressParts = company.dispatchAddress
+      ? [company.dispatchAddress]
+      : [company.sellerRegisterAddress, company.state].filter(Boolean);
     const buyerAddress = joinAddressParts([seller?.address, seller?.place, seller?.state]);
 
     const invoiceDate = new Date();
