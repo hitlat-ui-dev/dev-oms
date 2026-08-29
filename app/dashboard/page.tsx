@@ -16,7 +16,8 @@ import {
   FiX,
   FiTruck,
   FiHash,
-  FiKey
+  FiKey,
+  FiAlertTriangle
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
@@ -30,7 +31,7 @@ const QUICKADD_ENABLED = new Set(["Orders", "Purchase", "Stock", "Manage Stock",
 const SECTIONS = [
   { label: "Daily Operations", items: ["Orders", "Purchase", "Stock", "Manage Stock", "Print Label", "Account"] },
   { label: "GeM", items: ["GeM Bids", "GeM Links"] },
-  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review"] }
+  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review", "Urgent Tasks"] }
 ];
 
 export default function DashboardPage() {
@@ -96,7 +97,8 @@ export default function DashboardPage() {
     { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" },
     { name: "Courier Tracking", path: "/dashboard/admin/courier-tracking", sub: "DAILY DISPATCH MATCHING", icon: <FiTruck />, color: "bg-[#16a34a]", role: ["Owner"] },
     { name: "HSN & GST Review", path: "/dashboard/admin/hsn-gst-review", sub: "CONFIRM ITEM TAX DETAILS", icon: <FiHash />, color: "bg-[#7c3aed]", role: ["Owner", "Manager"] },
-    { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" }
+    { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" },
+    { name: "Urgent Tasks", path: "/dashboard/urgent-tasks", sub: "ASSIGN & TRACK", icon: <FiAlertTriangle />, color: "bg-[#dc2626]", role: ["Owner"] }
   ];
 
   const usernameLower = user?.username?.trim().toLowerCase();

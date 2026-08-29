@@ -13,7 +13,7 @@ import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 // of this page.
 
 const TABS = [
-  "ALL", "ADVANCE", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
+  "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
 
 // Module level cache for static directories so navigation stays instant
@@ -118,13 +118,8 @@ export default function OrdersListPage() {
   // this large component does (opening a modal, toggling a row, etc. all re-render it).
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
-      // 1. Tab Status must match. "ADVANCE" is a separate boolean filter, not
-      // part of the real status pipeline - it shows un-merged advance
-      // shipments still waiting on the buyer's official GeM order.
-      const matchesTab = activeTab === "ALL"
-        || (activeTab === "ADVANCE" ? (order.isAdvance === true && !order.merged) : false)
-        || (activeTab === "CANCEL" && order.status === "CANCELL ORDER")
-        || (activeTab !== "ADVANCE" && order.status === activeTab);
+      // 1. Tab Status must match
+      const matchesTab = activeTab === "ALL" || (activeTab === "CANCEL" && order.status === "CANCELL ORDER") || order.status === activeTab;
 
       // 2. Safe and Trimmed Search Logic
       const matchesItem = (order.itemName || "").toLowerCase().trim()
@@ -1524,7 +1519,7 @@ const shippingLock = useRef(false);
                 )}
 
                 <td className="px-3 py-2 text-center">
-                  {["TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "HISAB"].includes(activeTab) ? (
+                  {["TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "HISAB", "FULFILLED"].includes(activeTab) ? (
                     <select
                       className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border cursor-pointer outline-none ${getStatusColor(order.status)}`}
                       value={order.status}
@@ -1563,6 +1558,12 @@ const shippingLock = useRef(false);
                       {activeTab === "HISAB" && (
                         <>
                           <option value="HISAB">HISAB</option>
+                          <option value="TO CHECK">TO CHECK</option>
+                        </>
+                      )}
+                      {activeTab === "FULFILLED" && (
+                        <>
+                          <option value="FULFILLED">FULFILLED</option>
                           <option value="TO CHECK">TO CHECK</option>
                         </>
                       )}

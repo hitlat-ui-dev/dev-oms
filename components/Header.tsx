@@ -1,8 +1,9 @@
 "use client";
-import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiMessageSquare, FiBell, FiBellOff } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 
 export default function Header() {
   const router = useRouter();
@@ -13,41 +14,13 @@ export default function Header() {
   const [todoTasks, setTodoTasks] = useState<any[]>([]);
   const [newTodoTitle, setNewTodoTitle] = useState("");
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
-  const [popoverTab, setPopoverTab] = useState<"tasks" | "chat">("tasks");
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
-  const [newChatMessage, setNewChatMessage] = useState("");
   const [users, setUsers] = useState<any[]>([]);
-  
+
   // Autocomplete states
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [filteredSuggestions, setFilteredSuggestions] = useState<any[]>([]);
 
-  // Direct Messaging states
-  const [showChatDropdown, setShowChatDropdown] = useState(false);
-  const [directMessages, setDirectMessages] = useState<any[]>([]);
-  const [selectedRecipient, setSelectedRecipient] = useState<string>("");
-  const [newDmText, setNewDmText] = useState("");
-  const [hasDmNotification, setHasDmNotification] = useState(false);
-
-  // Whether Chat/Workspace auto-check every 8s while sitting on any page —
-  // opt-in preference, persisted per-browser. Defaults off (this polling was
-  // adding constant background load on the shared database across every open
-  // tab/page, regardless of whether anyone was using Chat/Workspace). Off
-  // just means no recurring background poll; a check still runs once per
-  // page visit either way, and opening either dropdown always fetches fresh
-  // data on demand.
-  const [autoPollEnabled, setAutoPollEnabled] = useState(false);
-  useEffect(() => {
-    const stored = localStorage.getItem("oms_auto_poll");
-    if (stored !== null) setAutoPollEnabled(stored === "1");
-  }, []);
-  const toggleAutoPoll = () => {
-    setAutoPollEnabled(prev => {
-      const next = !prev;
-      localStorage.setItem("oms_auto_poll", next ? "1" : "0");
-      return next;
-    });
-  };
+  const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -110,25 +83,8 @@ export default function Header() {
       try {
         const lastViewedStr = localStorage.getItem("workspace_last_viewed");
         const lastViewed = lastViewedStr ? Number(lastViewedStr) : 0;
-        
-        const [chatRes, todoRes, dmRes] = await Promise.all([
-          fetch("/api/chat?t=" + Date.now()),
-          fetch("/api/todo?status=Pending&t=" + Date.now()),
-          user?.username ? fetch(`/api/direct-messages?user=${user.username}&t=${Date.now()}`) : Promise.resolve(null)
-        ]);
 
-        if (chatRes.ok) {
-          const chats = await chatRes.json();
-          setChatMessages(chats);
-          if (chats.length > 0 && pathname !== "/dashboard/todo-chat") {
-            const latestChat = chats[chats.length - 1];
-            const chatTime = new Date(latestChat.createdAt).getTime();
-            if (chatTime > lastViewed && latestChat.sender !== user?.username) {
-              setHasNotification(true);
-            }
-          }
-        }
-
+        const todoRes = await fetch("/api/todo?status=Pending&t=" + Date.now());
         if (todoRes.ok) {
           const tasks = await todoRes.json();
           setTodoTasks(tasks);
@@ -140,31 +96,15 @@ export default function Header() {
             }
           }
         }
-
-        if (dmRes && dmRes.ok) {
-          const dms = await dmRes.json();
-          setDirectMessages(dms);
-          const hasUnread = dms.some((dm: any) => 
-            dm.recipient.toLowerCase() === user?.username.toLowerCase() && 
-            !dm.read && 
-            dm.sender.toLowerCase() !== selectedRecipient.toLowerCase()
-          );
-          setHasDmNotification(hasUnread);
-        }
       } catch (err) {
         console.error("Notification check error", err);
       }
     };
 
-    // Always check once per page visit so badges/data are correct on arrival —
-    // only the recurring background poll below is what the toggle controls.
+    // Once per page visit is enough for the Workspace badge - no recurring
+    // background poll (that used to also cover Chat/DMs, both removed).
     checkUpdates();
-
-    if (!autoPollEnabled) return;
-
-    const interval = setInterval(checkUpdates, 8000);
-    return () => clearInterval(interval);
-  }, [pathname, user?.username, autoPollEnabled]);
+  }, [pathname, user?.username]);
 
   const fetchTodoTasks = async () => {
     try {
@@ -183,22 +123,6 @@ export default function Header() {
       fetchTodoTasks();
     }
   }, [showTodoDropdown]);
-
-  // Chat/DMs otherwise only refresh via the background poll (checkUpdates) —
-  // fetch on demand when the dropdown opens too, so turning auto-poll off
-  // doesn't leave this dropdown showing stale messages.
-  useEffect(() => {
-    if (!showChatDropdown || !user?.username) return;
-    Promise.all([
-      fetch("/api/chat?t=" + Date.now()).then(r => (r.ok ? r.json() : null)),
-      fetch(`/api/direct-messages?user=${user.username}&t=${Date.now()}`).then(r => (r.ok ? r.json() : null))
-    ])
-      .then(([chats, dms]) => {
-        if (Array.isArray(chats)) setChatMessages(chats);
-        if (Array.isArray(dms)) setDirectMessages(dms);
-      })
-      .catch(e => console.error("Failed to refresh chat on open", e));
-  }, [showChatDropdown, user?.username]);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -279,33 +203,6 @@ export default function Header() {
     }
   };
 
-  const handleSendChatMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newChatMessage.trim()) return;
-
-    const msgText = newChatMessage;
-    setNewChatMessage("");
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sender: user?.username || "Admin",
-          message: msgText
-        })
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        setChatMessages(prev => [...prev, result.message]);
-        localStorage.setItem("workspace_last_viewed", String(Date.now()));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   const handleTaskInputChange = (val: string) => {
     setNewTodoTitle(val);
     
@@ -332,77 +229,6 @@ export default function Header() {
     setShowSuggestions(false);
   };
 
-  const handleSendMessageSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDmText.trim() || !selectedRecipient) return;
-
-    const msgText = newDmText.trim();
-    setNewDmText("");
-
-    if (selectedRecipient === "all") {
-      try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sender: user?.username || "Admin",
-            message: msgText
-          })
-        });
-
-        if (res.ok) {
-          const result = await res.json();
-          setChatMessages(prev => [...prev, result.message]);
-          localStorage.setItem("workspace_last_viewed", String(Date.now()));
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    } else {
-      try {
-        const res = await fetch("/api/direct-messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sender: user?.username || "Admin",
-            recipient: selectedRecipient,
-            message: msgText
-          })
-        });
-
-        if (res.ok) {
-          const result = await res.json();
-          setDirectMessages(prev => [...prev, result.message]);
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  };
-
-  const handleSelectRecipient = async (recipientName: string) => {
-    setSelectedRecipient(recipientName);
-    
-    try {
-      await fetch("/api/direct-messages", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sender: recipientName,
-          recipient: user?.username || ""
-        })
-      });
-      
-      setDirectMessages(prev => prev.map(dm => 
-        (dm.sender === recipientName && dm.recipient === user?.username) 
-          ? { ...dm, read: true } 
-          : dm
-      ));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
     setUser(null);
@@ -411,7 +237,11 @@ export default function Header() {
 
   if (!user) return null;
 
+  const usernameLower = user.username?.trim().toLowerCase();
+  const isOwner = ["chintan", "hitesh"].includes(usernameLower) || (user as any)?.permissions?.boss === true;
+
   return (
+    <>
     <header className="sticky top-0 z-50 flex items-center justify-between gap-2 px-3 md:px-10 py-2 bg-[#0f172a] text-white shadow-lg">
       {/* Clickable Logo - Goes to Dashboard */}
       <Link href="/dashboard" className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group shrink-0 min-w-0">
@@ -428,210 +258,11 @@ export default function Header() {
 
       <div className="flex items-center gap-1.5 sm:gap-4 md:gap-8 shrink-0">
 
-        {/* Auto-refresh toggle — Chat/Workspace otherwise re-check every 8s on
-            every page. Off still checks once per page visit / dropdown open,
-            just skips the recurring background poll. */}
-        <button
-          type="button"
-          onClick={toggleAutoPoll}
-          title={autoPollEnabled ? "Auto-refresh is ON — click to turn off background checking every 8s" : "Auto-refresh is OFF — click to turn back on"}
-          className={`p-2 rounded-full transition-all cursor-pointer flex items-center justify-center ${
-            autoPollEnabled ? "text-slate-400 hover:text-white hover:bg-white/10" : "text-amber-400 bg-amber-500/15 hover:bg-amber-500/25"
-          }`}
-        >
-          {autoPollEnabled ? <FiBell size={16} /> : <FiBellOff size={16} />}
-        </button>
-
-        {/* Chat Dropdown Popover */}
-        <div className="relative">
-          <button 
-            type="button"
-            onClick={() => {
-              setShowChatDropdown(prev => !prev);
-              setShowTodoDropdown(false);
-              if (!selectedRecipient) {
-                setSelectedRecipient("all");
-              }
-            }}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
-            title="Direct Messages"
-          >
-            <FiMessageSquare size={13} /> <span className="hidden sm:inline">Chat</span>
-            {hasDmNotification && (
-              <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-              </span>
-            )}
-          </button>
-
-          {showChatDropdown && (
-            <>
-              {/* Invisible Clickable Backdrop to close dropdown */}
-              <div 
-                className="fixed inset-0 z-40 bg-transparent"
-                onClick={() => setShowChatDropdown(false)}
-              />
-              
-              {/* DM Card - capped to the viewport width (minus a small
-                  margin) so it can never push off the left edge on a narrow
-                  phone, where "right-0" alone would otherwise extend a fixed
-                  420-480px card further left than the screen has room for. */}
-              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-[420px] md:w-[480px] max-w-full bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex gap-4 h-96">
-
-                {/* Users List (Left Column, 35% width) */}
-                <div className="w-1/3 border-r border-slate-100 pr-2 flex flex-col min-h-0">
-                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Team Members</h4>
-                  <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar pr-1">
-                    {/* All Members (Group Chat option) */}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRecipient("all")}
-                      className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                        selectedRecipient === "all"
-                          ? "bg-blue-600 text-white"
-                          : "hover:bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      <span className="truncate">All Members</span>
-                    </button>
-
-                    {users
-                      .filter(u => u.username.toLowerCase() !== user?.username.toLowerCase())
-                      .map(u => {
-                        const hasUnreadFromThisUser = directMessages.some(dm =>
-                          dm.sender.toLowerCase() === u.username.toLowerCase() &&
-                          dm.recipient.toLowerCase() === user?.username.toLowerCase() &&
-                          !dm.read
-                        );
-
-                        return (
-                          <button
-                            key={u._id}
-                            type="button"
-                            onClick={() => handleSelectRecipient(u.username)}
-                            className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                              selectedRecipient === u.username
-                                ? "bg-blue-600 text-white"
-                                : "hover:bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            <span className="truncate capitalize">{u.username}</span>
-                            {hasUnreadFromThisUser && (
-                              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0 ml-1.5" />
-                            )}
-                          </button>
-                        );
-                      })}
-                  </div>
-                </div>
-
-                {/* Messages Log (Right Column, 65% width) */}
-                <div className="flex-1 flex flex-col min-h-0">
-                  {selectedRecipient ? (
-                    <>
-                      {/* Recipient Header */}
-                      <div className="pb-2 border-b border-slate-100 mb-2 flex justify-between items-center">
-                        <span className="text-xs font-black uppercase tracking-wider text-slate-900 capitalize">
-                          {selectedRecipient === "all" ? "Group Discussion" : `Chat with ${selectedRecipient}`}
-                        </span>
-                      </div>
-
-                      {/* Message History */}
-                      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar p-2 bg-slate-50 rounded-xl mb-2 flex flex-col">
-                        {selectedRecipient === "all" ? (
-                          chatMessages.length === 0 ? (
-                            <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[9px] font-bold">
-                              Start the group discussion!
-                            </div>
-                          ) : (
-                            chatMessages.slice(-30).map((msg, index) => {
-                              const isMe = msg.sender.toLowerCase() === user?.username.toLowerCase();
-                              return (
-                                <div key={msg._id || index} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                                  {!isMe && (
-                                    <span className="text-[8px] text-slate-500 font-bold mb-0.5 capitalize">{msg.sender}</span>
-                                  )}
-                                  <div className={`p-2 rounded-xl text-xs max-w-[85%] break-words whitespace-pre-wrap ${
-                                    isMe
-                                      ? "bg-blue-600 text-white rounded-tr-none text-right"
-                                      : "bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm"
-                                  }`}>
-                                    {msg.message}
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )
-                        ) : (
-                          directMessages.filter(dm =>
-                            (dm.sender.toLowerCase() === user?.username.toLowerCase() && dm.recipient.toLowerCase() === selectedRecipient.toLowerCase()) ||
-                            (dm.sender.toLowerCase() === selectedRecipient.toLowerCase() && dm.recipient.toLowerCase() === user?.username.toLowerCase())
-                          ).length === 0 ? (
-                            <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[9px] font-bold">
-                              Say hello to {selectedRecipient}!
-                            </div>
-                          ) : (
-                            directMessages
-                              .filter(dm =>
-                                (dm.sender.toLowerCase() === user?.username.toLowerCase() && dm.recipient.toLowerCase() === selectedRecipient.toLowerCase()) ||
-                                (dm.sender.toLowerCase() === selectedRecipient.toLowerCase() && dm.recipient.toLowerCase() === user?.username.toLowerCase())
-                              )
-                              .map((dm, index) => {
-                                const isMe = dm.sender.toLowerCase() === user?.username.toLowerCase();
-                                return (
-                                  <div key={dm._id || index} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                                    <div className={`p-2 rounded-xl text-xs max-w-[85%] break-words whitespace-pre-wrap ${
-                                      isMe
-                                        ? "bg-blue-600 text-white rounded-tr-none text-right"
-                                        : "bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm"
-                                    }`}>
-                                      {dm.message}
-                                    </div>
-                                  </div>
-                                );
-                              })
-                          )
-                        )}
-                      </div>
-
-                      {/* Message Input Form */}
-                      <form onSubmit={handleSendMessageSubmit} className="flex items-center gap-1.5 mt-auto">
-                        <input
-                          type="text"
-                          placeholder={selectedRecipient === "all" ? "Broadcast to group..." : `Message ${selectedRecipient}...`}
-                          value={newDmText}
-                          onChange={(e) => setNewDmText(e.target.value)}
-                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-bold"
-                        />
-                        <button
-                          type="submit"
-                          className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20 flex-shrink-0 cursor-pointer"
-                        >
-                          <FiPlus size={14} />
-                        </button>
-                      </form>
-                    </>
-                  ) : (
-                    <div className="text-center my-auto text-slate-400 uppercase tracking-widest text-[10px] font-bold">
-                      Select a recipient
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            </>
-          )}
-        </div>
-
         {/* Workspace Dropdown Popover */}
         <div className="relative">
           <button 
             type="button"
-            onClick={() => {
-              setShowTodoDropdown(prev => !prev);
-              setShowChatDropdown(false);
-            }}
+            onClick={() => setShowTodoDropdown(prev => !prev)}
             className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
             title="Workspace To-Do List"
           >
@@ -746,6 +377,20 @@ export default function Header() {
           )}
         </div>
 
+        {/* Urgent Tasks - owner-only, opens the create-form + live list as a
+            popup so it's reachable from every page without leaving whatever
+            you're currently working on. */}
+        {isOwner && (
+          <button
+            type="button"
+            onClick={() => setShowUrgentTaskModal(true)}
+            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            title="Urgent Tasks"
+          >
+            <FiAlertTriangle size={13} /> <span className="hidden sm:inline">Urgent Tasks</span>
+          </button>
+        )}
+
         <div className="text-right border-r border-slate-700 pr-2 sm:pr-4 md:pr-8 max-w-16 sm:max-w-none">
           <h2 className="text-xs sm:text-sm md:text-lg font-bold leading-none capitalize truncate">{user.username}</h2>
         </div>
@@ -760,5 +405,33 @@ export default function Header() {
         </button>
       </div>
     </header>
+
+    {showUrgentTaskModal && (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="bg-[#f3f6f9] border border-slate-200 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+          <div className="p-5 border-b border-slate-200 bg-white flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-[#dc2626] text-white p-2.5 rounded-xl">
+                <FiAlertTriangle size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-[#0a2540]">Urgent Tasks</h3>
+                <p className="text-[9px] text-[#ff9933] font-black uppercase tracking-widest">Assign & Track</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowUrgentTaskModal(false)}
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <FiX size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-5">
+            <UrgentTaskManagerPanel />
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

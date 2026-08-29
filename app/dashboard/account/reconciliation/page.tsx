@@ -20,6 +20,7 @@ import { buildClusters, OrderCluster } from "@/lib/reconciliation/clusterEngine"
 interface Match {
   _id: string;
   firmCode: string;
+  statementId?: string;
   transactionDate: string;
   transactionDescription: string;
   creditedAmount: number;
@@ -106,11 +107,83 @@ interface OrderLite {
   orderNo: string;
   firmCode: string;
   instituteName: string;
+  itemName?: string;
+  contractDate?: string;
+  createdAt?: string;
   totalAmount: number;
   paidAmount?: number;
   isPaid?: boolean;
   status: string;
   billExemptReason?: "ALREADY_BILLED_EXTERNAL" | "NOT_REQUIRED" | null;
+}
+
+// Compact order-ledger table shown while manually matching - lets the user
+// compare the bank entry's amount/date/narration against an institute's
+// actual open orders (item, date, amount) instead of guessing from a name
+// alone. Rows whose remaining amount matches the credited amount (within a
+// rupee, for rounding) are highlighted since that's usually the deciding
+// signal. Capped and amount-matches-first so an institute with a long open
+// backlog doesn't turn every row into a huge table.
+const LEDGER_ROW_CAP = 8;
+const LEDGER_ROW_CAP_FULL = 30;
+function OrderLedgerMini({
+  orders,
+  highlightAmount,
+  fullWidth,
+}: {
+  orders: OrderLite[];
+  highlightAmount?: number;
+  fullWidth?: boolean;
+}) {
+  if (orders.length === 0) {
+    return <p className="text-[9px] text-slate-400 italic px-1 py-1">No open orders for this institute.</p>;
+  }
+  const withRemaining = orders.map((o) => ({ o, remaining: (o.totalAmount || 0) - (o.paidAmount || 0) }));
+  const sorted = [...withRemaining].sort((a, b) => {
+    const aMatch = highlightAmount != null && Math.abs(a.remaining - highlightAmount) < 1;
+    const bMatch = highlightAmount != null && Math.abs(b.remaining - highlightAmount) < 1;
+    if (aMatch !== bMatch) return aMatch ? -1 : 1;
+    const aDate = a.o.contractDate || a.o.createdAt || "";
+    const bDate = b.o.contractDate || b.o.createdAt || "";
+    return bDate.localeCompare(aDate);
+  });
+  const cap = fullWidth ? LEDGER_ROW_CAP_FULL : LEDGER_ROW_CAP;
+  const shown = sorted.slice(0, cap);
+  const rowText = fullWidth ? "text-xs" : "text-[9px]";
+  return (
+    <div className={`border border-slate-200 rounded-lg overflow-hidden mt-1 ${fullWidth ? "" : "max-w-[420px]"}`}>
+      <table className={`w-full ${rowText}`}>
+        <thead>
+          <tr className="bg-slate-50 text-slate-400 font-bold uppercase">
+            <th className="px-2 py-1.5 text-left">Order</th>
+            <th className="px-2 py-1.5 text-left">Item</th>
+            <th className="px-2 py-1.5 text-left">Date</th>
+            <th className="px-2 py-1.5 text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {shown.map(({ o, remaining }) => {
+            const isMatch = highlightAmount != null && Math.abs(remaining - highlightAmount) < 1;
+            return (
+              <tr key={o._id} className={isMatch ? "bg-emerald-50" : ""}>
+                <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">{o.orderNo}</td>
+                <td className={`px-2 py-1.5 text-slate-600 truncate ${fullWidth ? "max-w-[220px]" : "max-w-[140px]"}`} title={o.itemName}>
+                  {o.itemName || "—"}
+                </td>
+                <td className="px-2 py-1.5 font-mono text-slate-500 whitespace-nowrap">{o.contractDate || (o.createdAt ? o.createdAt.slice(0, 10) : "—")}</td>
+                <td className={`px-2 py-1.5 text-right font-mono font-bold whitespace-nowrap ${isMatch ? "text-emerald-700" : "text-slate-700"}`}>
+                  {isMatch && "✓ "}₹{formatMoney(remaining)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {sorted.length > cap && (
+        <p className="text-[8px] text-slate-400 text-center py-1 bg-slate-50">+{sorted.length - cap} more open order(s)</p>
+      )}
+    </div>
+  );
 }
 
 const RETURN_FAMILY = new Set(["CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"]);
@@ -144,6 +217,12 @@ export default function ReconciliationPage() {
   const [correctionAlerts, setCorrectionAlerts] = useState<CorrectionAlert[]>([]);
   const [correctionBusyId, setCorrectionBusyId] = useState<string | null>(null);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  // Which institute's order ledger is expanded, per row - keyed by
+  // `${matchId}|${sellerId}` so each row/candidate toggles independently.
+  // Opens the order-ledger popup for one (transaction, candidate institute)
+  // pair - shown alongside the full bank statement entry so the two can be
+  // compared side by side instead of a cramped inline table.
+  const [ledgerModalFor, setLedgerModalFor] = useState<{ match: Match; sellerId: string; instituteName: string } | null>(null);
   const [runningMatching, setRunningMatching] = useState(false);
   const [detailsFor, setDetailsFor] = useState<Match | null>(null);
   const [detailsBills, setDetailsBills] = useState<BillLineDetail[]>([]);
@@ -155,6 +234,11 @@ export default function ReconciliationPage() {
   const [manualState, setManualState] = useState<
     Record<string, { sellerId: string; billId: string; deductionType: string; deductionAmount: string; deductionReason: string }>
   >({});
+  // Same firm can have several bank accounts open at once (e.g. DEV ENTERPRISE
+  // has both an HDFC and a Mehsana Co-op account) - the firm code alone
+  // doesn't say which one a given statement entry came from, so the last 4
+  // account digits are shown alongside it everywhere Firm appears below.
+  const [accountLast4ByStatementId, setAccountLast4ByStatementId] = useState<Record<string, string>>({});
 
   useEffect(() => {
     try {
@@ -172,10 +256,28 @@ export default function ReconciliationPage() {
       .then((data) => setCompanies(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load firms", err));
 
-    fetch("/api/seller-orders")
+    // ?all=1 - reconciliation exists specifically to clear old backlog, so it
+    // needs every open order, not just the system-wide most-recent-250 the
+    // Orders board defaults to. Without this, any institute whose unpaid
+    // orders are all older than that recent-250 window (common - the whole
+    // point here is catching up on a backlog) silently showed "no open
+    // orders" even when real matching bills existed.
+    fetch("/api/seller-orders?all=1")
       .then((res) => res.json())
       .then((data) => setOrders(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load orders", err));
+
+    fetch("/api/account-statements")
+      .then((res) => res.json())
+      .then((data) => {
+        const map: Record<string, string> = {};
+        (Array.isArray(data) ? data : []).forEach((s: any) => {
+          const digits = String(s.accountNumber || "").replace(/\D/g, "");
+          if (digits) map[String(s._id)] = digits.slice(-4);
+        });
+        setAccountLast4ByStatementId(map);
+      })
+      .catch((err) => console.error("Failed to load statement account numbers", err));
 
     refreshSellers();
   }, []);
@@ -609,7 +711,14 @@ export default function ReconciliationPage() {
                           const isKasar = edit.correctedType === "Kasar";
                           return (
                             <tr key={m._id} className="hover:bg-blue-50/40 transition-colors align-top">
-                              <td className="py-2.5 px-3 font-black text-slate-700 uppercase">{m.firmCode}</td>
+                              <td className="py-2.5 px-3 font-black text-slate-700 uppercase">
+                                {m.firmCode}
+                                {m.statementId && accountLast4ByStatementId[m.statementId] && (
+                                  <span className="block text-[9px] font-bold text-slate-400 normal-case">
+                                    a/c •{accountLast4ByStatementId[m.statementId]}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-2.5 px-3 font-mono text-slate-700">
                                 {m.billNos.join(", ") || "—"}
                                 {m.billIds.length > 1 && (
@@ -759,7 +868,14 @@ export default function ReconciliationPage() {
                           return (
                             <tr key={m._id} className="hover:bg-amber-50/30 transition-colors align-top">
                               <td className="py-2.5 px-3 font-mono text-slate-600">{m.transactionDate}</td>
-                              <td className="py-2.5 px-3 font-black text-slate-700 uppercase">{m.firmCode}</td>
+                              <td className="py-2.5 px-3 font-black text-slate-700 uppercase">
+                                {m.firmCode}
+                                {m.statementId && accountLast4ByStatementId[m.statementId] && (
+                                  <span className="block text-[9px] font-bold text-slate-400 normal-case">
+                                    a/c •{accountLast4ByStatementId[m.statementId]}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-2.5 px-3 text-slate-700 max-w-[280px] whitespace-normal break-words">
                                 {m.transactionDescription}
                               </td>
@@ -771,26 +887,39 @@ export default function ReconciliationPage() {
                                       <FiAlertTriangle size={10} /> Ambiguous — pick one
                                     </span>
                                     {(m.ambiguousCandidates || []).map((c) => (
-                                      <button
+                                      <div
                                         key={c.sellerId}
-                                        type="button"
-                                        onClick={() => setManual(m._id, { sellerId: c.sellerId, billId: "" })}
-                                        className={`text-left border rounded-lg px-2 py-1 transition-colors ${
+                                        className={`border rounded-lg overflow-hidden transition-colors ${
                                           man.sellerId === c.sellerId
                                             ? "bg-blue-50 border-blue-400"
                                             : "bg-white border-slate-200 hover:border-blue-300"
                                         }`}
                                       >
-                                        <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
-                                        <span className="text-[9px] text-slate-400">
-                                          {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
-                                        </span>
-                                        {c.matchedBillNos && c.matchedBillNos.length > 0 && (
-                                          <span className="block text-[9px] font-bold text-emerald-700">
-                                            ✓ matches {c.matchedBillNos.join(", ")}
-                                          </span>
-                                        )}
-                                      </button>
+                                        <div className="flex items-start justify-between gap-1 px-2 py-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setManual(m._id, { sellerId: c.sellerId, billId: "" })}
+                                            className="text-left flex-1 min-w-0"
+                                          >
+                                            <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
+                                            <span className="text-[9px] text-slate-400">
+                                              {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
+                                            </span>
+                                            {c.matchedBillNos && c.matchedBillNos.length > 0 && (
+                                              <span className="block text-[9px] font-bold text-emerald-700">
+                                                ✓ matches {c.matchedBillNos.join(", ")}
+                                              </span>
+                                            )}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setLedgerModalFor({ match: m, sellerId: c.sellerId, instituteName: c.instituteName })}
+                                            className="shrink-0 text-[8px] font-black uppercase text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                                          >
+                                            View Orders ▾
+                                          </button>
+                                        </div>
+                                      </div>
                                     ))}
                                   </div>
                                 )}
@@ -804,6 +933,18 @@ export default function ReconciliationPage() {
                                     <option key={s._id} value={s._id}>{s.instituteName}</option>
                                   ))}
                                 </select>
+                                {man.sellerId && (() => {
+                                  const selectedInstituteName = sellerById[man.sellerId]?.instituteName || "";
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setLedgerModalFor({ match: m, sellerId: man.sellerId, instituteName: selectedInstituteName })}
+                                      className="block mt-1 text-[8px] font-black uppercase text-blue-600 hover:text-blue-800"
+                                    >
+                                      View Orders ▾
+                                    </button>
+                                  );
+                                })()}
                               </td>
                               <td className="py-2.5 px-3">
                                 <select
@@ -990,6 +1131,60 @@ export default function ReconciliationPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Ledger popup - the bank statement entry alongside the picked
+          institute's full order ledger (item/date/amount), so the two can be
+          compared side by side before committing to a match. */}
+      {ledgerModalFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                  <FiInfo className="text-blue-600" /> {ledgerModalFor.instituteName}
+                </h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Order Ledger</p>
+              </div>
+              <button onClick={() => setLedgerModalFor(null)} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                <FiX size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              <div>
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-2">Bank Statement Entry</span>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono text-slate-600">{ledgerModalFor.match.transactionDate}</span>
+                    <span className="font-mono font-bold text-emerald-700">₹{formatMoney(ledgerModalFor.match.creditedAmount)}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-700 break-words">{ledgerModalFor.match.transactionDescription}</p>
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-2">
+                  {ledgerModalFor.instituteName}'s Open Orders
+                </span>
+                <OrderLedgerMini
+                  orders={openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)}
+                  highlightAmount={ledgerModalFor.match.creditedAmount}
+                  fullWidth
+                />
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setManual(ledgerModalFor.match._id, { sellerId: ledgerModalFor.sellerId, billId: "" });
+                  setLedgerModalFor(null);
+                }}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+              >
+                Select {ledgerModalFor.instituteName}
+              </button>
             </div>
           </div>
         </div>

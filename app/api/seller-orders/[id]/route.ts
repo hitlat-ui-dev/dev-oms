@@ -463,12 +463,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             ]
           );
         } else if (updateData.status === "HISAB" || updateData.status === "CANCELL ORDER" || updateData.status === "FULFILLED") {
-          await db.collection("stock").updateOne(stockFilter, {
-            $inc: { reQty: -adjustQty }
-          });
+          // Floored at 0, same as the READY TO SHIP/DELIVERY branch above -
+          // without this, an order leaving "TO CHECK" when reQty is already
+          // at (or near) 0 for that SKU pushed it negative instead of
+          // clamping, which then stayed wrong indefinitely since nothing
+          // else in this route ever re-derives reQty from scratch.
+          await db.collection("stock").updateOne(stockFilter, [
+            { $set: { reQty: { $max: [0, { $add: [{ $ifNull: ["$reQty", 0] }, -adjustQty] }] } } }
+          ]);
           await db.collection("items").updateOne(
             { sku: itemSku },
-            { $inc: { reQty: -adjustQty } }
+            [
+              { $set: { reQty: { $max: [0, { $add: [{ $ifNull: ["$reQty", 0] }, -adjustQty] }] } } }
+            ]
           );
         }
       }
@@ -508,6 +515,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
       }
       else if (updateData.activeTab === "HISAB") {
+        if (updateData.status === "TO CHECK") {
+          await db.collection("stock").updateOne(stockFilter, {
+            $inc: { reQty: adjustQty }
+          });
+          await db.collection("items").updateOne(
+            { sku: itemSku },
+            { $inc: { reQty: adjustQty } }
+          );
+        }
+      }
+      else if (updateData.activeTab === "FULFILLED") {
+        // Mirrors CANCELL ORDER/HISAB above - moving back to TO CHECK means
+        // this order counts as pending again, so its qty is restored to the
+        // reQty pool (the exact reverse of the -adjustQty this same order
+        // applied when it first left TO CHECK for FULFILLED).
         if (updateData.status === "TO CHECK") {
           await db.collection("stock").updateOne(stockFilter, {
             $inc: { reQty: adjustQty }
