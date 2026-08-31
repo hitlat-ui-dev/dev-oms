@@ -26,7 +26,9 @@ import {
   FiCheck,
   FiX,
   FiUser,
-  FiSlash
+  FiSlash,
+  FiArrowUp,
+  FiArrowDown
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -1800,9 +1802,31 @@ export default function GeMSyncPage() {
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
   }, [mappingStatusFilter, activeSheetId]);
+
+  // GeM Link column sort toggle: "blankFirst" groups every row with no GeM
+  // Link at the top in one go (so missing links are easy to spot/fill),
+  // "filledFirst" flips it to group the ones that already have a link at the
+  // top instead - Array.sort is stable, so rows within each group keep their
+  // original relative order.
+  const [gemLinkSortMode, setGemLinkSortMode] = useState<"none" | "blankFirst" | "filledFirst">("none");
+  const toggleGemLinkSort = () => {
+    setGemLinkSortMode(prev => (prev === "blankFirst" ? "filledFirst" : "blankFirst"));
+  };
+  const sortedUploadedRows = useMemo(() => {
+    if (gemLinkSortMode === "none") return filteredUploadedRows;
+    const isBlank = (r: UploadedRow) => !r.gemLink || !r.gemLink.trim();
+    return [...filteredUploadedRows].sort((a, b) => {
+      const aBlank = isBlank(a);
+      const bBlank = isBlank(b);
+      if (aBlank === bBlank) return 0;
+      if (gemLinkSortMode === "blankFirst") return aBlank ? -1 : 1;
+      return aBlank ? 1 : -1;
+    });
+  }, [filteredUploadedRows, gemLinkSortMode]);
+
   const visibleUploadedRows = useMemo(
-    () => filteredUploadedRows.slice(0, visibleRowCount),
-    [filteredUploadedRows, visibleRowCount]
+    () => sortedUploadedRows.slice(0, visibleRowCount),
+    [sortedUploadedRows, visibleRowCount]
   );
 
   return (
@@ -2099,7 +2123,27 @@ export default function GeMSyncPage() {
                           <th className="py-2 px-2.5 w-[85px] min-w-[85px]">Rate (₹)</th>
                           <th className="py-2 px-2.5 w-[80px] min-w-[80px]">Stock</th>
                           <th className="py-2 px-2.5 w-[70px] min-w-[70px]">Min Qty</th>
-                          <th className="py-2 px-2.5 w-[150px] min-w-[150px]">GeM Link</th>
+                          <th className="py-2 px-2.5 w-[150px] min-w-[150px]">
+                            <div className="flex items-center gap-1.5">
+                              <span>GeM Link</span>
+                              <button
+                                type="button"
+                                onClick={toggleGemLinkSort}
+                                title={
+                                  gemLinkSortMode === "filledFirst"
+                                    ? "Showing filled links first - click to bring blank links to the top"
+                                    : "Bring blank GeM Links to the top - click again to show filled links first"
+                                }
+                                className={`p-1 rounded normal-case transition-colors ${
+                                  gemLinkSortMode !== "none"
+                                    ? "bg-blue-600 text-white"
+                                    : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)]"
+                                }`}
+                              >
+                                {gemLinkSortMode === "filledFirst" ? <FiArrowDown size={11} /> : <FiArrowUp size={11} />}
+                              </button>
+                            </div>
+                          </th>
                           <th className="py-2 px-2.5 text-center w-[165px] min-w-[165px]">Actions</th>
                         </tr>
                       </thead>
