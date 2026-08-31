@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare, FiPrinter } from "react-icons/fi";
+import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare, FiPrinter, FiCreditCard, FiClock } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
 export default function AccountPage() {
@@ -42,6 +42,20 @@ export default function AccountPage() {
       sub: "MATCH & CONFIRM PAYMENTS",
       icon: <FiCheckSquare />,
       color: "bg-[#059669]",
+    },
+    {
+      name: "DD Tracking",
+      path: "/dashboard/account/dd-tracking",
+      sub: "TENDER SECURITY DEPOSIT DDs",
+      icon: <FiCreditCard />,
+      color: "bg-[#be123c]",
+    },
+    {
+      name: "Payment Turnaround",
+      path: "/dashboard/account/payment-turnaround",
+      sub: "INSTITUTE PAYMENT SPEED REPORT",
+      icon: <FiClock />,
+      color: "bg-[#0e7490]",
     },
   ];
 
