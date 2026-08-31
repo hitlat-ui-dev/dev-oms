@@ -25,7 +25,8 @@ import {
   FiChevronDown,
   FiCheck,
   FiX,
-  FiUser
+  FiUser,
+  FiSlash
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -123,6 +124,12 @@ interface UploadedRow {
   isCompleted?: boolean;
   completedBy?: string;
   completedAt?: string;
+  // No GeM listing exists for this item at all (client wants it, but it can't
+  // be found on GeM) - pulls the row out of Uncompleted into its own tab
+  // instead of leaving it stuck there forever with nothing actionable.
+  notAvailable?: boolean;
+  notAvailableBy?: string;
+  notAvailableAt?: string;
 }
 
 export default function GeMSyncPage() {
@@ -164,7 +171,7 @@ export default function GeMSyncPage() {
   const [uploadedRows, setUploadedRows] = useState<UploadedRow[]>([]);
   const [originalExcelData, setOriginalExcelData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("");
-  const [mappingStatusFilter, setMappingStatusFilter] = useState<"uncompleted" | "completed" | "all">("uncompleted");
+  const [mappingStatusFilter, setMappingStatusFilter] = useState<"uncompleted" | "completed" | "not_available" | "all">("uncompleted");
 
   // "Build Sheet From Scratch" - lets a sheet be created by picking items
   // straight from the Inventory/Master List instead of uploading a client
@@ -1426,6 +1433,27 @@ export default function GeMSyncPage() {
     }));
   };
 
+  // "GeM Link Not Available" - this item genuinely has no listing on GeM to
+  // link to, so it can never be actioned via OK Link/Update Stock/New Link.
+  // Pulls it out of Uncompleted into its own Not Available tab (still shows
+  // in All) instead of leaving it stuck in Uncompleted forever. Mutually
+  // exclusive with isCompleted - marking one clears the other.
+  const toggleRowNotAvailable = (rowIndex: number) => {
+    setUploadedRows(prev => prev.map(r => {
+      if (r.index !== rowIndex) return r;
+      const nowNotAvailable = !r.notAvailable;
+      return {
+        ...r,
+        notAvailable: nowNotAvailable,
+        notAvailableBy: nowNotAvailable ? (currentUsername || "Unknown") : undefined,
+        notAvailableAt: nowNotAvailable ? new Date().toISOString() : undefined,
+        isCompleted: nowNotAvailable ? false : r.isCompleted,
+        completedBy: nowNotAvailable ? undefined : r.completedBy,
+        completedAt: nowNotAvailable ? undefined : r.completedAt,
+      };
+    }));
+  };
+
   // Append-only record of every row action for the Summary dashboard's GeM
   // Sync report - fire-and-forget, never blocks the actual action on it.
   const logGemAction = (type: "ok_link" | "update_stock" | "new_link", row: UploadedRow, itemName: string) => {
@@ -1719,8 +1747,9 @@ export default function GeMSyncPage() {
     saveListings(updatedListings);
   };
 
-  const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted).length, [uploadedRows]);
+  const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted && !r.notAvailable).length, [uploadedRows]);
   const completedRowsCount = useMemo(() => uploadedRows.filter(r => r.isCompleted).length, [uploadedRows]);
+  const notAvailableRowsCount = useMemo(() => uploadedRows.filter(r => r.notAvailable).length, [uploadedRows]);
 
   // Firm-wise total value report for the currently loaded sheet - Qty x Rate
   // summed per firm across the WHOLE sheet (not just the current Uncompleted/
@@ -1758,7 +1787,9 @@ export default function GeMSyncPage() {
 
   const filteredUploadedRows = useMemo(() => {
     if (mappingStatusFilter === "all") return uploadedRows;
-    return uploadedRows.filter(row => mappingStatusFilter === "completed" ? !!row.isCompleted : !row.isCompleted);
+    if (mappingStatusFilter === "not_available") return uploadedRows.filter(row => !!row.notAvailable);
+    if (mappingStatusFilter === "completed") return uploadedRows.filter(row => !!row.isCompleted);
+    return uploadedRows.filter(row => !row.isCompleted && !row.notAvailable);
   }, [uploadedRows, mappingStatusFilter]);
 
   // Renders only this many rows at a time - a 200+ row sheet rendering all
@@ -1925,6 +1956,17 @@ export default function GeMSyncPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => setMappingStatusFilter("not_available")}
+                        className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
+                          mappingStatusFilter === "not_available"
+                            ? "bg-rose-600 text-white shadow-md"
+                            : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                        }`}
+                      >
+                        Not Available ({notAvailableRowsCount})
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setMappingStatusFilter("all")}
                         className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
                           mappingStatusFilter === "all"
@@ -2065,7 +2107,11 @@ export default function GeMSyncPage() {
                         {filteredUploadedRows.length === 0 && (
                           <tr>
                             <td colSpan={10} className="py-10 text-center text-[var(--gem-text-secondary)] text-xs">
-                              {mappingStatusFilter === "completed" ? "No rows linked yet." : "🎉 All rows are linked — nothing uncompleted left."}
+                              {mappingStatusFilter === "completed"
+                                ? "No rows linked yet."
+                                : mappingStatusFilter === "not_available"
+                                ? "No rows marked Not Available."
+                                : "🎉 All rows are linked — nothing uncompleted left."}
                             </td>
                           </tr>
                         )}
@@ -2398,6 +2444,25 @@ export default function GeMSyncPage() {
                                   >
                                     <FiPlus size={12} />
                                   </button>
+                                  {row.notAvailable ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRowNotAvailable(row.index)}
+                                      title="Marked GeM Link Not Available - click to undo"
+                                      className="w-7 h-7 flex items-center justify-center rounded bg-rose-100 text-rose-700 border border-rose-300 transition-colors"
+                                    >
+                                      <FiSlash size={12} />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRowNotAvailable(row.index)}
+                                      title="GeM Link Not Available - this item can't be found on GeM"
+                                      className="w-7 h-7 flex items-center justify-center rounded bg-[var(--gem-table-header)] hover:bg-rose-50 text-rose-600 border border-rose-300 transition-colors"
+                                    >
+                                      <FiSlash size={12} />
+                                    </button>
+                                  )}
                                   {row.isCompleted && (
                                     <button
                                       type="button"
