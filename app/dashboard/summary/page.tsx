@@ -53,8 +53,11 @@ interface SummaryData {
   };
   today: {
     todayOrderValue: number;
-    todayOrderQty: number;
     todayOrderCount: number;
+  };
+  thisMonth: {
+    monthOrderValue: number;
+    monthOrderCount: number;
   };
   pending: {
     pendingOrderCount: number;
@@ -78,6 +81,7 @@ interface SummaryData {
       stockUpdate: { pending: number; synced: number };
       newUploadLink: { pending: number; synced: number };
     };
+    byUser: { username: string; okLink: number; updateStock: number; newLink: number; total: number }[];
   };
 }
 
@@ -306,9 +310,9 @@ export default function SummaryDashboardPage() {
                 />
                 <StatCard
                   icon={<FiPackage size={16} />}
-                  label="Today's Order Qty"
-                  value={formatInt(data.today.todayOrderQty)}
-                  sub="units placed today"
+                  label="This Month's Order Value"
+                  value={`₹${formatMoney(data.thisMonth.monthOrderValue)}`}
+                  sub={`${formatInt(data.thisMonth.monthOrderCount)} orders this month`}
                   color="bg-indigo-600"
                 />
                 <StatCard
@@ -452,6 +456,38 @@ export default function SummaryDashboardPage() {
                       </div>
                     </div>
                   </div>
+
+                  {data.gemSync.byUser.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-2">
+                        Requirement Mapping Actions — By User (All-Time)
+                      </span>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+                              <th className="py-2 px-3">User</th>
+                              <th className="py-2 px-3 text-center">OK Link</th>
+                              <th className="py-2 px-3 text-center">Update Stock</th>
+                              <th className="py-2 px-3 text-center">New Link</th>
+                              <th className="py-2 px-3 text-center">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {data.gemSync.byUser.map((u) => (
+                              <tr key={u.username} className="hover:bg-blue-50/40 transition-colors">
+                                <td className="py-2 px-3 font-black text-slate-800">{u.username}</td>
+                                <td className="py-2 px-3 text-center font-mono font-bold text-emerald-700">{u.okLink || "—"}</td>
+                                <td className="py-2 px-3 text-center font-mono font-bold text-amber-700">{u.updateStock || "—"}</td>
+                                <td className="py-2 px-3 text-center font-mono font-bold text-blue-700">{u.newLink || "—"}</td>
+                                <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">{u.total}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

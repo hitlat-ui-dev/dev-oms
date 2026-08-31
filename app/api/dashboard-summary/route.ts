@@ -23,6 +23,7 @@ export async function GET(req: Request) {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const baseMatch: Record<string, any> = { status: { $nin: RETURN_FAMILY } };
     if (firmCode) baseMatch.firmCode = firmCode;
@@ -51,8 +52,17 @@ export async function GET(req: Request) {
                 $group: {
                   _id: null,
                   todayOrderValue: { $sum: { $ifNull: ["$totalAmount", 0] } },
-                  todayOrderQty: { $sum: { $ifNull: ["$reQty", 0] } },
                   todayOrderCount: { $sum: 1 },
+                },
+              },
+            ],
+            thisMonth: [
+              { $match: { createdAt: { $gte: monthStart } } },
+              {
+                $group: {
+                  _id: null,
+                  monthOrderValue: { $sum: { $ifNull: ["$totalAmount", 0] } },
+                  monthOrderCount: { $sum: 1 },
                 },
               },
             ],
@@ -82,7 +92,8 @@ export async function GET(req: Request) {
       .toArray();
 
     const totals = facetResult.totals[0] || { totalOrderValue: 0, totalReceived: 0, totalDeducted: 0, orderCount: 0 };
-    const today = facetResult.today[0] || { todayOrderValue: 0, todayOrderQty: 0, todayOrderCount: 0 };
+    const today = facetResult.today[0] || { todayOrderValue: 0, todayOrderCount: 0 };
+    const thisMonth = facetResult.thisMonth[0] || { monthOrderValue: 0, monthOrderCount: 0 };
     const pending = facetResult.pending[0] || { pendingOrderCount: 0, pendingOrderValue: 0 };
     const statusBreakdown = (facetResult.statusBreakdown || []).map((s: any) => ({
       status: s._id || "Unknown",
@@ -148,11 +159,31 @@ export async function GET(req: Request) {
     // via each of the 3 buttons (all-time, from the append-only gem_action_log),
     // plus the current Sync Checklist snapshot (Pending vs Synced) for both of
     // its portions - Stock Update (gem_listings) and New Upload Link.
-    const [okLinkCount, updateStockCount, newLinkActionCount] = await Promise.all([
+    const [okLinkCount, updateStockCount, newLinkActionCount, gemActionByUserAgg] = await Promise.all([
       db.collection("gem_action_log").countDocuments({ type: "ok_link" }),
       db.collection("gem_action_log").countDocuments({ type: "update_stock" }),
       db.collection("gem_action_log").countDocuments({ type: "new_link" }),
+      db
+        .collection("gem_action_log")
+        .aggregate([
+          { $group: { _id: { by: { $ifNull: ["$by", "Unknown"] }, type: "$type" }, count: { $sum: 1 } } },
+        ])
+        .toArray(),
     ]);
+    // Per-user split of the same all-time action log, for "who did how much
+    // GeM Sync work" - keyed by the `by` username each action was logged
+    // under (see log_gem_action in app/api/gem-sync/route.ts).
+    const gemByUserMap: Record<string, { okLink: number; updateStock: number; newLink: number }> = {};
+    for (const row of gemActionByUserAgg as any[]) {
+      const user = row._id.by || "Unknown";
+      if (!gemByUserMap[user]) gemByUserMap[user] = { okLink: 0, updateStock: 0, newLink: 0 };
+      if (row._id.type === "ok_link") gemByUserMap[user].okLink = row.count;
+      else if (row._id.type === "update_stock") gemByUserMap[user].updateStock = row.count;
+      else if (row._id.type === "new_link") gemByUserMap[user].newLink = row.count;
+    }
+    const gemSyncByUser = Object.entries(gemByUserMap)
+      .map(([username, c]) => ({ username, ...c, total: c.okLink + c.updateStock + c.newLink }))
+      .sort((a, b) => b.total - a.total);
     const [stockUpdatePending, stockUpdateSynced, newUploadLinkPending, newUploadLinkSynced] = await Promise.all([
       db.collection("gem_listings").countDocuments({ status: "Pending" }),
       db.collection("gem_listings").countDocuments({ status: "Synced" }),
@@ -165,6 +196,7 @@ export async function GET(req: Request) {
         stockUpdate: { pending: stockUpdatePending, synced: stockUpdateSynced },
         newUploadLink: { pending: newUploadLinkPending, synced: newUploadLinkSynced },
       },
+      byUser: gemSyncByUser,
     };
 
     // Team activity today — merged from every user-attributed signal the app writes:
@@ -183,8 +215,11 @@ export async function GET(req: Request) {
       },
       today: {
         todayOrderValue: round2(today.todayOrderValue),
-        todayOrderQty: today.todayOrderQty,
         todayOrderCount: today.todayOrderCount,
+      },
+      thisMonth: {
+        monthOrderValue: round2(thisMonth.monthOrderValue),
+        monthOrderCount: thisMonth.monthOrderCount,
       },
       pending: {
         pendingOrderCount: pending.pendingOrderCount,

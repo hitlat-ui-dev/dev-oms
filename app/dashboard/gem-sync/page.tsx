@@ -1343,42 +1343,32 @@ export default function GeMSyncPage() {
     const matchedItemObj = allItemsList.find(i => i._id === row.mappedItemId);
     const buyerObj = buyers.find(b => b.id === selectedBuyerId);
 
-    // Validate that the GeM product link is not a duplicate within the same firm
-    if (row.gemLink && row.gemLink.trim() !== "") {
-      const trimmedLink = row.gemLink.trim();
-
-      const existingListingId = listings.find(lst =>
+    // The real identity of a Master List row is "this buyer's copy of this
+    // exact GeM product" - normally that's {buyerId, itemId, firmCode}, but
+    // this row's locally-picked stock item isn't always the same item the
+    // listing was ORIGINALLY created under (e.g. re-imported/re-typed sheets
+    // can map the same real product to a differently-named stock entry).
+    // The GeM link itself is a stronger, unambiguous identity for the same
+    // buyer+firm - if it's already registered, this row IS that listing, so
+    // "Update Stock"/"OK Link" should update it in place instead of either
+    // creating a confusing second row or refusing to save at all.
+    const trimmedLink = row.gemLink ? row.gemLink.trim() : "";
+    const existing =
+      listings.find(lst =>
         lst.buyerId === selectedBuyerId &&
         lst.itemId === row.mappedItemId &&
         lst.firmCode === row.firmCode &&
         row.mappedItemId &&
         row.firmCode
-      )?.id;
-
-      // Scoped to this same buyer - the same real GeM product page is
-      // legitimately reused across different buyers' own Master List entries
-      // (each buyer gets its own listing row), so that alone isn't a duplicate.
-      const duplicateLink = listings.find(lst =>
-        lst.firmCode === row.firmCode &&
-        lst.buyerId === selectedBuyerId &&
-        lst.gemLink &&
-        lst.gemLink.trim() === trimmedLink &&
-        (existingListingId ? lst.id !== existingListingId : true)
-      );
-
-      if (duplicateLink) {
-        alert(`❌ Duplicate GeM Link! The link is already registered for this firm under item: "${duplicateLink.itemName}".`);
-        return false;
-      }
-    }
-
-    const existing = listings.find(lst =>
-      lst.buyerId === selectedBuyerId &&
-      lst.itemId === row.mappedItemId &&
-      lst.firmCode === row.firmCode &&
-      row.mappedItemId &&
-      row.firmCode
-    );
+      ) ||
+      (trimmedLink
+        ? listings.find(lst =>
+            lst.buyerId === selectedBuyerId &&
+            lst.firmCode === row.firmCode &&
+            lst.gemLink &&
+            lst.gemLink.trim() === trimmedLink
+          )
+        : undefined);
 
     if (existing) {
       const updatedListings = listings.map(lst =>
