@@ -93,7 +93,7 @@ export async function GET(req: Request) {
 
     // Fetch the remaining collections concurrently rather than one-at-a-time —
     // total wait becomes the slowest single query instead of the sum of all of them.
-    const [buyers, rawListings, customItems, sheets, rowMappings, newLinkChecklist] = await Promise.all([
+    const [buyers, rawListings, customItems, sheets, rowMappings, newLinkChecklist, masterRates] = await Promise.all([
       db.collection("gem_buyers").find({}).toArray(),
       db.collection("gem_listings").find({}).toArray(),
       db.collection("gem_custom_items").find({}).toArray(),
@@ -108,6 +108,9 @@ export async function GET(req: Request) {
       // gem_listings (the "Stock Update" checklist portion), since these
       // entries don't necessarily have a rate/inventory mapping yet.
       db.collection("gem_new_link_checklist").find({}).toArray(),
+      // Master Rate Sheet - per-item A/B/C/D rate types, so a rate only has to
+      // be typed once instead of re-typed on every sheet that item appears in.
+      db.collection("gem_master_rates").find({}).toArray(),
     ]);
 
     // Clean MongoDB _id fields for React/JSON serialization
@@ -117,6 +120,7 @@ export async function GET(req: Request) {
     const cleanSheets = sheets.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanRowMappings = rowMappings.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanNewLinkChecklist = newLinkChecklist.map(({ _id, ...rest }) => ({ ...rest }));
+    const cleanMasterRates = masterRates.map(({ _id, ...rest }) => ({ ...rest }));
 
     // Deduplicate listings
     const deduplicatedListings = deduplicateListings(cleanListings);
@@ -135,7 +139,8 @@ export async function GET(req: Request) {
       customItems: cleanCustomItems,
       sheets: cleanSheets,
       rowMappings: cleanRowMappings,
-      newLinkChecklist: cleanNewLinkChecklist
+      newLinkChecklist: cleanNewLinkChecklist,
+      masterRates: cleanMasterRates
     });
   } catch (error) {
     console.error("GET gem-sync error:", error);
@@ -209,6 +214,18 @@ export async function POST(req: Request) {
       const sanitized = sanitizeBody(body);
       if (sanitized.length > 0) {
         await db.collection("gem_custom_items").insertMany(sanitized);
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // Master Rate Sheet - one row per item, each carrying up to 4 rate types
+    // (A/B/C/D). Whole-collection replace, same pattern as save_custom_items -
+    // this stays small (one row per distinct item, not per sheet/firm).
+    if (action === "save_master_rates") {
+      await db.collection("gem_master_rates").deleteMany({});
+      const sanitized = sanitizeBody(body);
+      if (sanitized.length > 0) {
+        await db.collection("gem_master_rates").insertMany(sanitized);
       }
       return NextResponse.json({ success: true });
     }

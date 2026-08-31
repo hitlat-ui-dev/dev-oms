@@ -134,6 +134,19 @@ interface UploadedRow {
   notAvailableAt?: string;
 }
 
+// Master Rate Sheet: one row per stock item, carrying up to 4 rate "types" so
+// a rate only has to be typed once instead of re-typed on every sheet that
+// item shows up on. Whichever type gets picked while a sheet is open fills
+// every matched row's Rate column from here in one go.
+type RateType = "A" | "B" | "C" | "D";
+interface MasterRateEntry {
+  itemId: string;
+  rateA?: number;
+  rateB?: number;
+  rateC?: number;
+  rateD?: number;
+}
+
 export default function GeMSyncPage() {
   // Database state (fetched from real API)
   const [companies, setCompanies] = useState<any[]>([]);
@@ -147,6 +160,7 @@ export default function GeMSyncPage() {
   const [rateHistory, setRateHistory] = useState<RateHistory[]>([]);
   const [customItems, setCustomItems] = useState<any[]>([]);
   const [newLinkChecklist, setNewLinkChecklist] = useState<NewLinkChecklistEntry[]>([]);
+  const [masterRates, setMasterRates] = useState<MasterRateEntry[]>([]);
 
   // Page active tabs/modes
   const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "sheets" | "master">("master");
@@ -185,6 +199,15 @@ export default function GeMSyncPage() {
   // Requirement Mapping Console table that can run 200+ rows, so keeping
   // that state local to the modal keeps typing in it from re-rendering all of this.
   const [showBuildSheetModal, setShowBuildSheetModal] = useState(false);
+
+  // Master Rate Sheet popup - see MasterRateEntry above.
+  const [showMasterRateModal, setShowMasterRateModal] = useState(false);
+  const [masterRateTab, setMasterRateTab] = useState<"current" | "all">("current");
+  const [masterRateSearch, setMasterRateSearch] = useState("");
+  const [masterRatesDraft, setMasterRatesDraft] = useState<MasterRateEntry[]>([]);
+  const [allRateVisibleCount, setAllRateVisibleCount] = useState(50);
+  // Rate type currently selected to bulk-apply onto the open sheet's Rate column.
+  const [selectedRateType, setSelectedRateType] = useState<RateType>("A");
 
   // Search/Filters states
   const [buyerSearchQuery, setBuyerSearchQuery] = useState<string>("");
@@ -279,6 +302,7 @@ export default function GeMSyncPage() {
           if (Array.isArray(state.customItems)) setCustomItems(state.customItems);
           if (Array.isArray(state.rowMappings)) setRowMappings(state.rowMappings);
           if (Array.isArray(state.newLinkChecklist)) setNewLinkChecklist(state.newLinkChecklist);
+          if (Array.isArray(state.masterRates)) setMasterRates(state.masterRates);
           if (Array.isArray(state.sheets)) {
             setSheets(state.sheets);
             // Default load the latest active sheet
@@ -636,10 +660,89 @@ export default function GeMSyncPage() {
     }).catch(err => console.error("Failed to sync new-link checklist to MongoDB", err));
   };
 
+  const saveMasterRates = (updated: MasterRateEntry[]) => {
+    setMasterRates(updated);
+    fetch("/api/gem-sync?action=save_master_rates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated)
+    }).catch(err => console.error("Failed to sync master rates to MongoDB", err));
+  };
+
+  const openMasterRateModal = () => {
+    setMasterRatesDraft(masterRates);
+    setMasterRateTab("current");
+    setMasterRateSearch("");
+    setAllRateVisibleCount(50);
+    setShowMasterRateModal(true);
+  };
+
+  const updateDraftRate = (itemId: string, type: RateType, rawValue: string) => {
+    const value = rawValue === "" ? undefined : Number(rawValue);
+    const key = (`rate${type}` as unknown) as keyof MasterRateEntry;
+    setMasterRatesDraft(prev => {
+      const idx = prev.findIndex(e => e.itemId === itemId);
+      if (idx === -1) {
+        return [...prev, { itemId, [key]: value } as MasterRateEntry];
+      }
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [key]: value };
+      return copy;
+    });
+  };
+
+  const handleSaveMasterRates = () => {
+    saveMasterRates(masterRatesDraft);
+    alert("✓ Master Rate Sheet saved.");
+  };
+
+  // Whenever a sheet is open, picking a rate type fills every matched row's
+  // Rate column from the Master Rate Sheet in one go - rows with no master
+  // rate set for that type (or no inventory mapping yet) are left untouched.
+  const applyMasterRateToSheet = (type: RateType) => {
+    const key = (`rate${type}` as unknown) as keyof MasterRateEntry;
+    let updatedCount = 0;
+    let missingCount = 0;
+    setUploadedRows(prev => prev.map(row => {
+      if (!row.mappedItemId) return row;
+      const entry = masterRates.find(m => m.itemId === row.mappedItemId);
+      const value = entry?.[key] as number | undefined;
+      if (value === undefined || value === null) {
+        missingCount++;
+        return row;
+      }
+      updatedCount++;
+      return { ...row, rate: value };
+    }));
+    alert(
+      `Rate Type ${type} applied: ${updatedCount} row(s) updated` +
+      (missingCount > 0 ? `, ${missingCount} row(s) skipped (no Rate ${type} set for that item in Master Rate Sheet).` : ".")
+    );
+  };
+
   // Combine fetched Stock + locally added Custom Items
   const allItemsList = useMemo(() => {
     return [...stockItems, ...customItems];
   }, [stockItems, customItems]);
+
+  const currentSheetRateItems = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { itemId: string; itemName: string; sku: string }[] = [];
+    for (const row of uploadedRows) {
+      if (!row.mappedItemId || seen.has(row.mappedItemId)) continue;
+      seen.add(row.mappedItemId);
+      const item = allItemsList.find((i: any) => i._id === row.mappedItemId);
+      result.push({ itemId: row.mappedItemId, itemName: item?.itemName || row.originalName, sku: item?.sku || "" });
+    }
+    return result;
+  }, [uploadedRows, allItemsList]);
+
+  const allRateFilteredItems = useMemo(() => {
+    const q = masterRateSearch.trim().toLowerCase();
+    const base = allItemsList.map((i: any) => ({ itemId: i._id, itemName: i.itemName, sku: i.sku || "" }));
+    if (!q) return base;
+    return base.filter((i: any) => i.itemName.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+  }, [allItemsList, masterRateSearch]);
 
   // An item hidden in Inventory must never be OFFERED as a new pick (dropdown
   // options, typed-name matching, Build From Scratch), but the unfiltered lists
@@ -1845,12 +1948,20 @@ export default function GeMSyncPage() {
                 <p className="text-blue-600 text-[9px] font-black tracking-widest uppercase">Revised Rates & Client Sync Log</p>
               </div>
             </div>
-            <button
-              onClick={() => setIsAddItemModalOpen(true)}
-              className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-100"
-            >
-              <FiPlus size={12} /> Add New Item
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={openMasterRateModal}
+                className="flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-slate-50 hover:scale-105 active:scale-95 transition-all shadow-sm"
+              >
+                <FiEdit size={12} /> Master Rate Sheet
+              </button>
+              <button
+                onClick={() => setIsAddItemModalOpen(true)}
+                className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-100"
+              >
+                <FiPlus size={12} /> Add New Item
+              </button>
+            </div>
           </div>
 
           {/* Action Tabs - Styled exactly like the horizontal tab bar on the Orders page */}
@@ -2026,6 +2137,32 @@ export default function GeMSyncPage() {
                   >
                     <FiPlus size={13} /> Build From Scratch
                   </button>
+
+                  {fileName && uploadedRows.length > 0 && (
+                    <div className="flex items-center gap-1 py-1 px-1.5 rounded-lg border border-[var(--gem-border)] bg-[var(--gem-table-header)]">
+                      <select
+                        value={selectedRateType}
+                        onChange={(e) => setSelectedRateType(e.target.value as RateType)}
+                        className="bg-transparent text-[10px] font-black uppercase text-[var(--gem-text-primary)] focus:outline-none py-1 px-1"
+                      >
+                        <option value="A">Rate A</option>
+                        <option value="B">Rate B</option>
+                        <option value="C">Rate C</option>
+                        <option value="D">Rate D</option>
+                      </select>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Apply Rate ${selectedRateType} to every matched row in this sheet? This overwrites the Rate column wherever a Rate ${selectedRateType} is set in the Master Rate Sheet.`)) {
+                            applyMasterRateToSheet(selectedRateType);
+                          }
+                        }}
+                        title="Fill this sheet's Rate column from the Master Rate Sheet, using the selected rate type"
+                        className="flex items-center gap-1 py-1 px-2.5 rounded-md font-black text-[10px] uppercase tracking-wider bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                      >
+                        Apply Rate
+                      </button>
+                    </div>
+                  )}
 
                   {fileName && (
                     <button
@@ -3326,6 +3463,125 @@ export default function GeMSyncPage() {
               onClose={() => setShowBuildSheetModal(false)}
               onCreate={handleCreateSheetFromScratch}
             />
+          )}
+
+          {/* =================== MASTER RATE SHEET MODAL =================== */}
+          {showMasterRateModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowMasterRateModal(false)}
+            >
+              <div
+                className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-4 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex items-center justify-between shrink-0">
+                  <div>
+                    <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider">Master Rate Sheet</h3>
+                    <p className="text-[10px] text-[var(--gem-text-secondary)] mt-0.5">
+                      Set Rate A/B/C/D per item once - pick a type on any open sheet to fill its Rate column from here.
+                    </p>
+                  </div>
+                  <button onClick={() => setShowMasterRateModal(false)} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]">
+                    <FiX size={18} />
+                  </button>
+                </div>
+
+                <div className="p-3 border-b border-[var(--gem-border)] flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="flex bg-[var(--gem-card)] p-0.5 rounded-lg border border-[var(--gem-border)]">
+                    <button
+                      type="button"
+                      onClick={() => setMasterRateTab("current")}
+                      className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${
+                        masterRateTab === "current" ? "bg-blue-600 text-white shadow-md" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                      }`}
+                    >
+                      Current Sheet Rate ({currentSheetRateItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMasterRateTab("all")}
+                      className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${
+                        masterRateTab === "all" ? "bg-blue-600 text-white shadow-md" : "text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                      }`}
+                    >
+                      All Rate ({allItemsList.length})
+                    </button>
+                  </div>
+                  {masterRateTab === "all" && (
+                    <input
+                      type="text"
+                      value={masterRateSearch}
+                      onChange={(e) => { setMasterRateSearch(e.target.value); setAllRateVisibleCount(50); }}
+                      placeholder="Search item / SKU..."
+                      className="ml-auto bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs text-[var(--gem-text-primary)] rounded-lg py-1.5 px-3 w-56 focus:outline-none focus:border-blue-500"
+                    />
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3">
+                  {(masterRateTab === "current" ? currentSheetRateItems : allRateFilteredItems.slice(0, allRateVisibleCount)).length === 0 ? (
+                    <p className="text-xs text-[var(--gem-text-secondary)] text-center py-10">
+                      {masterRateTab === "current" ? "No mapped items in the current sheet yet." : "No items found."}
+                    </p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-black uppercase tracking-wider text-[10px]">
+                        <tr>
+                          <th className="py-2 px-2.5">Item</th>
+                          <th className="py-2 px-2.5">SKU</th>
+                          <th className="py-2 px-2.5 text-center w-20">Rate A</th>
+                          <th className="py-2 px-2.5 text-center w-20">Rate B</th>
+                          <th className="py-2 px-2.5 text-center w-20">Rate C</th>
+                          <th className="py-2 px-2.5 text-center w-20">Rate D</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--gem-border)]/60">
+                        {(masterRateTab === "current" ? currentSheetRateItems : allRateFilteredItems.slice(0, allRateVisibleCount)).map((item) => {
+                          const entry = masterRatesDraft.find((e) => e.itemId === item.itemId);
+                          return (
+                            <tr key={item.itemId}>
+                              <td className="py-1.5 px-2.5 font-bold text-[var(--gem-text-primary)]">{item.itemName}</td>
+                              <td className="py-1.5 px-2.5 text-[var(--gem-text-secondary)]">{item.sku}</td>
+                              {(["A", "B", "C", "D"] as RateType[]).map((type) => (
+                                <td key={type} className="py-1.5 px-2.5">
+                                  <input
+                                    type="number"
+                                    value={entry?.[(`rate${type}` as unknown) as keyof MasterRateEntry] ?? ""}
+                                    onChange={(e) => updateDraftRate(item.itemId, type, e.target.value)}
+                                    className="w-20 bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-mono text-[var(--gem-text-primary)] rounded-lg py-1.5 px-2 text-center focus:outline-none focus:border-blue-500"
+                                    placeholder="—"
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  {masterRateTab === "all" && allRateVisibleCount < allRateFilteredItems.length && (
+                    <div className="flex justify-center py-3">
+                      <button
+                        onClick={() => setAllRateVisibleCount((c) => c + 50)}
+                        className="text-[10px] font-black uppercase tracking-wider py-2 px-4 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                      >
+                        Load More Items
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 border-t border-[var(--gem-border)] flex justify-end shrink-0">
+                  <button
+                    onClick={handleSaveMasterRates}
+                    className="flex items-center gap-1.5 py-2 px-4 rounded-lg font-black text-[10px] uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                  >
+                    <FiUploadCloud size={13} /> Save Master Rates
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* =================== REVISION DIALOG MODAL =================== */}
