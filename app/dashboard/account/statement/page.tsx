@@ -99,6 +99,13 @@ const parseAmount = (v: any): number => {
 const formatMoney = (n: number) =>
   n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+// Same fingerprint formula the backend uses (app/api/account-statements/route.ts's
+// txnKey) - duplicated locally rather than imported, since that file is a
+// server route module, not a shared client-safe util.
+const txnKey = (t: Transaction) =>
+  `${t.date}|${t.description.trim().toLowerCase()}|${round2(t.debit)}|${round2(t.credit)}|${round2(t.balance)}`;
+
 // Column headers to look for in the transaction table row. Debit/Credit and
 // Balance also match the wording some banks use instead (HDFC exports
 // "Withdrawal Amt." / "Deposit Amt." / "Closing Balance" rather than plain
@@ -376,6 +383,32 @@ export default function StatementPage() {
       if (viewingStatement?._id === id) setViewingStatement(null);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Removes one wrongly-included/duplicate entry from an already-saved
+  // statement - the backend recomputes closing balance/totals/gaps afterward
+  // since removing a row shifts the running-balance chain.
+  const handleDeleteTransaction = async (txn: Transaction) => {
+    if (!viewingStatement) return;
+    if (
+      !confirm(
+        `Delete this entry?\n${txn.date} — ${txn.description || "(no description)"}\nDebit: ₹${formatMoney(txn.debit)}  Credit: ₹${formatMoney(txn.credit)}`
+      )
+    )
+      return;
+    try {
+      const res = await fetch(
+        `/api/account-statements?id=${viewingStatement._id}&txnKey=${encodeURIComponent(txnKey(txn))}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete entry");
+      setViewingStatement(data.statement);
+      setStatements((prev) => prev.map((s) => (s._id === data.statement._id ? data.statement : s)));
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Failed to delete entry");
     }
   };
 
@@ -796,12 +829,13 @@ export default function StatementPage() {
                     <th className="py-2.5 px-3 text-right">Credit</th>
                     <th className="py-2.5 px-3">Cheque No</th>
                     <th className="py-2.5 px-3 text-right">Balance</th>
+                    <th className="py-2.5 px-3 text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredTransactions.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                      <td colSpan={9} className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
                         No matching transactions
                       </td>
                     </tr>
@@ -815,7 +849,7 @@ export default function StatementPage() {
                         <Fragment key={idx}>
                           {gapBefore && (
                             <tr>
-                              <td colSpan={8} className="py-2 px-3 bg-red-50 border-y border-red-200 text-red-700 text-[10px] font-black uppercase tracking-wide">
+                              <td colSpan={9} className="py-2 px-3 bg-red-50 border-y border-red-200 text-red-700 text-[10px] font-black uppercase tracking-wide">
                                 <FiAlertTriangle className="inline mr-1.5" size={11} />
                                 Gap — expected ₹{formatMoney(gapBefore.expectedBalance)} here, entries missing
                               </td>
@@ -840,6 +874,15 @@ export default function StatementPage() {
                             <td className="py-2.5 px-3 text-right font-mono text-orange-600">{t.credit ? formatMoney(t.credit) : "—"}</td>
                             <td className="py-2.5 px-3 font-mono text-slate-500">{t.chequeNo || "—"}</td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">{formatMoney(t.balance)}</td>
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                onClick={() => handleDeleteTransaction(t)}
+                                className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors"
+                                title="Delete this entry"
+                              >
+                                <FiTrash2 size={12} />
+                              </button>
+                            </td>
                           </tr>
                         </Fragment>
                       );

@@ -720,6 +720,74 @@ export default function GeMSyncPage() {
     );
   };
 
+  const RATE_TYPE_ORDER: RateType[] = ["A", "B", "C", "D"];
+
+  // Reverse direction of applyMasterRateToSheet - pushes rates already typed
+  // into this sheet BACK into the Master Rate Sheet. Per item: identical
+  // rates across rows count as one; a single distinct rate goes into the
+  // picked type; 2-4 distinct rates auto-sort ascending into A→D (only the
+  // slots that have a value are touched - the rest are left exactly as they
+  // are, never merged with the new values); more than 4 distinct rates keeps
+  // only the highest 4 before sorting them into A→D.
+  const pushSheetRatesToMaster = (singleRateType: RateType) => {
+    const ratesByItem = new Map<string, Set<number>>();
+    let skippedRows = 0;
+    for (const row of uploadedRows) {
+      if (!row.mappedItemId || !row.rate || row.rate <= 0) {
+        skippedRows++;
+        continue;
+      }
+      if (!ratesByItem.has(row.mappedItemId)) ratesByItem.set(row.mappedItemId, new Set());
+      ratesByItem.get(row.mappedItemId)!.add(row.rate);
+    }
+
+    if (ratesByItem.size === 0) {
+      alert("No mapped rows with a rate to push.");
+      return;
+    }
+
+    let singleTypeCount = 0;
+    let multiTypeCount = 0;
+    let truncatedCount = 0;
+    const updated = [...masterRates];
+    const findOrCreateIndex = (itemId: string) => {
+      const idx = updated.findIndex(e => e.itemId === itemId);
+      if (idx !== -1) return idx;
+      updated.push({ itemId });
+      return updated.length - 1;
+    };
+
+    for (const [itemId, ratesSet] of ratesByItem) {
+      let distinctRates = Array.from(ratesSet);
+      const idx = findOrCreateIndex(itemId);
+      if (distinctRates.length === 1) {
+        updated[idx] = { ...updated[idx], [`rate${singleRateType}`]: distinctRates[0] };
+        singleTypeCount++;
+      } else {
+        if (distinctRates.length > 4) {
+          distinctRates = distinctRates.sort((a, b) => b - a).slice(0, 4); // keep highest 4
+          truncatedCount++;
+        }
+        distinctRates.sort((a, b) => a - b); // ascending: lowest of the kept set -> Type A
+        const patch: Partial<MasterRateEntry> = {};
+        distinctRates.forEach((rate, i) => {
+          (patch as any)[`rate${RATE_TYPE_ORDER[i]}`] = rate;
+        });
+        updated[idx] = { ...updated[idx], ...patch };
+        multiTypeCount++;
+      }
+    }
+
+    saveMasterRates(updated);
+    alert(
+      `Pushed to Master Rate Sheet: ${singleTypeCount} item(s) with one rate -> Rate ${singleRateType}, ` +
+      `${multiTypeCount} item(s) with multiple rates auto-sorted A->D` +
+      (truncatedCount > 0 ? ` (${truncatedCount} item(s) had more than 4 distinct rates - kept the highest 4)` : "") +
+      "." +
+      (skippedRows > 0 ? ` ${skippedRows} row(s) skipped (no inventory mapping or no rate entered).` : "")
+    );
+  };
+
   // Combine fetched Stock + locally added Custom Items
   const allItemsList = useMemo(() => {
     return [...stockItems, ...customItems];
@@ -1555,6 +1623,12 @@ export default function GeMSyncPage() {
         isCompleted: nowNotAvailable ? false : r.isCompleted,
         completedBy: nowNotAvailable ? undefined : r.completedBy,
         completedAt: nowNotAvailable ? undefined : r.completedAt,
+        // Marking it Not Available means there's genuinely nothing to link to,
+        // so Firm/Rate/Stock/Min Qty/GeM Link would all be stale/meaningless
+        // leftovers - clear them back to the same blank state a fresh row starts at.
+        ...(nowNotAvailable
+          ? { firmCode: "", rate: 0, availGemStock: 0, minQty: 1, gemLink: "" }
+          : {}),
       };
     }));
   };
@@ -2160,6 +2234,17 @@ export default function GeMSyncPage() {
                         className="flex items-center gap-1 py-1 px-2.5 rounded-md font-black text-[10px] uppercase tracking-wider bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
                       >
                         Apply Rate
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Push this sheet's rates into the Master Rate Sheet? An item with one rate in this sheet goes into Rate ${selectedRateType}; an item with multiple different rates auto-sorts them ascending into Rate A-D instead.`)) {
+                            pushSheetRatesToMaster(selectedRateType);
+                          }
+                        }}
+                        title="Push rates typed in this sheet back into the Master Rate Sheet"
+                        className="flex items-center gap-1 py-1 px-2.5 rounded-md font-black text-[10px] uppercase tracking-wider bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+                      >
+                        Push to Master
                       </button>
                     </div>
                   )}

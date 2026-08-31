@@ -193,20 +193,53 @@ export async function POST(req: Request) {
   }
 }
 
-// DELETE: remove a firm's whole statement ledger by id (?id=...)
+// DELETE: remove a firm's whole statement ledger by id (?id=...), or just one
+// transaction line within it (?id=...&txnKey=...) - a wrongly-included or
+// duplicate row from a bad upload. Removing a line shifts the running-balance
+// chain, so closing balance / totals / gaps are recomputed the same way a
+// fresh save would, rather than just splicing the array.
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
+    const txnKeyParam = searchParams.get("txnKey");
     if (!id || !ObjectId.isValid(id)) {
       return NextResponse.json({ error: "Valid id is required" }, { status: 400 });
     }
 
     const client = await clientPromise;
     const db = client.db();
-    await db.collection("account_statements").deleteOne({ _id: new ObjectId(id) });
-    return NextResponse.json({ success: true });
+    const collection = db.collection("account_statements");
+
+    if (!txnKeyParam) {
+      await collection.deleteOne({ _id: new ObjectId(id) });
+      return NextResponse.json({ success: true });
+    }
+
+    const existing = await collection.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return NextResponse.json({ error: "Statement not found" }, { status: 404 });
+    }
+
+    const remaining = (existing.transactions as Transaction[]).filter((t) => txnKey(t) !== txnKeyParam);
+    if (remaining.length === existing.transactions.length) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
+    const sorted = sortTransactions(remaining);
+    const gaps = detectGaps(sorted, Number(existing.openingBalance) || 0);
+    const updatedDoc = {
+      closingBalance: sorted.length > 0 ? sorted[sorted.length - 1].balance : existing.openingBalance,
+      totalDebit: round2(sorted.reduce((s, t) => s + t.debit, 0)),
+      totalCredit: round2(sorted.reduce((s, t) => s + t.credit, 0)),
+      transactions: sorted,
+      gaps,
+      updatedAt: new Date(),
+    };
+    await collection.updateOne({ _id: new ObjectId(id) }, { $set: updatedDoc });
+
+    return NextResponse.json({ statement: { ...existing, ...updatedDoc } });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Failed to delete statement" }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Failed to delete" }, { status: 500 });
   }
 }
