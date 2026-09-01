@@ -6,10 +6,14 @@
 // chrome.identity.launchWebAuthFlow() use kiya hai — jisse user EXPLICITLY
 // choose kar sake kaunsa Google account authorize karna hai, per firm.
 //
-// Token storage: chrome.storage.local me { gmailTokens: { [firmCode]: { accessToken, expiresAt, email } } }
+// Token storage: chrome.storage.local me { gmailTokens: { [firmCode]: { accessToken, refreshToken, expiresAt, email } } }
+// (refreshToken lets getStoredTokenForFirm/getStoredTokenForEmail silently
+// mint a new accessToken once the old one expires - see the "AUTH FLOW"
+// comment near buildAuthUrl below for why this matters.)
 //
-// STILL PENDING (see GeM-Extension-Data-Collection-Checklist.md):
-//   1. OAUTH_CLIENT_ID placeholder below AND in manifest.json.
+// Anyone linked under the old implicit-grant flow (pre-31-Aug-2026, no
+// refreshToken saved) needs to click "Re-link" once more - after that it
+// silently refreshes on its own indefinitely, no more re-linking.
 //
 // CONFIRMED live on 20-Aug-2026 against a real order (see content-gem.js's
 // header for the full step-by-step flow this drives):
@@ -31,6 +35,15 @@ const GEM_LOGIN_URL = "https://sso.gem.gov.in/ARXSSO/oauth/doLogin?redirect_uri=
 // needs an explicitly-registered redirect URI, which the Chrome Extension
 // client type doesn't support configuring.
 const OAUTH_CLIENT_ID = "414179983606-4vspofchn2qe0hnvov9iabj35pg1cfoo.apps.googleusercontent.com";
+// Client Secret for the SAME OAuth client above (Google Cloud Console ->
+// APIs & Services -> Credentials -> this client -> "Client secret"). "Web
+// application" type clients require this to exchange an authorization code
+// (see exchangeCodeForTokens below); it's only ever sent server-to-server
+// (extension -> oauth2.googleapis.com), never exposed in any URL or to
+// GeM/Gmail pages. Needed so this extension gets a long-lived refresh_token
+// instead of re-asking the user to link Gmail every ~1 hour (see the "AUTH
+// FLOW" comment block right above buildAuthUrl).
+const OAUTH_CLIENT_SECRET = "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";
 const REDIRECT_URI = chrome.identity.getRedirectURL(); // extension khud generate karega
 
 // ---------------------------------------------------------------------------
@@ -353,6 +366,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // account-chooser SKIP karne ki koshish karta hai. Agar us email se Chrome
 // me already session hai aur pehle consent diya ja chuka hai, to SILENTLY
 // (bina kisi popup ke) naya token mil jata hai.
+//
+// AUTH FLOW: authorization-code grant (response_type=code), NOT the old
+// implicit grant (response_type=token). The implicit grant only ever hands
+// back a short-lived (~1hr) access_token with NO refresh_token - Google
+// simply never issues one for that grant type, by design (OAuth2 spec), so
+// every single hour (and definitely by "the next day") the user had to
+// click through Link Gmail again, no way around it. The code grant +
+// access_type=offline gets a refresh_token instead, which
+// getStoredTokenForFirm/getStoredTokenForEmail below use to silently mint a
+// fresh access token via refreshAccessToken() - a plain server-to-server
+// fetch() to Google, no chrome.identity/webview/browser-session dependency
+// at all, so it keeps working even after the browser restarts or a day passes.
 
 // Silent attempt — koi UI nahi dikhta agar successful ho
 async function trySilentAuth(email) {
@@ -367,7 +392,8 @@ async function trySilentAuth(email) {
         }
       });
     });
-    return parseTokenFromRedirect(responseUrl);
+    const code = parseCodeFromRedirect(responseUrl);
+    return await exchangeCodeForTokens(code);
   } catch {
     return null; // silent fail hua — interactive fallback chalega
   }
@@ -385,27 +411,89 @@ async function tryInteractiveAuth(email) {
       }
     });
   });
-  return parseTokenFromRedirect(responseUrl);
+  const code = parseCodeFromRedirect(responseUrl);
+  return exchangeCodeForTokens(code);
 }
 
 function buildAuthUrl(email, interactive) {
   const params = new URLSearchParams({
     client_id: OAUTH_CLIENT_ID,
-    response_type: "token",
+    response_type: "code",
+    access_type: "offline", // required to get a refresh_token back
     redirect_uri: REDIRECT_URI,
     scope: "https://www.googleapis.com/auth/gmail.readonly email",
     login_hint: email, // YE KEY CHANGE HAI — email pehle se pata hai to pre-fill/skip ho jata hai
+    // "consent" (not just default) forces Google to actually re-issue a
+    // refresh_token on this interactive run even if one was granted before -
+    // without it, a second authorization for the same account can come back
+    // with no refresh_token at all.
     prompt: interactive ? "consent" : "none",
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-function parseTokenFromRedirect(redirectUrl) {
-  const params = new URLSearchParams(new URL(redirectUrl).hash.slice(1));
-  const accessToken = params.get("access_token");
-  const expiresIn = parseInt(params.get("expires_in") || "3600", 10);
-  if (!accessToken) throw new Error("Access token nahi mila.");
-  return { accessToken, expiresIn };
+// The code-grant redirect carries ?code=... in the query string (not
+// #access_token=... in the hash, like the old implicit grant did).
+function parseCodeFromRedirect(redirectUrl) {
+  const params = new URL(redirectUrl).searchParams;
+  const code = params.get("code");
+  if (!code) throw new Error(params.get("error_description") || params.get("error") || "Authorization code nahi mila.");
+  return code;
+}
+
+// One-time: exchange an authorization code for an access_token +
+// refresh_token pair. Server-to-server call (extension -> Google), no
+// browser UI involved.
+async function exchangeCodeForTokens(code) {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      redirect_uri: REDIRECT_URI,
+      grant_type: "authorization_code",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.error || "Token exchange fail hua.");
+  return { accessToken: data.access_token, refreshToken: data.refresh_token || null, expiresIn: data.expires_in };
+}
+
+// Repeatable: mint a fresh access_token from an already-stored
+// refresh_token. This is what makes "connect once, works forever" actually
+// happen - called silently by getStoredTokenForFirm/getStoredTokenForEmail
+// whenever the cached access_token has expired.
+async function refreshAccessToken(refreshToken) {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  const data = await res.json();
+  // A revoked/expired refresh_token (user removed access in their Google
+  // account, or it went unused for 6+ months) surfaces here as an error -
+  // that's the ONLY case that should still require a real re-link.
+  if (!res.ok) throw new Error(data.error_description || data.error || "Refresh token fail hua.");
+  return { accessToken: data.access_token, expiresIn: data.expires_in };
+}
+
+// A silent refresh (or a re-consent that Google decides not to re-issue a
+// refresh_token for) won't always carry a new refreshToken - fall back to
+// whatever was already stored for this account rather than losing it.
+function mergeTokenData(existingTokenData, tokenResult, email) {
+  return {
+    accessToken: tokenResult.accessToken,
+    refreshToken: tokenResult.refreshToken || existingTokenData?.refreshToken || null,
+    expiresAt: Date.now() + tokenResult.expiresIn * 1000,
+    email,
+  };
 }
 
 // Popup se ya OMS se call hota hai — firm ke saath uska pehle se pata Gmail email bhi aata hai
@@ -422,11 +510,9 @@ async function linkGmailAccountForFirm(firmCode, knownEmail) {
     tokenResult = await tryInteractiveAuth(knownEmail);
   }
 
-  const { accessToken, expiresIn } = tokenResult;
-
   // Verify karo ki jo account authorize hua wahi email hai jo expect kiya tha
   const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${tokenResult.accessToken}` },
   });
   const profile = await profileRes.json();
 
@@ -436,13 +522,8 @@ async function linkGmailAccountForFirm(firmCode, knownEmail) {
     );
   }
 
-  const tokenData = {
-    accessToken,
-    expiresAt: Date.now() + expiresIn * 1000,
-    email: profile.email,
-  };
-
   const { gmailTokens = {} } = await chrome.storage.local.get("gmailTokens");
+  const tokenData = mergeTokenData(gmailTokens[firmCode], tokenResult, profile.email);
   gmailTokens[firmCode] = tokenData;
   await chrome.storage.local.set({ gmailTokens });
 
@@ -461,12 +542,26 @@ async function getStoredTokenForFirm(firmCode) {
   const { gmailTokens = {} } = await chrome.storage.local.get("gmailTokens");
   const tokenData = gmailTokens[firmCode];
   if (!tokenData) return null;
+  if (Date.now() < tokenData.expiresAt) return tokenData;
 
-  // Token expire ho gaya ho to null return karo — dobara link karna padega
-  // (implicit-grant tokens ke paas refresh token nahi hota, re-authorization hi tareeka hai)
-  if (Date.now() >= tokenData.expiresAt) return null;
+  // Access token expired - if we have a refresh_token, mint a fresh access
+  // token silently (no chrome.identity/webview/popup involved at all), so
+  // this only ever falls through to "needs a real re-link" if the refresh
+  // token itself has actually been revoked/expired.
+  if (tokenData.refreshToken) {
+    try {
+      const refreshed = await refreshAccessToken(tokenData.refreshToken);
+      const updated = { ...tokenData, accessToken: refreshed.accessToken, expiresAt: Date.now() + refreshed.expiresIn * 1000 };
+      gmailTokens[firmCode] = updated;
+      await chrome.storage.local.set({ gmailTokens });
+      return updated;
+    } catch (err) {
+      console.error(`Refresh token for firm ${firmCode} failed/revoked:`, err.message);
+      return null;
+    }
+  }
 
-  return tokenData;
+  return null; // old token predates this fix (no refreshToken saved) - needs one real re-link
 }
 
 // Same silent-then-interactive linking as linkGmailAccountForFirm, but keyed
@@ -478,8 +573,22 @@ async function getStoredTokenForEmail(email) {
   const { gmailTokensByEmail = {} } = await chrome.storage.local.get("gmailTokensByEmail");
   const tokenData = gmailTokensByEmail[email.toLowerCase()];
   if (!tokenData) return null;
-  if (Date.now() >= tokenData.expiresAt) return null;
-  return tokenData;
+  if (Date.now() < tokenData.expiresAt) return tokenData;
+
+  if (tokenData.refreshToken) {
+    try {
+      const refreshed = await refreshAccessToken(tokenData.refreshToken);
+      const updated = { ...tokenData, accessToken: refreshed.accessToken, expiresAt: Date.now() + refreshed.expiresIn * 1000 };
+      gmailTokensByEmail[email.toLowerCase()] = updated;
+      await chrome.storage.local.set({ gmailTokensByEmail });
+      return updated;
+    } catch (err) {
+      console.error(`Refresh token for ${email} failed/revoked:`, err.message);
+      return null;
+    }
+  }
+
+  return null; // old token predates this fix (no refreshToken saved) - needs one real re-link
 }
 
 async function linkGmailAccountForEmail(email) {
@@ -488,10 +597,8 @@ async function linkGmailAccountForEmail(email) {
     tokenResult = await tryInteractiveAuth(email);
   }
 
-  const { accessToken, expiresIn } = tokenResult;
-
   const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${tokenResult.accessToken}` },
   });
   const profile = await profileRes.json();
 
@@ -501,9 +608,8 @@ async function linkGmailAccountForEmail(email) {
     );
   }
 
-  const tokenData = { accessToken, expiresAt: Date.now() + expiresIn * 1000, email: profile.email };
-
   const { gmailTokensByEmail = {} } = await chrome.storage.local.get("gmailTokensByEmail");
+  const tokenData = mergeTokenData(gmailTokensByEmail[email.toLowerCase()], tokenResult, profile.email);
   gmailTokensByEmail[email.toLowerCase()] = tokenData;
   await chrome.storage.local.set({ gmailTokensByEmail });
 

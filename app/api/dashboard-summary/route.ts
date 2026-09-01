@@ -212,6 +212,30 @@ export async function GET(req: Request) {
       value: round2(r.value),
     }));
 
+    // Same breakdown, scoped to today only - lets someone see "who's generated
+    // what today" without having to mentally subtract yesterday's all-time total.
+    const billsByUserTodayMatch: Record<string, any> = { createdAt: { $gte: todayStart, $lt: todayEnd } };
+    if (firmCode) billsByUserTodayMatch.firmCode = firmCode;
+    const billsByUserTodayAgg = await db
+      .collection("bills")
+      .aggregate([
+        { $match: billsByUserTodayMatch },
+        {
+          $group: {
+            _id: { $ifNull: ["$createdBy", "Unknown"] },
+            count: { $sum: 1 },
+            value: { $sum: { $ifNull: ["$grandTotal", 0] } },
+          },
+        },
+        { $sort: { count: -1 } },
+      ])
+      .toArray();
+    const billsByUserToday = billsByUserTodayAgg.map((r: any) => ({
+      username: r._id || "Unknown",
+      count: r.count,
+      value: round2(r.value),
+    }));
+
     // Dashboard stats strip: bids still sitting untriaged, and items at/under their
     // reorder threshold — both cheap counts, computed alongside everything else here
     // so the dashboard has one summary endpoint to call rather than several small ones.
@@ -300,6 +324,7 @@ export async function GET(req: Request) {
       billsToday,
       pendingBillsByFirm,
       billsByUser,
+      billsByUserToday,
       bidsPendingAction,
       lowStockCount,
       gemSync,

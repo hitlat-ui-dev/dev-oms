@@ -77,6 +77,7 @@ interface SummaryData {
   };
   pendingBillsByFirm: { firmCode: string; count: number; value: number }[];
   billsByUser: { username: string; count: number; value: number }[];
+  billsByUserToday: { username: string; count: number; value: number }[];
   gemSync?: {
     actions: { okLink: number; updateStock: number; newLink: number };
     checklist: {
@@ -447,10 +448,29 @@ export default function SummaryDashboardPage() {
                     <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                       <FiFileText className="text-blue-600" size={14} /> Bills Generated — By Team Member
                     </h3>
-                    <span className="text-[10px] font-black text-slate-500">All-time</span>
                   </div>
+
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-2">Today</span>
+                  {data.billsByUserToday.length === 0 ? (
+                    <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-3">No bills generated today yet</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {data.billsByUserToday.map((u) => (
+                        <div
+                          key={u.username}
+                          className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2"
+                        >
+                          <span className="text-[11px] font-black text-slate-800 uppercase">{u.username}</span>
+                          <span className="text-[10px] font-bold text-emerald-700">× {u.count}</span>
+                          <span className="text-[10px] font-bold text-slate-400">₹{formatMoney(u.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mt-4 mb-2">All-time</span>
                   {data.billsByUser.length === 0 ? (
-                    <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-6">No bills generated yet</p>
+                    <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-3">No bills generated yet</p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {data.billsByUser.map((u) => (

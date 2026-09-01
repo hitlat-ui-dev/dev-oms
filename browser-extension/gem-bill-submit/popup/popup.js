@@ -40,7 +40,12 @@ async function init() {
     (Array.isArray(credsCache) ? credsCache : []).forEach((cred) => {
       const email = (cred.gemMailId || "").toLowerCase();
       const tokenData = email ? gmailTokensByEmail[email] : null;
-      const isLinked = tokenData && Date.now() < tokenData.expiresAt;
+      // A refreshToken means it can silently mint a new access token
+      // whenever needed (see background.js's getStoredTokenForEmail), so
+      // this counts as linked even once the cached access token itself has
+      // expired - only a genuinely revoked/missing refresh token, or a token
+      // saved before this fix (no refreshToken at all), needs a real re-link.
+      const isLinked = tokenData && (Date.now() < tokenData.expiresAt || !!tokenData.refreshToken);
 
       const row = document.createElement("div");
       row.className = "firmRow";
