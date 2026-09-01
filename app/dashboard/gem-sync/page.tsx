@@ -332,6 +332,21 @@ export default function GeMSyncPage() {
       .catch(err => console.error("Error loading shared MongoDB state:", err));
   }, []);
 
+  // Keyboard shortcut for "+ Add New Item" (Ctrl/Cmd+Shift+A) - same
+  // addEventListener("keydown") pattern as the dashboard's Ctrl/Cmd+K
+  // shortcut. Shift is included so it doesn't collide with any single-letter
+  // shortcut browsers/extensions might bind to plain Ctrl+A.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setIsAddItemModalOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   // Rate history is only ever read on the Upload Sheet tab (the "last quoted
   // rate" hint) - a full scan of this collection has been observed taking
   // 40+ seconds on this cluster, so it's fetched lazily the first time that
@@ -862,6 +877,60 @@ export default function GeMSyncPage() {
     });
     return map;
   }, [rateHistory]);
+
+  // Real GeM-sync status lookups for the Requirement Mapping Console rows -
+  // isCompleted only means "an action was taken" (OK Link/Update Stock/New
+  // Link), not that GeM's own catalogue has actually been confirmed updated.
+  // The real status lives on the Sync Checklist entry this row's action
+  // created (gem_listings for OK Link/Update Stock, gem_new_link_checklist
+  // for New Link) - keyed the same way upsertMasterListing matches an
+  // existing listing (buyer+item+firm, falling back to buyer+firm+gemLink).
+  const listingByBuyerItemFirm = useMemo(() => {
+    const map = new Map<string, FirmItemListing>();
+    listings.forEach(lst => {
+      if (lst.buyerId && lst.itemId && lst.firmCode) {
+        map.set(`${lst.buyerId}::${lst.itemId}::${lst.firmCode}`, lst);
+      }
+    });
+    return map;
+  }, [listings]);
+
+  const listingByBuyerFirmGemLink = useMemo(() => {
+    const map = new Map<string, FirmItemListing>();
+    listings.forEach(lst => {
+      if (lst.buyerId && lst.firmCode && lst.gemLink) {
+        map.set(`${lst.buyerId}::${lst.firmCode}::${lst.gemLink.trim()}`, lst);
+      }
+    });
+    return map;
+  }, [listings]);
+
+  const newLinkEntryByBuyerFirmItem = useMemo(() => {
+    const map = new Map<string, NewLinkChecklistEntry>();
+    newLinkChecklist.forEach(e => {
+      if (e.buyerId && e.firmCode && e.mappedItemId) {
+        map.set(`${e.buyerId}::${e.firmCode}::${e.mappedItemId}`, e);
+      }
+    });
+    return map;
+  }, [newLinkChecklist]);
+
+  const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
+    if (!row.firmCode) return "none";
+    if (row.mappedItemId) {
+      const listing = listingByBuyerItemFirm.get(`${selectedBuyerId}::${row.mappedItemId}::${row.firmCode}`);
+      if (listing) return listing.status === "Synced" ? "synced" : "pending";
+    }
+    if (row.gemLink) {
+      const listing = listingByBuyerFirmGemLink.get(`${selectedBuyerId}::${row.firmCode}::${row.gemLink.trim()}`);
+      if (listing) return listing.status === "Synced" ? "synced" : "pending";
+    }
+    if (row.mappedItemId) {
+      const entry = newLinkEntryByBuyerFirmItem.get(`${selectedBuyerId}::${row.firmCode}::${row.mappedItemId}`);
+      if (entry) return entry.status === "Synced" ? "synced" : "pending";
+    }
+    return "none";
+  };
 
   // Fuzzy Match logic
   const findFuzzyMatch = (name: string) => {
@@ -2031,6 +2100,7 @@ export default function GeMSyncPage() {
               </button>
               <button
                 onClick={() => setIsAddItemModalOpen(true)}
+                title="Add New Item (Ctrl/Cmd+Shift+A)"
                 className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-blue-700 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-100"
               >
                 <FiPlus size={12} /> Add New Item
@@ -2738,6 +2808,14 @@ export default function GeMSyncPage() {
                                     >
                                       <FiCheck size={12} />
                                     </button>
+                                  )}
+                                  {getRowGemSyncStatus(row) === "synced" && (
+                                    <span
+                                      title="Confirmed synced to GeM's own catalogue (Sync Checklist entry is marked Synced)"
+                                      className="w-7 h-7 flex items-center justify-center rounded bg-violet-100 text-violet-700 border border-violet-300"
+                                    >
+                                      <FiLink size={12} />
+                                    </span>
                                   )}
                                 </div>
                               </td>

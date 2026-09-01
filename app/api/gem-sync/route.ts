@@ -91,6 +91,20 @@ export async function GET(req: Request) {
       });
     }
 
+    // Fetch history for the Catalogue page's History popup - newest first,
+    // capped so one very actively-synced firm can't blow this up unbounded.
+    if (searchParams.get("catalogueFetchLog")) {
+      const log = await db
+        .collection("gem_catalogue_fetch_log")
+        .find({})
+        .sort({ fetchedAt: -1 })
+        .limit(500)
+        .toArray();
+      return NextResponse.json({
+        log: log.map(({ _id, ...rest }) => ({ ...rest })),
+      });
+    }
+
     // Fetch the remaining collections concurrently rather than one-at-a-time —
     // total wait becomes the slowest single query instead of the sum of all of them.
     const [buyers, rawListings, customItems, sheets, rowMappings, newLinkChecklist, masterRates] = await Promise.all([
@@ -538,6 +552,16 @@ export async function POST(req: Request) {
       if (deduped.length > 0) {
         await db.collection("gem_catalogue_links").insertMany(deduped);
       }
+
+      // Append-only fetch history - gem_catalogue_links itself gets wholesale
+      // replaced on every fetch (old fetchedAt values are gone once that
+      // happens), so this is the only place "when did we last fetch, and how
+      // many times before that" survives. Powers the Catalogue page's History popup.
+      await db.collection("gem_catalogue_fetch_log").insertOne({
+        firmCode,
+        itemCount: deduped.length,
+        fetchedAt: new Date(),
+      });
 
       // Auto-sync: any Master List entry already linked to one of these
       // products (via "Add to Master List" on the Catalogue page) gets its

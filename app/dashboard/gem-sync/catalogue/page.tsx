@@ -8,7 +8,9 @@ import {
   FiCopy,
   FiExternalLink,
   FiCheckCircle,
-  FiAlertTriangle
+  FiAlertTriangle,
+  FiClock,
+  FiX
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { tokenizeMatchText, scoreTokenSimilarity, formatDate, normalizeGemProductId } from "@/lib/gemSync/catalogueMatch";
@@ -52,6 +54,25 @@ function getPublicProductLink(row: any): { text: string; href: string | null } |
   return row["Action"];
 }
 
+// "kitne time pehle" - the History popup's whole point is showing how long
+// ago each past fetch happened, not just its absolute date.
+function formatRelativeTime(dateInput: Date | string): string {
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return "—";
+  const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
+
 export default function GeMCataloguePage() {
   const [catalogueLinks, setCatalogueLinks] = useState<any[]>([]);
   const [listings, setListings] = useState<FirmItemListing[]>([]);
@@ -63,6 +84,23 @@ export default function GeMCataloguePage() {
   const [selectedInventoryByRow, setSelectedInventoryByRow] = useState<Record<string, string>>({});
   const [addingRowKey, setAddingRowKey] = useState<string | null>(null);
   const [syncingMasterList, setSyncingMasterList] = useState(false);
+
+  // Fetch History popup - append-only log of every save_catalogue_links run
+  // (see app/api/gem-sync/route.ts), since gem_catalogue_links itself gets
+  // wholesale replaced on each fetch and can't answer "when did we fetch before this?".
+  const [showFetchHistory, setShowFetchHistory] = useState(false);
+  const [fetchHistoryLog, setFetchHistoryLog] = useState<{ firmCode: string; itemCount: number; fetchedAt: string }[]>([]);
+  const [loadingFetchHistory, setLoadingFetchHistory] = useState(false);
+
+  const openFetchHistory = () => {
+    setShowFetchHistory(true);
+    setLoadingFetchHistory(true);
+    fetch("/api/gem-sync?catalogueFetchLog=1")
+      .then((res) => res.json())
+      .then((data) => setFetchHistoryLog(Array.isArray(data.log) ? data.log : []))
+      .catch((err) => console.error("Failed to load catalogue fetch history", err))
+      .finally(() => setLoadingFetchHistory(false));
+  };
 
   const [catalogueSearchFirm, setCatalogueSearchFirm] = useState("");
   const [catalogueSearchName, setCatalogueSearchName] = useState("");
@@ -278,14 +316,23 @@ export default function GeMCataloguePage() {
         <div className="w-full mx-auto">
 
           {/* Header */}
-          <div className="flex items-center gap-4 mb-8">
-            <Link href="/dashboard/gem-sync" className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm hover:text-blue-600 transition-all text-slate-500 active:scale-95">
-              <FiArrowLeft size={18} />
-            </Link>
-            <div>
-              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">GeM Catalogue</h1>
-              <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase mt-1">Catalogue Product Links (Browser Extension Sync)</p>
+          <div className="flex items-center justify-between gap-4 mb-8">
+            <div className="flex items-center gap-4">
+              <Link href="/dashboard/gem-sync" className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm hover:text-blue-600 transition-all text-slate-500 active:scale-95">
+                <FiArrowLeft size={18} />
+              </Link>
+              <div>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">GeM Catalogue</h1>
+                <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase mt-1">Catalogue Product Links (Browser Extension Sync)</p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={openFetchHistory}
+              className="shrink-0 flex items-center gap-1.5 bg-white border border-slate-200 shadow-sm text-slate-700 hover:bg-slate-50 px-4 py-2.5 rounded-xl font-black uppercase text-[11px] transition-all"
+            >
+              <FiClock size={13} /> Fetch History
+            </button>
           </div>
 
           <div className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
@@ -591,6 +638,68 @@ export default function GeMCataloguePage() {
           </div>
         </div>
       </div>
+
+      {/* =================== FETCH HISTORY MODAL =================== */}
+      {showFetchHistory && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowFetchHistory(false)}
+        >
+          <div
+            className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
+                  <FiClock className="text-blue-500" /> Catalogue Fetch History
+                </h3>
+                <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
+                  Every time the browser extension has fetched a firm's GeM catalogue, newest first.
+                </p>
+              </div>
+              <button onClick={() => setShowFetchHistory(false)} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]">
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {loadingFetchHistory ? (
+                <div className="flex justify-center py-10">
+                  <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-blue-500"></div>
+                </div>
+              ) : fetchHistoryLog.length === 0 ? (
+                <p className="text-xs text-[var(--gem-text-secondary)] text-center py-10">
+                  No fetch history recorded yet - it starts logging from the next catalogue fetch onward.
+                </p>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="sticky top-0 bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-black uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="py-2 px-2.5">Firm</th>
+                      <th className="py-2 px-2.5 text-right">Items</th>
+                      <th className="py-2 px-2.5">Fetched At</th>
+                      <th className="py-2 px-2.5 text-right">How Long Ago</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--gem-border)]/60">
+                    {fetchHistoryLog.map((entry, idx) => (
+                      <tr key={idx}>
+                        <td className="py-2 px-2.5 font-black text-[var(--gem-text-primary)]">{entry.firmCode}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-[var(--gem-text-secondary)]">{entry.itemCount}</td>
+                        <td className="py-2 px-2.5 font-mono text-[var(--gem-text-secondary)]">
+                          {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="py-2 px-2.5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </BlockGuard>
   );
 }
