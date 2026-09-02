@@ -28,7 +28,8 @@ import {
   FiUser,
   FiSlash,
   FiArrowUp,
-  FiArrowDown
+  FiArrowDown,
+  FiArrowRight
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -108,6 +109,16 @@ interface NewLinkChecklistEntry {
   unit?: string;
   rate?: number;
   mappedItemId?: string;
+  // Carried straight over from the uploaded sheet's row (the GeM product
+  // someone searched out of the marketplace for this item), along with the
+  // two stock fields the Master List needs. "Push to Stock" below builds a
+  // real FirmItemListing out of these once the listing has actually been
+  // uploaded under this firm - the point at which the entry stops being a
+  // to-do and becomes a live listing.
+  gemLink?: string;
+  minQty?: number;
+  availGemStock?: number;
+  pushedListingId?: string;
   buyerId: string;
   status: "Pending" | "Synced";
   date: string;
@@ -169,6 +180,14 @@ export default function GeMSyncPage() {
   // with no GeM listing yet, from the "Add New Link" row action below).
   const [checklistSubTab, setChecklistSubTab] = useState<"stock" | "newLink">("stock");
   const [showAllSyncedNewLink, setShowAllSyncedNewLink] = useState<boolean>(false);
+  // New Upload Link rows' Revise dialog - same four fields the Stock Update
+  // revision dialog edits, minus the negotiation reason (nothing to log a
+  // rate history against until the entry becomes a real listing).
+  const [newLinkRevisionEntry, setNewLinkRevisionEntry] = useState<NewLinkChecklistEntry | null>(null);
+  const [newLinkRateValue, setNewLinkRateValue] = useState<string>("");
+  const [newLinkMinQtyValue, setNewLinkMinQtyValue] = useState<string>("");
+  const [newLinkStockValue, setNewLinkStockValue] = useState<string>("");
+  const [newLinkGemLinkValue, setNewLinkGemLinkValue] = useState<string>("");
   const [showAllSynced, setShowAllSynced] = useState<boolean>(false);
   const [gemCredentials, setGemCredentials] = useState<{ firmCode: string; gemUserId: string; gemPassword: string; gemMailId: string }[]>([]);
   const [syncingListingId, setSyncingListingId] = useState<string | null>(null);
@@ -1762,6 +1781,12 @@ export default function GeMSyncPage() {
       unit: unit || undefined,
       rate: row.rate || undefined,
       mappedItemId: row.mappedItemId || undefined,
+      // The GeM product this row was already mapped to on the sheet - for a
+      // new upload that link is the marketplace listing to create our own
+      // offer against, so it comes across as-is instead of being re-typed.
+      gemLink: row.gemLink ? row.gemLink.trim() : undefined,
+      minQty: row.minQty || 1,
+      availGemStock: row.availGemStock || 0,
       buyerId: selectedBuyerId,
       status: "Pending",
       date: new Date().toISOString()
@@ -1780,6 +1805,135 @@ export default function GeMSyncPage() {
   const handleDeleteNewLinkEntry = (id: string) => {
     if (!confirm("Delete this entry from the New Upload Link checklist?")) return;
     saveNewLinkChecklist(newLinkChecklist.filter(e => e.id !== id));
+  };
+
+  // Same Revise dialog Stock Update rows get, against a checklist entry
+  // instead of a listing - the numbers arrive from the sheet, this is where
+  // they get corrected before the entry graduates into the Master List.
+  const handleOpenNewLinkRevision = (entry: NewLinkChecklistEntry) => {
+    setNewLinkRevisionEntry(entry);
+    setNewLinkRateValue(entry.rate ? String(entry.rate) : "");
+    setNewLinkMinQtyValue(String(entry.minQty || 1));
+    setNewLinkStockValue(String(entry.availGemStock || 0));
+    setNewLinkGemLinkValue(entry.gemLink || "");
+  };
+
+  const handleSaveNewLinkRevision = () => {
+    if (!newLinkRevisionEntry) return;
+
+    const rateVal = parseFloat(newLinkRateValue);
+    if (isNaN(rateVal) || rateVal <= 0) {
+      alert("Please enter a valid rate.");
+      return;
+    }
+    const minQtyVal = parseInt(newLinkMinQtyValue) || 1;
+    const stockVal = parseInt(newLinkStockValue) || 0;
+    const linkVal = newLinkGemLinkValue.trim();
+
+    // Same duplicate rule handleSaveRevision applies to the Master List: one
+    // product page per buyer+firm, across both checklists.
+    if (linkVal) {
+      const dupListing = listings.find(lst =>
+        lst.firmCode === newLinkRevisionEntry.firmCode &&
+        lst.buyerId === newLinkRevisionEntry.buyerId &&
+        lst.gemLink &&
+        lst.gemLink.trim() === linkVal
+      );
+      if (dupListing) {
+        alert(`❌ Duplicate GeM Link! Ye link is firm ki Stock Update checklist me already hai - item: "${dupListing.itemName}".`);
+        return;
+      }
+      const dupEntry = newLinkChecklist.find(e =>
+        e.id !== newLinkRevisionEntry.id &&
+        e.firmCode === newLinkRevisionEntry.firmCode &&
+        e.buyerId === newLinkRevisionEntry.buyerId &&
+        e.gemLink &&
+        e.gemLink.trim() === linkVal
+      );
+      if (dupEntry) {
+        alert(`❌ Duplicate GeM Link! Ye link isi checklist me already hai - item: "${dupEntry.itemName}".`);
+        return;
+      }
+    }
+
+    saveNewLinkChecklist(newLinkChecklist.map(e =>
+      e.id === newLinkRevisionEntry.id
+        ? { ...e, rate: rateVal, minQty: minQtyVal, availGemStock: stockVal, gemLink: linkVal }
+        : e
+    ));
+    setNewLinkRevisionEntry(null);
+  };
+
+  // "PUSH TO STOCK" - the new listing now genuinely exists on GeM (its URL is
+  // saved on this row), so the entry graduates out of this to-do checklist
+  // into the real Master List / Stock Update checklist, landing there exactly
+  // as it would have if it had been linked from the Requirement Mapping
+  // Console in the first place.
+  const handlePushNewLinkToStock = (entry: NewLinkChecklistEntry) => {
+    const link = (entry.gemLink || "").trim();
+    if (!link) {
+      alert("Is row par GeM Product URL hai hi nahi - 'Revise Rate' se link daalo, ya sheet me GeM Link bharke dobara 'Add New Link' karo.");
+      return;
+    }
+    if (!entry.mappedItemId) {
+      alert("Ye entry kisi inventory item se mapped nahi hai - Requirement Mapping Console me item map karke dobara 'Add New Link' karo.");
+      return;
+    }
+    const rateVal = Number(entry.rate) || 0;
+    if (rateVal <= 0) {
+      alert("Rate blank hai - pehle 'Revise' se rate bharo, phir push karo.");
+      return;
+    }
+
+    const dupListing = listings.find(lst =>
+      lst.firmCode === entry.firmCode &&
+      lst.buyerId === entry.buyerId &&
+      lst.gemLink &&
+      lst.gemLink.trim() === link
+    );
+    if (dupListing) {
+      alert(`Ye link is firm ki Stock Update checklist me already hai - item: "${dupListing.itemName}".`);
+      return;
+    }
+
+    const buyerObj = buyers.find(b => b.id === entry.buyerId);
+    const newListing: FirmItemListing = {
+      id: "listing_" + Date.now() + "_newlink",
+      firmCode: entry.firmCode,
+      itemId: entry.mappedItemId,
+      itemName: entry.itemName,
+      gemLink: link,
+      rate: rateVal,
+      availGemStock: entry.availGemStock || 0,
+      minQty: entry.minQty || 1,
+      status: "Pending",
+      buyerId: entry.buyerId,
+      date: new Date().toISOString()
+    };
+    saveListings([...listings, newListing]);
+
+    const newHistory: RateHistory = {
+      id: "hist_" + Date.now(),
+      listingId: newListing.id,
+      itemName: newListing.itemName,
+      buyerId: entry.buyerId,
+      buyerName: buyerObj?.name || "Unknown Buyer",
+      oldRate: 0,
+      newRate: rateVal,
+      oldMinQty: 0,
+      newMinQty: newListing.minQty,
+      reason: "New GeM listing created (New Upload Link)",
+      timestamp: new Date().toISOString()
+    };
+    saveRateHistory([...rateHistory, newHistory]);
+
+    saveNewLinkChecklist(newLinkChecklist.map(e =>
+      e.id === entry.id
+        ? { ...e, status: "Synced" as const, pushedListingId: newListing.id }
+        : e
+    ));
+
+    alert("✓ Stock Update checklist me add ho gaya - Revise Rate / Sync to GeM ab wahan se chalega.");
   };
 
   // Excel Download logic
@@ -3083,12 +3237,11 @@ export default function GeMSyncPage() {
                             <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
                               <th className="py-3 px-4 text-center w-12">Sync</th>
                               <th className="py-3 px-4">Item Name</th>
-                              <th className="py-3 px-4">Spec / Remark</th>
-                              <th className="py-3 px-4 text-center w-28">Req. Qty</th>
-                              <th className="py-3 px-4 text-center w-24">Unit</th>
-                              <th className="py-3 px-4 text-center w-28">Rate</th>
-                              <th className="py-3 px-4">Linked Inventory</th>
-                              <th className="py-3 px-4 text-center w-24">Actions</th>
+                              <th className="py-3 px-4">GeM Product URL</th>
+                              <th className="py-3 px-4 text-center w-36">Rate</th>
+                              <th className="py-3 px-4 text-center w-32">Avail gem stock</th>
+                              <th className="py-3 px-4 text-center w-28">Min Qty</th>
+                              <th className="py-3 px-4 text-center w-56">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--gem-border)]/40">
@@ -3106,24 +3259,81 @@ export default function GeMSyncPage() {
                                   </td>
                                   <td className="py-3.5 px-4">
                                     <span className="font-bold text-[var(--gem-text-primary)]">{entry.itemName}</span>
+                                    {/* Sheet context a Stock Update row simply doesn't have - the spec,
+                                        remark and asked-for qty whoever creates this listing on GeM has
+                                        to work from. Rides under the name so the column set stays
+                                        identical to the Stock Update table. */}
+                                    <span className="block text-[10px] text-[var(--gem-text-secondary)] mt-0.5 leading-relaxed">
+                                      {entry.spec && <span className="mr-2"><b>Spec:</b> {entry.spec}</span>}
+                                      {entry.remark && <span className="mr-2"><b>Remark:</b> {entry.remark}</span>}
+                                      <span className="mr-2"><b>Req:</b> {entry.requiredQty}{entry.unit ? ` ${entry.unit}` : ""}</span>
+                                      {linkedItem && <span>{linkedItem.sku}</span>}
+                                    </span>
                                   </td>
-                                  <td className="py-3.5 px-4 text-[var(--gem-text-secondary)]">
-                                    {entry.spec && <span className="block"><b>Spec:</b> {entry.spec}</span>}
-                                    {entry.remark && <span className="block"><b>Remark:</b> {entry.remark}</span>}
-                                    {!entry.spec && !entry.remark && "—"}
+
+                                  <td className="py-3.5 px-4">
+                                    {entry.gemLink ? (
+                                      <div className="flex items-center gap-2">
+                                        <a
+                                          href={entry.gemLink}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-blue-600 hover:underline flex items-center gap-1"
+                                        >
+                                          GeM Listing <FiExternalLink size={12} />
+                                        </a>
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(entry.gemLink || "");
+                                            alert("✓ Link copied to clipboard!");
+                                          }}
+                                          className="p-1 rounded bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] border border-[var(--gem-border)] transition-colors cursor-pointer"
+                                          title="Copy Link"
+                                        >
+                                          <FiCopy size={11} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[var(--gem-text-secondary)] italic">No link provided</span>
+                                    )}
                                   </td>
-                                  <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">{entry.requiredQty}</td>
-                                  <td className="py-3.5 px-4 text-center text-[var(--gem-text-secondary)]">{entry.unit || "—"}</td>
-                                  <td className="py-3.5 px-4 text-center font-mono font-bold text-[var(--gem-text-primary)]">{entry.rate ? `₹${entry.rate}` : "—"}</td>
-                                  <td className="py-3.5 px-4 text-[var(--gem-text-secondary)]">{linkedItem ? `${linkedItem.sku} - ${linkedItem.itemName}` : "—"}</td>
+
+                                  <td className="py-3.5 px-4 text-center font-mono font-bold text-[var(--gem-text-primary)]">
+                                    {entry.rate ? `₹${entry.rate}` : "—"}
+                                  </td>
+
+                                  <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
+                                    {entry.availGemStock || 0}
+                                  </td>
+
+                                  <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
+                                    {entry.minQty || 1}
+                                  </td>
+
                                   <td className="py-3.5 px-4 text-center">
-                                    <button
-                                      onClick={() => handleDeleteNewLinkEntry(entry.id)}
-                                      className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all inline-flex items-center justify-center"
-                                      title="Delete Entry"
-                                    >
-                                      <FiTrash2 size={12} />
-                                    </button>
+                                    <div className="flex gap-2 justify-center">
+                                      <button
+                                        onClick={() => handleOpenNewLinkRevision(entry)}
+                                        className="bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-amber-500 border border-[var(--gem-border)] hover:border-amber-500/30 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                                      >
+                                        <FiEdit size={12} /> Revise Rate
+                                      </button>
+                                      <button
+                                        onClick={() => handlePushNewLinkToStock(entry)}
+                                        disabled={!entry.gemLink}
+                                        title={entry.gemLink ? "Listing GeM par upload ho gayi - is item ko Stock Update checklist (Master List) me bhej do" : "Is row par GeM Product URL nahi hai"}
+                                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 hover:border-emerald-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      >
+                                        <FiArrowRight size={12} /> Push to Stock
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteNewLinkEntry(entry.id)}
+                                        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all inline-flex items-center justify-center"
+                                        title="Delete Entry"
+                                      >
+                                        <FiTrash2 size={12} />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -3836,6 +4046,95 @@ export default function GeMSyncPage() {
                     className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-lg text-xs uppercase font-black"
                   >
                     Confirm Revision
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ========= NEW UPLOAD LINK: RATE / STOCK REVISE MODAL =========
+              Deliberately not the Revision dialog above - that one edits a
+              FirmItemListing and logs a negotiation history entry. A New
+              Upload Link row isn't a listing yet, so this just fills in the
+              numbers "Push to Stock" will need. */}
+          {newLinkRevisionEntry && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card">
+
+                <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)]">
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
+                    <FiEdit className="text-amber-500" /> Revise Rate (New Upload Link)
+                  </h3>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
+                    {newLinkRevisionEntry.firmCode} — {newLinkRevisionEntry.itemName}
+                  </p>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Rate (₹)</label>
+                      <input
+                        type="number"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono focus:outline-none focus:border-blue-500"
+                        value={newLinkRateValue}
+                        onChange={(e) => setNewLinkRateValue(e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Min Qty</label>
+                      <input
+                        type="number"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono focus:outline-none focus:border-blue-500"
+                        value={newLinkMinQtyValue}
+                        onChange={(e) => setNewLinkMinQtyValue(e.target.value)}
+                        placeholder="1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">GeM Product URL</label>
+                      <input
+                        type="text"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500"
+                        value={newLinkGemLinkValue}
+                        onChange={(e) => setNewLinkGemLinkValue(e.target.value)}
+                        placeholder="Sheet se aaya link..."
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Avail GeM Stock</label>
+                      <input
+                        type="number"
+                        className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] font-mono focus:outline-none focus:border-blue-500"
+                        value={newLinkStockValue}
+                        onChange={(e) => setNewLinkStockValue(e.target.value)}
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-[var(--gem-text-secondary)] leading-relaxed">
+                    Ye values <b>Push to Stock</b> par is item ki Master List / Stock Update entry me chali jayengi.
+                  </p>
+                </div>
+
+                <div className="p-6 border-t border-[var(--gem-border)] bg-[var(--gem-table-header)]/20 flex justify-end gap-3">
+                  <button
+                    onClick={() => setNewLinkRevisionEntry(null)}
+                    className="px-5 py-2.5 rounded-lg border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] text-xs uppercase font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveNewLinkRevision}
+                    className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-lg text-xs uppercase font-black"
+                  >
+                    Save Details
                   </button>
                 </div>
 
