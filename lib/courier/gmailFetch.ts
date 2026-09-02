@@ -1,4 +1,4 @@
-// Fetches yesterday's courier booking-register PDF(s) from Gmail via the
+﻿// Fetches yesterday's courier booking-register PDF(s) from Gmail via the
 // Gmail API. Mirrors lib/googleDrive.ts's OAuth2 + refresh-token pattern -
 // kept as separate env vars (GMAIL_API_*) since GMAIL_USER/GMAIL_APP_PASSWORD
 // (used by lib/email.ts for SMTP) are unrelated credentials with a different
@@ -50,6 +50,19 @@ function getGmailClient() {
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   oauth2Client.setCredentials({ refresh_token: refreshToken });
   return google.gmail({ version: "v1", auth: oauth2Client });
+}
+
+// Google answers a dead refresh token with the bare string "invalid_grant",
+// which is what ends up in the Courier Tracking banner - true, and useless to
+// whoever is looking at it. The token itself is the thing that goes stale
+// (most often because the Cloud Console consent screen is still in "Testing",
+// where Google expires refresh tokens after 7 days), so say that instead.
+function describeGmailAuthError(err: any): Error {
+  const raw = String(err?.message || err?.response?.data?.error || "");
+  if (!/invalid_grant|invalid_client|unauthorized_client/i.test(raw)) return err;
+  return new Error(
+    `Gmail ka refresh token ab valid nahi hai (${raw}). Naya GMAIL_API_REFRESH_TOKEN OAuth Playground se generate karke .env.local (aur Vercel env) me daalo aur server restart karo - steps is file ke top comment me hain. Baar-baar ho raha ho to Google Cloud Console -> OAuth consent screen ko "Publish App" karke Testing se Production me le jao, warna refresh token har 7 din me expire hota rehta hai.`
+  );
 }
 
 function formatGmailDate(d: Date): string {
@@ -114,8 +127,15 @@ export async function fetchNewCourierPdfsSince(sinceDate: Date | null): Promise<
 
   const query = `from:${senderEmail} has:attachment filename:pdf after:${formatGmailDate(queryWindowStart)}`;
 
-  const listRes = await gmail.users.messages.list({ userId: "me", q: query });
-  const messages = listRes.data.messages || [];
+  // First call against Gmail - this is where a stale refresh token surfaces,
+  // since googleapis only redeems it lazily on the first request.
+  let messages;
+  try {
+    const listRes = await gmail.users.messages.list({ userId: "me", q: query });
+    messages = listRes.data.messages || [];
+  } catch (err: any) {
+    throw describeGmailAuthError(err);
+  }
 
   const pdfs: FetchedPdf[] = [];
 
