@@ -201,6 +201,26 @@
   // failing, same as the rest of this file.
   const CATALOGUE_INDEX_URL = "https://admin-mkp.gem.gov.in/#!/catalog/index";
 
+  // Tab is opened straight at CATALOGUE_INDEX_URL (see handleUpdateGemCatalogueItem
+  // in background.js) instead of the SSO login page, so this can tell the two
+  // cases apart on load: a session for SOME GeM account is already active ->
+  // the Catalogue Search UI renders directly, no login needed at all; not
+  // logged in -> GeM's own auth redirect lands on the #loginid page instead.
+  // Whichever shows up first wins the race. NOT YET CONFIRMED LIVE (same
+  // caveat as the rest of this catalogue-update flow) - if GeM's actual
+  // logged-out behavior on this URL turns out different, this will need
+  // adjusting from a real run.
+  async function detectAlreadyLoggedIn() {
+    const result = await Promise.race([
+      waitForElement("#loginid", 8000).then(() => "LOGIN_FORM").catch(() => null),
+      waitForElementMatching(() => {
+        const heading = Array.from(document.querySelectorAll("h1,h2,h3,h4,legend,label")).find((h) => /catalogue search/i.test(h.textContent));
+        return heading ? "CATALOGUE" : null;
+      }, 8000).catch(() => null),
+    ]);
+    return result === "CATALOGUE";
+  }
+
   async function checkPendingCatalogueUpdate() {
     const { data } = await chrome.runtime.sendMessage({ type: "GET_PENDING_CATALOGUE_UPDATE" });
     if (!data) return;
@@ -213,7 +233,13 @@
     try {
       const step = data.step || "LOGIN_USERNAME";
       if (step === "LOGIN_USERNAME") {
-        await catalogueLoginUsernameStep(data);
+        if (await detectAlreadyLoggedIn()) {
+          console.log("[GeM Bill Auto-Submit] GeM me pehle se login hai (session already active) - login skip karke seedha Catalogue Search par ja raha hu.");
+          await setCatalogueStep(data, "CATALOGUE_SEARCH");
+          await catalogueSearchStep(data);
+        } else {
+          await catalogueLoginUsernameStep(data);
+        }
       } else if (step === "LOGIN_PASSWORD") {
         await catalogueLoginPasswordStep(data);
       } else if (step === "CATALOGUE_NAV") {
@@ -351,9 +377,16 @@
       let hops = 0;
       while (el && hops < 4) {
         const text = el.textContent.trim();
-        if (text.length < 300 && labelRegex.test(text)) {
-          setNativeValue(input, String(value));
-          fireEvents(input);
+        // Was capped at 300 - confirmed live 01-Sep-2026 this rejected the
+        // real "Offer Price Including Tax..." container on any listing
+        // showing GeM's 30-day price-increase-restriction note ("The price
+        // entered cant be increased for the next 30 days. You have last
+        // changed the price at ..."), since that note alone pushes the
+        // combined container text past 300 chars even though the label
+        // regex itself matched fine. Still bounded by the 4-hop walk above,
+        // so this isn't opening the match up page-wide.
+        if (text.length < 600 && labelRegex.test(text)) {
+          simulateTyping(input, String(value));
           return true;
         }
         el = el.parentElement;
@@ -363,12 +396,60 @@
     return false;
   }
 
+  // Confirmed live 01-Sep-2026 (DevTools inspection of the catalog edit
+  // page): Current Stock / Min Qty / Rate are AngularJS 1.x inputs
+  // (ng-model, not modern Angular) carrying a custom ng-number-only /
+  // only-int / is-non-negative directive. That directive appears to hook
+  // actual keyboard events rather than reacting to the final .value, so
+  // setNativeValue + a single synthetic "input" event left them
+  // ng-pristine/ng-untouched no matter what - GeM never registered the
+  // change even though the digits were visibly sitting in the field. This
+  // clears the field then re-types the target value one character at a
+  // time with a real keydown/keypress/input/keyup sequence per digit, the
+  // same shape the directive would see from actual typing.
+  function simulateTyping(el, value) {
+    el.focus();
+    setNativeValue(el, "");
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
+
+    for (const ch of String(value)) {
+      const keyInit = { key: ch, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent("keydown", keyInit));
+      el.dispatchEvent(new KeyboardEvent("keypress", keyInit));
+      setNativeValue(el, el.value + ch);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: ch, inputType: "insertText" }));
+      el.dispatchEvent(new KeyboardEvent("keyup", keyInit));
+    }
+
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+  }
+
   function clickButtonByText(textRegex) {
     const btn = Array.from(document.querySelectorAll("button, a.btn, input[type=submit]")).find(
       (b) => isVisible(b) && textRegex.test((b.textContent || b.value || "").trim())
     );
     if (btn) btn.click();
     return !!btn;
+  }
+
+  // Finds a checkbox by its nearby label text and ticks it (a real .click(),
+  // not setting .checked directly - Angular's checkbox binding listens for
+  // the native click/change event, same reasoning setNativeValue uses for
+  // text inputs). Leaves it alone if already checked, and leaves every OTHER
+  // checkbox on the page untouched.
+  function checkCheckboxByLabel(labelRegex) {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    for (const cb of checkboxes) {
+      if (!isVisible(cb)) continue;
+      const container = cb.closest("div, td, li, label, form") || cb.parentElement;
+      const text = container ? container.textContent.trim() : "";
+      if (labelRegex.test(text)) {
+        if (!cb.checked) cb.click();
+        return true;
+      }
+    }
+    return false;
   }
 
   // admin-mkp.gem.gov.in/#!/catalog/index - the "Catalogue Search" box seen
@@ -414,6 +495,29 @@
 
     await setCatalogueStep(data, "RATE_UPDATE");
     editLink.click();
+
+    // BUG FIXED 01-Sep-2026: this click is an Angular hash-route SPA
+    // navigation (still admin-mkp.gem.gov.in, just #!/catalog/index ->
+    // #!/catalog/new?id=...) - confirmed live it does NOT reload the page,
+    // so nothing was ever re-triggering checkPendingCatalogueUpdate() for
+    // the next step the way a real navigation would (like CATALOGUE_NAV's
+    // window.location.href does, which DOES reload). The flow silently
+    // stopped right here every single run. Chaining directly into
+    // catalogueRateUpdateStep - once the edit page's own content has
+    // actually rendered - matches how RATE_UPDATE already chains into
+    // STOCK_UPDATE below.
+    const editPageReady = await waitForElementMatching(() => {
+      return Array.from(document.querySelectorAll("label, h1, h2, h3, h4")).find((h) => /offer price including tax|terms of delivery/i.test(h.textContent))
+        ? true
+        : null;
+    }, 15000).catch(() => null);
+
+    if (!editPageReady) {
+      console.warn("[GeM Bill Auto-Submit] Edit page load hone ka wait karte hue timeout ho gaya - manually complete karo.");
+      return;
+    }
+
+    await catalogueRateUpdateStep(data);
   }
 
   // catalog/new?id=... edit page - "Offer Price Including Tax and Duties as
@@ -440,8 +544,12 @@
         "[GeM Bill Auto-Submit] GeM ka 30-din price-increase restriction laga hua hai is product par - Rate update SKIP ho gaya, Stock/Min Qty phir bhi update hoga."
       );
     } else {
-      await waitForCaptchaIfPresent();
-      clickButtonByText(/^(save|update|submit)$/i);
+      await waitForCaptchaIfPresent(data.omsOrigin);
+      // NOT an exact-text match ("save"/"update"/"submit" alone) - GeM's real
+      // buttons here are multi-word (e.g. "UPDATE STOCK", confirmed live
+      // 01-Sep-2026), so this needs to match one of those words ANYWHERE in
+      // the button text, not the whole text.
+      clickButtonByText(/\b(save|update|submit)\b/i);
       await sleep(1500);
     }
 
@@ -465,8 +573,20 @@
     }
 
     if (didAnything) {
-      await waitForCaptchaIfPresent();
-      clickButtonByText(/^(save|update|submit)$/i);
+      // "I confirm that all the details for my offering are up to date" -
+      // GeM won't accept the update without this ticked (confirmed live
+      // 01-Sep-2026). The "I have read and agree to... Undertaking" checkbox
+      // right below it is deliberately left alone - it's a separate,
+      // already-agreed-once term, not part of this per-update confirmation.
+      const confirmed = checkCheckboxByLabel(/confirm that all the details for my offering are up to date/i);
+      if (!confirmed) {
+        console.warn('[GeM Bill Auto-Submit] "I confirm that all the details..." checkbox nahi mila - manually tick karo.');
+      }
+
+      await waitForCaptchaIfPresent(data.omsOrigin);
+      // NOT an exact-text match - see the same note in catalogueRateUpdateStep
+      // above (GeM's real button here is "UPDATE STOCK", confirmed live 01-Sep-2026).
+      clickButtonByText(/\b(save|update|submit)\b/i);
       await sleep(1500);
       console.log("[GeM Bill Auto-Submit] Stock/Min Qty update kar diya.");
     } else {
@@ -904,8 +1024,20 @@
 
   // GeM's Angular/jQuery-based form validation didn't register a value set
   // via "input" alone - "change" and "blur" are needed too.
+  //
+  // Confirmed live 01-Sep-2026: the Rate/Stock/Min Qty fields on the catalog
+  // edit page still showed ng-pristine/ng-untouched (Angular's own "nothing
+  // changed here" state) after this ran, even though the typed-looking value
+  // was visibly sitting in the field. Two likely causes fixed here: (1) a
+  // plain `new Event("input")` isn't an InputEvent instance, and Angular's
+  // NumberValueAccessor / some custom validators specifically check for a
+  // real InputEvent rather than any Event named "input"; (2) Angular's
+  // "touched" state is normally set on blur, but only AFTER a prior focus -
+  // dispatching blur alone with no matching focus first can be a no-op for
+  // that part of the tracked state on some form setups.
   function fireEvents(el) {
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("focus", { bubbles: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new Event("blur", { bubbles: true }));
   }
@@ -1140,33 +1272,65 @@
   // broad way setLabeledInputValue finds fields by nearby label text. If
   // found, waits for a human to type it in (like the login captcha) before
   // the caller clicks Save/Submit; if genuinely absent, resolves immediately
-  // so pages without a captcha aren't blocked.
-  async function waitForCaptchaIfPresent() {
-    const captchaInput = Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find((inp) => {
-      if (!isVisible(inp)) return false;
-      const id = (inp.id || "").toLowerCase();
-      const name = (inp.name || "").toLowerCase();
-      const placeholder = (inp.placeholder || "").toLowerCase();
-      if (/captcha/.test(id) || /captcha/.test(name) || /captcha/.test(placeholder)) return true;
-      const container = inp.closest("div, td, li, form") || inp.parentElement;
-      return !!(container && /captcha/i.test(container.textContent || ""));
-    });
+  // so pages without a captcha aren't blocked. omsOrigin (optional) also
+  // pushes a visible banner onto the OMS tab itself, not just a console.log
+  // here that's easy to miss while watching the GeM tab.
+  async function waitForCaptchaIfPresent(omsOrigin) {
+    const findCaptchaInput = () => {
+      // #captcha-text confirmed live 01-Sep-2026 as the real id on this page -
+      // checked FIRST and directly, since the old broad fallback below
+      // (matching ANY input whose nearby container text mentions "captcha")
+      // was climbing up to a shared ancestor (a whole <form> wrapping Rate/
+      // Stock/Min Qty AND the captcha section together) and matching Current
+      // Stock or another field INSTEAD of the real captcha box, because that
+      // ancestor's full text also happens to mention "captcha" somewhere
+      // below. That meant this was silently waiting on the wrong element's
+      // value forever - kept only as a fallback now, for any other GeM page
+      // that reuses this same wait with a different id.
+      const byId = document.getElementById("captcha-text");
+      if (byId && isVisible(byId)) return byId;
 
-    if (!captchaInput) return;
+      return Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find((inp) => {
+        if (!isVisible(inp)) return false;
+        const id = (inp.id || "").toLowerCase();
+        const name = (inp.name || "").toLowerCase();
+        const placeholder = (inp.placeholder || "").toLowerCase();
+        if (/captcha/.test(id) || /captcha/.test(name) || /captcha/.test(placeholder)) return true;
+        const container = inp.closest("div, td, li, form") || inp.parentElement;
+        return !!(container && /captcha/i.test(container.textContent || ""));
+      });
+    };
+
+    if (!findCaptchaInput()) return;
 
     console.log("[GeM Bill Auto-Submit] Is page par bhi Captcha hai - manually bhar do, bharte hi Save/Submit apne aap ho jayega.");
+    if (omsOrigin) {
+      chrome.runtime
+        .sendMessage({ type: "NOTIFY_OMS", omsOrigin, text: "⚠️ GeM tab me Captcha bharo — bharte hi update apne aap ho jayega." })
+        .catch(() => {}); // OMS tab not open, or messaging failed - not fatal, GeM tab itself is still usable
+    }
 
+    // Polls the LIVE DOM (re-finds the captcha input fresh every tick)
+    // instead of listening on one captured node - confirmed live 01-Sep-2026
+    // that GeM regenerates this captcha (new image + a NEW input element)
+    // when the confirm-checkbox above gets ticked, which silently detaches
+    // a single-node listener and left this waiting forever even after the
+    // user typed into the replacement box.
+    //
+    // Threshold is exactly 6, not "looks long enough" - this catalog-edit
+    // captcha is consistently 6 characters (confirmed live across several
+    // runs: SMLYNV, CDQIOY, KWEQMK, WGITEW, RODOLB). A looser >=3 threshold
+    // fired Save/Submit the moment the user was only half-done typing,
+    // submitting a truncated/wrong captcha.
+    const CAPTCHA_LENGTH = 6;
     await new Promise((resolve) => {
-      let debounceId;
-      const onInput = () => {
-        clearTimeout(debounceId);
-        if (captchaInput.value.trim().length < 3) return; // wait for a real-looking entry, not one stray keystroke
-        debounceId = setTimeout(() => {
-          captchaInput.removeEventListener("input", onInput);
+      const intervalId = setInterval(() => {
+        const el = findCaptchaInput();
+        if (el && el.value.trim().length >= CAPTCHA_LENGTH) {
+          clearInterval(intervalId);
           resolve();
-        }, 600);
-      };
-      captchaInput.addEventListener("input", onInput);
+        }
+      }, 400);
     });
   }
 

@@ -27,6 +27,12 @@ const GEM_ORDERS_URL = `${GEM_BASE_URL}/fulfilment/home#WORKSPACE_ID=ORDERS_WS`;
 // client_id/state here are the SSO app's own identifiers, not a per-visit
 // nonce - this exact URL was confirmed to reach the login form directly.
 const GEM_LOGIN_URL = "https://sso.gem.gov.in/ARXSSO/oauth/doLogin?redirect_uri=https%3A%2F%2Fmkp.gem.gov.in%2Fauth%2Farx%2Fcallback&client_id=131804060198305&state=4e4b6dfa72e45b4249f6ccef0b50be7a83693c9d080cf7ae";
+// Same page content-gem.js's catalogueSearchStep drives - the catalogue
+// update tab opens straight here (not GEM_LOGIN_URL) so an already-active
+// GeM session skips login entirely (detectAlreadyLoggedIn in content-gem.js
+// checks whether this loads the real page or GeM's own not-logged-in
+// redirect to the SSO form).
+const CATALOGUE_INDEX_URL = "https://admin-mkp.gem.gov.in/#!/catalog/index";
 
 // Manifest me daale gaye OAuth client ID ko yahan bhi use karenge (launchWebAuthFlow ke liye
 // alag se URL banana padta hai, chrome.identity.getAuthToken jaisa seedha nahi hota).
@@ -99,6 +105,17 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  if (message.type === "NOTIFY_OMS") {
+    // content-gem.js can't reach the OMS tab directly (different origin,
+    // no shared context) - this injects a visible banner into it instead,
+    // so something like "captcha needed" is impossible to miss while
+    // watching the GeM tab, not just a console.log here.
+    notifyOmsTab(message.omsOrigin, message.text)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
 
 // Sync Checklist's "Sync" button - logs into the given firm's GeM account
@@ -125,8 +142,11 @@ async function handleUpdateGemCatalogueItem(payload) {
     },
   });
 
-  const tab = await chrome.tabs.create({ url: GEM_LOGIN_URL, active: true });
-  return { tabId: tab.id, message: "GeM login tab khola gaya, catalogue update automation shuru hogi login ke baad." };
+  // CATALOGUE_INDEX_URL, not GEM_LOGIN_URL - lets content-gem.js's
+  // detectAlreadyLoggedIn() see whether a session is already active and
+  // skip the whole login step for it, instead of always forcing a fresh login.
+  const tab = await chrome.tabs.create({ url: CATALOGUE_INDEX_URL, active: true });
+  return { tabId: tab.id, message: "GeM catalogue tab khola gaya - pehle se login hai to seedha update shuru hoga, warna login step aayega." };
 }
 
 // Called from content-gem.js once Rate/Stock/Min Qty are updated on GeM's
@@ -142,6 +162,42 @@ async function markChecklistSynced(omsOrigin, listingId) {
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
     throw new Error(errData.error || `OMS sync-mark fail hua (status ${res.status}).`);
+  }
+}
+
+// Injects a self-dismissing banner into whichever open tab(s) match
+// omsOrigin - uses chrome.scripting.executeScript (already have the
+// "scripting" + host_permissions for both OMS origins) rather than needing
+// any change on the OMS/Next.js side, since a plain webpage can't be
+// messaged into by an extension without either a content script match or
+// this. Silently does nothing if no matching tab is open right now.
+async function notifyOmsTab(omsOrigin, text) {
+  if (!omsOrigin) return;
+  const tabs = await chrome.tabs.query({ url: `${omsOrigin}/*` });
+  for (const tab of tabs) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (msg) => {
+          const existingId = "__gemExtNotifyBanner";
+          document.getElementById(existingId)?.remove();
+          const el = document.createElement("div");
+          el.id = existingId;
+          el.textContent = msg;
+          el.style.cssText =
+            "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#facc15;color:#111;" +
+            "font:700 14px/1.4 system-ui,sans-serif;text-align:center;padding:10px 16px;" +
+            "box-shadow:0 2px 8px rgba(0,0,0,.3);cursor:pointer;";
+          el.title = "Click to dismiss";
+          el.onclick = () => el.remove();
+          document.body.appendChild(el);
+          setTimeout(() => el.remove(), 20000);
+        },
+        args: [text],
+      });
+    } catch (err) {
+      console.warn(`[GeM Bill Auto-Submit] OMS tab (${tab.id}) me banner inject nahi hua:`, err.message);
+    }
   }
 }
 
