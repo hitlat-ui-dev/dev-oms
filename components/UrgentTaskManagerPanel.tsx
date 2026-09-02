@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { FiSend, FiClock, FiCheckCircle } from "react-icons/fi";
 
@@ -21,19 +21,26 @@ const DASHBOARD_POLL_MS = 25000;
 // component either way, so the two never drift out of sync.
 export default function UrgentTaskManagerPanel() {
   const [users, setUsers] = useState<{ username: string }[]>([]);
-  const [currentUsername, setCurrentUsername] = useState("");
   const [description, setDescription] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [tasks, setTasks] = useState<UrgentTask[]>([]);
 
-  useEffect(() => {
+  // Read at submit time, not at mount. Several OMS tabs are usually open at
+  // once, and a logout in any one of them clears oms_user for all of them -
+  // an already-mounted panel would keep whatever it snapshotted on mount and
+  // post the task with a blank assignedBy, which the API rejects with an
+  // error that says nothing about the session having gone.
+  const readSessionUsername = () => {
     try {
       const stored = localStorage.getItem("oms_user");
-      if (stored) setCurrentUsername(JSON.parse(stored)?.username || "");
+      return stored ? JSON.parse(stored)?.username || "" : "";
     } catch {
-      // ignore
+      return "";
     }
+  };
+
+  useEffect(() => {
     fetch("/api/users")
       .then((res) => res.json())
       .then((data) => setUsers(Array.isArray(data) ? data : []))
@@ -59,12 +66,17 @@ export default function UrgentTaskManagerPanel() {
       alert("Description aur staff dono chahiye.");
       return;
     }
+    const assignedBy = readSessionUsername();
+    if (!assignedBy) {
+      alert("Aapka login session mil nahi raha (kisi doosre tab me logout ho gaya hoga) - dobara login karke bhejo.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/urgent-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, assignedTo, assignedBy: currentUsername }),
+        body: JSON.stringify({ description, assignedTo, assignedBy }),
       });
       if (!res.ok) {
         const err = await res.json();
