@@ -29,7 +29,8 @@ import {
   FiSlash,
   FiArrowUp,
   FiArrowDown,
-  FiArrowRight
+  FiArrowRight,
+  FiRotateCcw
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -78,6 +79,16 @@ interface FirmItemListing {
   // Catalogue page - GeM's own product id, needed by the Sync Checklist's
   // "Sync to GeM" button to find the right product on GeM's side.
   gemCatalogueId?: string;
+  // Sheet context the listing was created from. None of it is needed to sync
+  // anything - it is carried purely so the Stock Update checklist can show the
+  // same Spec / Remark / Req / Sheet line the New Upload Link one does, since
+  // that detail otherwise only exists on the sheet row it came off.
+  spec?: string;
+  remark?: string;
+  requiredQty?: number;
+  unit?: string;
+  sheetName?: string;
+  sheetId?: string;
 }
 
 interface RateHistory {
@@ -119,6 +130,10 @@ interface NewLinkChecklistEntry {
   minQty?: number;
   availGemStock?: number;
   pushedListingId?: string;
+  // Which uploaded sheet the row came off, so the checklist says where the
+  // requirement originated without having to go hunting through the library.
+  sheetName?: string;
+  sheetId?: string;
   buyerId: string;
   status: "Pending" | "Synced";
   date: string;
@@ -143,7 +158,34 @@ interface UploadedRow {
   notAvailable?: boolean;
   notAvailableBy?: string;
   notAvailableAt?: string;
+  // Variant Group: several sheet rows that are the same product in different
+  // sizes/variants, all quoted against ONE GeM listing. The colour is stored
+  // rather than derived from group order so deleting one group never
+  // re-colours the others.
+  variantGroupId?: string;
+  variantGroupColor?: string;
+  // Free-text note typed against this row - goes out as its own Comment
+  // column in the downloaded Excel. Row-local on purpose: it is a remark
+  // about this exact line, so it never spreads across a variant group.
+  comment?: string;
 }
+
+// Variant Group colours. The same hex drives the on-screen tint and the
+// downloaded Excel's item-name fill, so what the sheet looks like on screen is
+// what lands in the file. Deliberately light - these sit behind black text and
+// are printed by the client.
+const VARIANT_GROUP_PALETTE = [
+  { key: "yellow", ui: "#FFF2CC", excel: "FFF2CC" },
+  { key: "blue", ui: "#DDEBF7", excel: "DDEBF7" },
+  { key: "green", ui: "#E2EFDA", excel: "E2EFDA" },
+  { key: "orange", ui: "#FCE4D6", excel: "FCE4D6" },
+  { key: "purple", ui: "#E4DFEC", excel: "E4DFEC" },
+  { key: "pink", ui: "#FCE4EC", excel: "FCE4EC" },
+  { key: "teal", ui: "#D9F2F0", excel: "D9F2F0" },
+  { key: "grey", ui: "#EDEDED", excel: "EDEDED" },
+];
+const variantColor = (key?: string) =>
+  VARIANT_GROUP_PALETTE.find(c => c.key === key) || VARIANT_GROUP_PALETTE[0];
 
 // Master Rate Sheet: one row per stock item, carrying up to 4 rate "types" so
 // a rate only has to be typed once instead of re-typed on every sheet that
@@ -934,7 +976,25 @@ export default function GeMSyncPage() {
     return map;
   }, [newLinkChecklist]);
 
-  const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
+  // "Add New Link" only needs a firm, not an inventory mapping, so an entry
+  // can exist with no mappedItemId to key on - name keeps those findable, and
+  // without it such a row would look like its entry had been deleted.
+  const newLinkEntryByBuyerFirmName = useMemo(() => {
+    const map = new Map<string, NewLinkChecklistEntry>();
+    newLinkChecklist.forEach(e => {
+      if (e.buyerId && e.firmCode && e.itemName) {
+        map.set(`${e.buyerId}::${e.firmCode}::${e.itemName.trim().toLowerCase()}`, e);
+      }
+    });
+    return map;
+  }, [newLinkChecklist]);
+
+  // Master List (gem_listings) only - a row backed by one of these has a real
+  // listing live under this firm on GeM. Deliberately separate from
+  // getRowGemSyncStatus below: a New Upload Link entry is only an intention to
+  // create a listing, which is not the same thing when a rate is about to be
+  // quoted to the client (see handleDownloadFilledExcel).
+  const getRowMasterListingStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
     if (!row.firmCode) return "none";
     if (row.mappedItemId) {
       const listing = listingByBuyerItemFirm.get(`${selectedBuyerId}::${row.mappedItemId}::${row.firmCode}`);
@@ -944,8 +1004,24 @@ export default function GeMSyncPage() {
       const listing = listingByBuyerFirmGemLink.get(`${selectedBuyerId}::${row.firmCode}::${row.gemLink.trim()}`);
       if (listing) return listing.status === "Synced" ? "synced" : "pending";
     }
+    return "none";
+  };
+
+  const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
+    const listingStatus = getRowMasterListingStatus(row);
+    if (listingStatus !== "none") return listingStatus;
+    if (!row.firmCode) return "none";
     if (row.mappedItemId) {
       const entry = newLinkEntryByBuyerFirmItem.get(`${selectedBuyerId}::${row.firmCode}::${row.mappedItemId}`);
+      if (entry) return entry.status === "Synced" ? "synced" : "pending";
+    }
+    // Entry names come from the mapped item when there is one, else the
+    // sheet's own text - try both before calling it gone.
+    const names = [row.originalName, itemsById.get(row.mappedItemId)?.itemName]
+      .map(n => (n || "").trim().toLowerCase())
+      .filter(Boolean);
+    for (const name of names) {
+      const entry = newLinkEntryByBuyerFirmName.get(`${selectedBuyerId}::${row.firmCode}::${name}`);
       if (entry) return entry.status === "Synced" ? "synced" : "pending";
     }
     return "none";
@@ -1611,6 +1687,18 @@ export default function GeMSyncPage() {
     const matchedItemObj = allItemsList.find(i => i._id === row.mappedItemId);
     const buyerObj = buyers.find(b => b.id === selectedBuyerId);
 
+    // Read off the original sheet row the same way handleAddNewLink does, so
+    // both checklists end up showing the identical line for the same item.
+    const origRow = originalExcelData[row.index] || {};
+    const sheetContext = {
+      spec: (origRow["Specification"] || origRow["specification"] || origRow["Spec"] || origRow["spec"] || "") || undefined,
+      remark: (origRow["Remark"] || origRow["remark"] || "") || undefined,
+      requiredQty: row.qty,
+      unit: (origRow["Unit"] || origRow["unit"] || "") || undefined,
+      sheetName: fileName || undefined,
+      sheetId: activeSheetId || undefined,
+    };
+
     // The real identity of a Master List row is "this buyer's copy of this
     // exact GeM product" - normally that's {buyerId, itemId, firmCode}, but
     // this row's locally-picked stock item isn't always the same item the
@@ -1641,7 +1729,7 @@ export default function GeMSyncPage() {
     if (existing) {
       const updatedListings = listings.map(lst =>
         lst.id === existing.id
-          ? { ...lst, rate: row.rate, minQty: row.minQty, gemLink: row.gemLink || "", availGemStock: row.availGemStock || 0, status: "Pending" as const }
+          ? { ...lst, ...sheetContext, rate: row.rate, minQty: row.minQty, gemLink: row.gemLink || "", availGemStock: row.availGemStock || 0, status: "Pending" as const }
           : lst
       );
       saveListings(updatedListings);
@@ -1659,7 +1747,8 @@ export default function GeMSyncPage() {
       minQty: row.minQty || 1,
       status: "Pending",
       buyerId: selectedBuyerId,
-      date: new Date().toISOString()
+      date: new Date().toISOString(),
+      ...sheetContext
     };
 
     saveListings([...listings, newListing]);
@@ -1787,6 +1876,8 @@ export default function GeMSyncPage() {
       gemLink: row.gemLink ? row.gemLink.trim() : undefined,
       minQty: row.minQty || 1,
       availGemStock: row.availGemStock || 0,
+      sheetName: fileName || undefined,
+      sheetId: activeSheetId || undefined,
       buyerId: selectedBuyerId,
       status: "Pending",
       date: new Date().toISOString()
@@ -1908,7 +1999,15 @@ export default function GeMSyncPage() {
       minQty: entry.minQty || 1,
       status: "Pending",
       buyerId: entry.buyerId,
-      date: new Date().toISOString()
+      date: new Date().toISOString(),
+      // The entry already carries the sheet line - hand it straight over so
+      // the row reads the same after it graduates into Stock Update.
+      spec: entry.spec,
+      remark: entry.remark,
+      requiredQty: entry.requiredQty,
+      unit: entry.unit,
+      sheetName: entry.sheetName,
+      sheetId: entry.sheetId
     };
     saveListings([...listings, newListing]);
 
@@ -1945,10 +2044,62 @@ export default function GeMSyncPage() {
 
     const filledData = originalExcelData.map((row, index) => {
       const mappedRow = uploadedRows.find(r => r.index === index);
-      const matchedListing = listings.find(lst =>
-        lst.buyerId === selectedBuyerId &&
-        lst.itemId === mappedRow?.mappedItemId
-      );
+
+      // Only rows that actually stand behind a quote get their numbers written
+      // out: the link was OK'd / stock-updated and its Master List entry is
+      // still there, or GeM itself is confirmed Synced. Everything else is
+      // blanked - a cancelled (Not Available) row, an untouched one, one whose
+      // checklist entry has since been deleted, and an "Add New Link" row,
+      // whose listing does not exist on GeM yet and only will once it has been
+      // uploaded and pushed across to Stock Update. Quoting a client a rate
+      // against a listing nobody can buy from is the thing being prevented.
+      const listingStatus = mappedRow ? getRowMasterListingStatus(mappedRow) : "none";
+      const isQuotable =
+        !!mappedRow &&
+        !mappedRow.notAvailable &&
+        (listingStatus === "synced" || (!!mappedRow.isCompleted && listingStatus === "pending"));
+
+      if (!isQuotable) {
+        // The client's own columns stay exactly as they came in - only the
+        // four quote columns are blanked. Comment is not one of them: a note
+        // is most useful on exactly these rows ("cancelled because...", "next
+        // week"), so it always goes out.
+        return {
+          ...row,
+          // Comment sits ahead of the quote columns - it is about the item,
+          // not about the quote, and reads next to the client's own columns.
+          "Comment": mappedRow?.comment || "",
+          "Quoted Rate (₹)": "",
+          "Seller Register Address": "",
+          "Mapped Firm": "",
+          "GeM Link": ""
+        };
+      }
+
+      // Firm has to be part of the match. The same item is routinely listed
+      // under more than one firm for the same buyer (two sheet rows quoting
+      // the same product from different firms is normal), and matching on
+      // buyer+item alone returned whichever of those listings happened to be
+      // first - so both rows could come out carrying one firm's rate, link and
+      // name. Falls back to the row's own GeM link for the same buyer+firm,
+      // the way upsertMasterListing resolves the same ambiguity.
+      const rowLink = (mappedRow?.gemLink || "").trim();
+      const matchedListing =
+        listings.find(lst =>
+          lst.buyerId === selectedBuyerId &&
+          lst.firmCode === mappedRow?.firmCode &&
+          lst.itemId === mappedRow?.mappedItemId &&
+          !!mappedRow?.mappedItemId &&
+          !!mappedRow?.firmCode
+        ) ||
+        (rowLink
+          ? listings.find(lst =>
+              lst.buyerId === selectedBuyerId &&
+              lst.firmCode === mappedRow?.firmCode &&
+              lst.gemLink &&
+              lst.gemLink.trim() === rowLink
+            )
+          : undefined);
 
       const firmCode = matchedListing?.firmCode || mappedRow?.firmCode || "";
       const company = companies.find(c => c.firmCode?.toUpperCase() === firmCode.toUpperCase());
@@ -1957,6 +2108,7 @@ export default function GeMSyncPage() {
 
       return {
         ...row,
+        "Comment": mappedRow?.comment || "",
         "Quoted Rate (₹)": matchedListing?.rate || mappedRow?.rate || "",
         "Seller Register Address": sellerRegisterAddress,
         "Mapped Firm": mappedFirmName,
@@ -1965,6 +2117,50 @@ export default function GeMSyncPage() {
     });
 
     const worksheet = XLSX.utils.json_to_sheet(filledData);
+
+    // Variant Groups: fill the CLIENT's own item-name column so the merged
+    // variants are obvious in the file itself. Which column that is differs
+    // per sheet, so it is resolved with the same fallback chain the upload
+    // parser uses rather than being hardcoded.
+    if (filledData.length > 0) {
+      const allKeys = Object.keys(filledData[0] || {});
+      const firstOriginal = originalExcelData[0] || {};
+      const itemNameKey =
+        ["Item Name", "item name", "Item", "item", "Name", "name", "Particulars", "particulars"]
+          .find(k => k in firstOriginal) || Object.keys(firstOriginal)[0];
+      const itemNameColIndex = itemNameKey ? allKeys.indexOf(itemNameKey) : -1;
+
+      if (itemNameColIndex !== -1) {
+        const itemColLetter = XLSX.utils.encode_col(itemNameColIndex);
+        originalExcelData.forEach((_, index) => {
+          const groupedRow = uploadedRows.find(r => r.index === index);
+          if (!groupedRow?.variantGroupId) return;
+          const cellRef = `${itemColLetter}${index + 2}`;
+          if (!worksheet[cellRef]) return;
+          worksheet[cellRef].s = {
+            fill: { patternType: "solid", fgColor: { rgb: variantColor(groupedRow.variantGroupColor).excel } },
+            font: { color: { rgb: "1F2937" }, bold: true }
+          };
+        });
+      }
+
+      // Comments read as an aside, not as data - italic grey and wrapped, so a
+      // long note does not stretch the column out across the whole sheet.
+      const commentColIndex = allKeys.indexOf("Comment");
+      if (commentColIndex !== -1) {
+        const commentColLetter = XLSX.utils.encode_col(commentColIndex);
+        originalExcelData.forEach((_, index) => {
+          const commentRow = uploadedRows.find(r => r.index === index);
+          if (!commentRow?.comment) return;
+          const cellRef = `${commentColLetter}${index + 2}`;
+          if (!worksheet[cellRef]) return;
+          worksheet[cellRef].s = {
+            font: { color: { rgb: "6B4E00" }, italic: true },
+            alignment: { wrapText: true, vertical: "top" }
+          };
+        });
+      }
+    }
 
     // Apply styles to Mapped Firm column for linked items
     if (filledData.length > 0) {
@@ -2061,6 +2257,24 @@ export default function GeMSyncPage() {
     });
 
     saveListings(updatedListings);
+
+    // Keep the open sheet's Requirement Mapping row in step with the revision.
+    // Without this the console keeps showing the sheet's original quote while
+    // the downloaded Excel (which prefers the listing's rate) ships the revised
+    // one - two different numbers for the same row, with nothing on screen
+    // saying which is current. Scoped to this sheet's buyer, since a listing
+    // revised for some other buyer says nothing about this sheet's quote.
+    if (selectedListingForRevision.buyerId === selectedBuyerId) {
+      const oldLink = (selectedListingForRevision.gemLink || "").trim();
+      const revisedLink = newGemLinkValue.trim();
+      setUploadedRows(prev => prev.map(r => {
+        if (r.firmCode !== selectedListingForRevision.firmCode) return r;
+        const matchesItem = !!r.mappedItemId && r.mappedItemId === selectedListingForRevision.itemId;
+        const matchesLink = !!oldLink && !!r.gemLink && r.gemLink.trim() === oldLink;
+        if (!matchesItem && !matchesLink) return r;
+        return { ...r, rate: rateVal, minQty: minQtyVal, availGemStock: availStockVal, gemLink: revisedLink };
+      }));
+    }
 
     // Log to RateHistory
     const newHistory: RateHistory = {
@@ -2187,12 +2401,185 @@ export default function GeMSyncPage() {
     }));
   };
 
+  // Per-column search over the Requirement Mapping Console. Four separate
+  // boxes rather than one global one: on a 450-row sheet "VARSH" as a firm and
+  // "VARSH" inside an item name are different questions. They narrow together
+  // (AND), each a plain case-insensitive substring match, and they stack on
+  // top of whichever Uncompleted/Completed/Not Available tab is open.
+  const [rowSearchRequirement, setRowSearchRequirement] = useState("");
+  const [rowSearchInventory, setRowSearchInventory] = useState("");
+  const [rowSearchFirm, setRowSearchFirm] = useState("");
+  const [rowSearchGemLink, setRowSearchGemLink] = useState("");
+
+  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchGemLink);
+
+  // ---- Variant Groups ----
+  // Selection is transient (never saved with the sheet) and keyed by row index
+  // so it survives paging, sorting and the searches above.
+  const [selectedRowIndices, setSelectedRowIndices] = useState<Set<number>>(new Set());
+  const [groupLinkDraft, setGroupLinkDraft] = useState("");
+
+  const toggleRowSelected = (rowIndex: number) => {
+    setSelectedRowIndices(prev => {
+      const next = new Set(prev);
+      if (next.has(rowIndex)) next.delete(rowIndex);
+      else next.add(rowIndex);
+      return next;
+    });
+  };
+  const clearRowSelection = () => setSelectedRowIndices(new Set());
+
+  // Fields a group shares. The group exists precisely because its rows are
+  // quoted against one GeM listing, so link, firm, rate, min qty and stock
+  // move together. Qty is deliberately NOT here - every row keeps its own,
+  // and only a merged display total is shown next to it.
+  const GROUP_SHARED_FIELDS: (keyof UploadedRow)[] = ["gemLink", "firmCode", "rate", "minQty", "availGemStock"];
+
+  // Single write path for row edits: the full patch lands on the edited row,
+  // and only the shared subset spreads to its group siblings (so picking a
+  // different inventory item for one variant never overwrites the others').
+  const patchRow = (rowIndex: number, patch: Partial<UploadedRow>) => {
+    setUploadedRows(prev => {
+      const groupId = prev.find(r => r.index === rowIndex)?.variantGroupId;
+      const sharedPatch: Partial<UploadedRow> = {};
+      GROUP_SHARED_FIELDS.forEach(f => {
+        if (f in patch) (sharedPatch as Record<string, unknown>)[f] = (patch as Record<string, unknown>)[f];
+      });
+      const hasShared = Object.keys(sharedPatch).length > 0;
+      return prev.map(r => {
+        if (r.index === rowIndex) return { ...r, ...patch };
+        if (groupId && hasShared && r.variantGroupId === groupId) return { ...r, ...sharedPatch };
+        return r;
+      });
+    });
+  };
+
+  const variantGroups = useMemo(() => {
+    const map = new Map<string, { color: string; rows: UploadedRow[] }>();
+    uploadedRows.forEach(r => {
+      if (!r.variantGroupId) return;
+      if (!map.has(r.variantGroupId)) {
+        map.set(r.variantGroupId, { color: r.variantGroupColor || VARIANT_GROUP_PALETTE[0].key, rows: [] });
+      }
+      map.get(r.variantGroupId)!.rows.push(r);
+    });
+    return map;
+  }, [uploadedRows]);
+
+  // Merged qty for a group, totalled PER UNIT - adding 50 NOS to 20 METER
+  // would be a meaningless number, so those stay side by side ("50 NOS + 20 METER").
+  const groupQtyLabel = (groupId: string): string => {
+    const group = variantGroups.get(groupId);
+    if (!group) return "";
+    const byUnit = new Map<string, number>();
+    group.rows.forEach(r => {
+      const orig = originalExcelData[r.index] || {};
+      const unit = String(orig["Unit"] || orig["unit"] || "").trim().toUpperCase();
+      byUnit.set(unit, (byUnit.get(unit) || 0) + (Number(r.qty) || 0));
+    });
+    return Array.from(byUnit.entries())
+      .map(([unit, qty]) => `${qty}${unit ? ` ${unit}` : ""}`)
+      .join(" + ");
+  };
+
+  const handleCreateVariantGroup = () => {
+    const rows = uploadedRows.filter(r => selectedRowIndices.has(r.index));
+    if (rows.length < 2) {
+      alert("Variant group ke liye kam se kam 2 rows select karo.");
+      return;
+    }
+
+    // Take the first colour no OTHER group is already using, so two groups
+    // never look alike until there are more groups than colours.
+    const usedColors = new Set(
+      uploadedRows
+        .filter(r => r.variantGroupColor && !selectedRowIndices.has(r.index))
+        .map(r => r.variantGroupColor)
+    );
+    const color = (VARIANT_GROUP_PALETTE.find(c => !usedColors.has(c.key)) ||
+      VARIANT_GROUP_PALETTE[variantGroups.size % VARIANT_GROUP_PALETTE.length]).key;
+
+    // Seed each shared field from whichever selected row actually has it -
+    // the row carrying the link is often not the one carrying the rate.
+    const linkSeed = groupLinkDraft.trim() || (rows.find(r => (r.gemLink || "").trim())?.gemLink || "").trim();
+    const firmSeed = rows.find(r => r.firmCode)?.firmCode || "";
+    const rateSeed = rows.find(r => (r.rate || 0) > 0)?.rate || 0;
+    const minQtySeed = rows.find(r => (r.minQty || 0) > 1)?.minQty || 1;
+    const stockSeed = rows.find(r => (r.availGemStock || 0) > 0)?.availGemStock || 0;
+
+    const groupId = "vg_" + Date.now();
+    setUploadedRows(prev => prev.map(r =>
+      selectedRowIndices.has(r.index)
+        ? {
+            ...r,
+            variantGroupId: groupId,
+            variantGroupColor: color,
+            gemLink: linkSeed,
+            firmCode: firmSeed,
+            rate: rateSeed,
+            minQty: minQtySeed,
+            availGemStock: stockSeed,
+          }
+        : r
+    ));
+    setGroupLinkDraft("");
+    clearRowSelection();
+  };
+
+  const handleUngroupVariantRows = () => {
+    const groupIds = new Set(
+      uploadedRows
+        .filter(r => selectedRowIndices.has(r.index) && r.variantGroupId)
+        .map(r => r.variantGroupId)
+    );
+    if (groupIds.size === 0) {
+      alert("Selected rows me se koi bhi kisi variant group me nahi hai.");
+      return;
+    }
+    // Dissolve the WHOLE group, not just the selected rows - half a group
+    // would keep sharing edits while no longer looking grouped.
+    setUploadedRows(prev => prev.map(r =>
+      r.variantGroupId && groupIds.has(r.variantGroupId)
+        ? { ...r, variantGroupId: undefined, variantGroupColor: undefined }
+        : r
+    ));
+    clearRowSelection();
+  };
+  const clearRowSearches = () => {
+    setRowSearchRequirement("");
+    setRowSearchInventory("");
+    setRowSearchFirm("");
+    setRowSearchGemLink("");
+  };
+
   const filteredUploadedRows = useMemo(() => {
-    if (mappingStatusFilter === "all") return uploadedRows;
-    if (mappingStatusFilter === "not_available") return uploadedRows.filter(row => !!row.notAvailable);
-    if (mappingStatusFilter === "completed") return uploadedRows.filter(row => !!row.isCompleted);
-    return uploadedRows.filter(row => !row.isCompleted && !row.notAvailable);
-  }, [uploadedRows, mappingStatusFilter]);
+    const byStatus =
+      mappingStatusFilter === "all" ? uploadedRows :
+      mappingStatusFilter === "not_available" ? uploadedRows.filter(row => !!row.notAvailable) :
+      mappingStatusFilter === "completed" ? uploadedRows.filter(row => !!row.isCompleted) :
+      uploadedRows.filter(row => !row.isCompleted && !row.notAvailable);
+
+    const norm = (s: string) => s.trim().toLowerCase();
+    const reqQ = norm(rowSearchRequirement);
+    const invQ = norm(rowSearchInventory);
+    const firmQ = norm(rowSearchFirm);
+    const linkQ = norm(rowSearchGemLink);
+    if (!reqQ && !invQ && !firmQ && !linkQ) return byStatus;
+
+    return byStatus.filter(row => {
+      if (reqQ && !(row.originalName || "").toLowerCase().includes(reqQ)) return false;
+      if (invQ) {
+        const item = itemsById.get(row.mappedItemId);
+        if (!`${item?.sku || ""} ${item?.itemName || ""}`.toLowerCase().includes(invQ)) return false;
+      }
+      if (firmQ) {
+        const firmName = companies.find(c => c.firmCode === row.firmCode)?.firmName || "";
+        if (!`${row.firmCode || ""} ${firmName}`.toLowerCase().includes(firmQ)) return false;
+      }
+      if (linkQ && !(row.gemLink || "").toLowerCase().includes(linkQ)) return false;
+      return true;
+    });
+  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchGemLink, itemsById, companies]);
 
   // Renders only this many rows at a time - a 200+ row sheet rendering all
   // at once (each with its own inventory-search datalist, Quick Fill chips,
@@ -2201,7 +2588,7 @@ export default function GeMSyncPage() {
   const [visibleRowCount, setVisibleRowCount] = useState(ROWS_PAGE_SIZE);
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
-  }, [mappingStatusFilter, activeSheetId]);
+  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchGemLink]);
 
   // GeM Link column sort toggle: "blankFirst" groups every row with no GeM
   // Link at the top in one go (so missing links are easy to spot/fill),
@@ -2546,6 +2933,49 @@ export default function GeMSyncPage() {
                       <p className="text-[10px] text-[var(--gem-text-secondary)]">Map each row to inventory and pick which Firm handles it.</p>
                     </div>
 
+                    {/* One box per column, matching the table's own column
+                        order, so a search sits over the thing it searches. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={rowSearchRequirement}
+                        onChange={(e) => setRowSearchRequirement(e.target.value)}
+                        placeholder="Requirement..."
+                        className="w-[140px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={rowSearchInventory}
+                        onChange={(e) => setRowSearchInventory(e.target.value)}
+                        placeholder="Inventory mapping..."
+                        className="w-[160px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={rowSearchFirm}
+                        onChange={(e) => setRowSearchFirm(e.target.value)}
+                        placeholder="Firm..."
+                        className="w-[110px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={rowSearchGemLink}
+                        onChange={(e) => setRowSearchGemLink(e.target.value)}
+                        placeholder="GeM link..."
+                        className="w-[150px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      {anyRowSearchActive && (
+                        <button
+                          type="button"
+                          onClick={clearRowSearches}
+                          title="Clear all searches"
+                          className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--gem-card)] hover:bg-rose-50 text-rose-600 border border-[var(--gem-border)] hover:border-rose-300 transition-colors"
+                        >
+                          <FiX size={12} />
+                        </button>
+                      )}
+                    </div>
+
                     {mappingStatusFilter === "all" && (
                       <button
                         onClick={handleDownloadFilledExcel}
@@ -2556,11 +2986,68 @@ export default function GeMSyncPage() {
                     )}
                   </div>
 
+                  {/* Variant Group bar - only while rows are selected, so it
+                      never takes up room during ordinary mapping work. */}
+                  {selectedRowIndices.size > 0 && (
+                    <div className="px-3 py-2 border-b border-[var(--gem-border)] bg-blue-50/60 flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-blue-800">
+                        {selectedRowIndices.size} row{selectedRowIndices.size === 1 ? "" : "s"} selected
+                      </span>
+                      <input
+                        type="text"
+                        value={groupLinkDraft}
+                        onChange={(e) => setGroupLinkDraft(e.target.value)}
+                        placeholder="GeM link for the group (blank = jo pehle se bhari hai)"
+                        className="flex-1 min-w-[220px] bg-white border border-blue-200 rounded-lg py-1.5 px-2.5 text-[11px] text-slate-800 focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreateVariantGroup}
+                        title="Selected rows ko ek hi GeM listing ke against group kar do - link, firm, rate aur min qty share honge, qty ka merged total alag dikhega"
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5"
+                      >
+                        <FiLink size={12} /> Group as one GeM link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUngroupVariantRows}
+                        title="Selected rows ka poora group tod do"
+                        className="bg-[var(--gem-card)] hover:bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all"
+                      >
+                        Ungroup
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearRowSelection}
+                        className="text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-800 py-1.5 px-2"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+
                   {/* Excel Sheet Table */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] font-black uppercase tracking-wider border-b border-[var(--gem-border)] text-[11px]">
+                          <th className="py-2 px-2.5 text-center w-8 min-w-[32px]">
+                            <input
+                              type="checkbox"
+                              title="Select every row currently visible"
+                              checked={visibleUploadedRows.length > 0 && visibleUploadedRows.every(r => selectedRowIndices.has(r.index))}
+                              onChange={(e) => {
+                                const visible = visibleUploadedRows.map(r => r.index);
+                                setSelectedRowIndices(prev => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) visible.forEach(i => next.add(i));
+                                  else visible.forEach(i => next.delete(i));
+                                  return next;
+                                });
+                              }}
+                              className="w-3.5 h-3.5 rounded border-[var(--gem-border)] text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                            />
+                          </th>
                           <th className="py-2 px-2.5 text-center w-8 min-w-[32px]">#</th>
                           <th className="py-2 px-2.5 w-[210px] min-w-[210px]">Requirement</th>
                           <th className="py-2 px-2.5 text-center w-16 min-w-[64px]">Qty</th>
@@ -2596,7 +3083,7 @@ export default function GeMSyncPage() {
                       <tbody className="divide-y divide-[var(--gem-border)]/60">
                         {filteredUploadedRows.length === 0 && (
                           <tr>
-                            <td colSpan={10} className="py-10 text-center text-[var(--gem-text-secondary)] text-xs">
+                            <td colSpan={11} className="py-10 text-center text-[var(--gem-text-secondary)] text-xs">
                               {mappingStatusFilter === "completed"
                                 ? "No rows linked yet."
                                 : mappingStatusFilter === "not_available"
@@ -2608,6 +3095,9 @@ export default function GeMSyncPage() {
                         {visibleUploadedRows.map((row) => {
                           const isMatched = !!row.mappedItemId;
                           const mappedItem = itemsById.get(row.mappedItemId);
+                          // Drives all three end-of-row markers below, so it is
+                          // resolved once here instead of per marker.
+                          const gemSyncStatus = getRowGemSyncStatus(row);
 
                           // Extract optional original row fields
                           const origRow = originalExcelData[row.index] || {};
@@ -2624,18 +3114,63 @@ export default function GeMSyncPage() {
                           return (
                             <tr key={row.index} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
 
+                              <td className="py-2 px-2.5 text-center min-w-[32px]">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedRowIndices.has(row.index)}
+                                  onChange={() => toggleRowSelected(row.index)}
+                                  className="w-3.5 h-3.5 rounded border-[var(--gem-border)] text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                                />
+                              </td>
+
                               <td className="py-2 px-2.5 text-center text-[var(--gem-text-secondary)] font-mono text-xs min-w-[32px]">{row.index + 1}</td>
 
-                              <td className="py-2 px-2.5 w-[210px] min-w-[210px] leading-tight">
-                                <span className="font-bold text-[var(--gem-text-primary)] block text-xs">{row.originalName}</span>
-                                {specification && <span className="text-[10px] text-[var(--gem-text-secondary)] block"><b>Spec:</b> {specification}</span>}
-                                {remark && <span className="text-[10px] text-[var(--gem-text-secondary)] block"><b>Remark:</b> {remark}</span>}
-                                {row.rate > 0 && <span className="text-[10px] text-[var(--gem-text-secondary)] block">Orig. Rate: ₹{row.rate}</span>}
+                              {/* Grouped rows carry their group's tint here, the same hex
+                                  the Excel item-name cell gets - explicit dark text, since
+                                  these light fills sit on a dark card in dark mode. */}
+                              <td
+                                className="py-2 px-2.5 w-[210px] min-w-[210px] leading-tight"
+                                style={row.variantGroupId ? {
+                                  backgroundColor: variantColor(row.variantGroupColor).ui,
+                                  borderLeft: "3px solid rgba(0,0,0,0.18)",
+                                  color: "#0f172a",
+                                } : undefined}
+                              >
+                                <span className={`font-bold block text-xs ${row.variantGroupId ? "" : "text-[var(--gem-text-primary)]"}`}>{row.originalName}</span>
+                                {row.variantGroupId && (
+                                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-700 bg-white/70 border border-black/10 rounded px-1 py-0.5 inline-block mt-0.5">
+                                    Variant group · {variantGroups.get(row.variantGroupId)?.rows.length || 0} rows
+                                  </span>
+                                )}
+                                {specification && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}><b>Spec:</b> {specification}</span>}
+                                {remark && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}><b>Remark:</b> {remark}</span>}
+                                {row.rate > 0 && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}>Orig. Rate: ₹{row.rate}</span>}
+                                <input
+                                  type="text"
+                                  value={row.comment || ""}
+                                  onChange={(e) => patchRow(row.index, { comment: e.target.value })}
+                                  placeholder="Comment..."
+                                  title="Is item ke liye comment - Excel me apne alag Comment column me jayega"
+                                  className={`mt-1 w-full rounded py-1 px-1.5 text-[10px] focus:outline-none focus:border-blue-500 border ${
+                                    row.comment
+                                      ? "bg-amber-50 border-amber-300 text-slate-800 font-semibold"
+                                      : "bg-[var(--gem-table-header)] border-[var(--gem-border)] text-[var(--gem-text-primary)]"
+                                  }`}
+                                />
                               </td>
 
                               <td className="py-2 px-2.5 text-center font-mono font-bold text-[var(--gem-text-primary)] text-xs w-16 min-w-[64px]">
                                 <div>{row.qty || "—"}</div>
                                 {unit && <div className="text-[10px] text-[var(--gem-text-secondary)] font-sans">{unit}</div>}
+                                {row.variantGroupId && (
+                                  <div
+                                    className="text-[9px] font-sans font-black text-slate-700 mt-1 rounded px-1 py-0.5 border border-black/10"
+                                    style={{ backgroundColor: variantColor(row.variantGroupColor).ui }}
+                                    title="Is variant group ki merged quantity"
+                                  >
+                                    Σ {groupQtyLabel(row.variantGroupId)}
+                                  </div>
+                                )}
                               </td>
 
                               <td className="py-2 px-2.5 w-[280px] min-w-[280px]">
@@ -2678,15 +3213,14 @@ export default function GeMSyncPage() {
                                             itemListings.find(lst => lst.firmCode === row.firmCode) ||
                                             itemListings[0];
                                           if (matchedListing) {
-                                            setUploadedRows(prev => prev.map(r => r.index === row.index ? {
-                                              ...r,
+                                            patchRow(row.index, {
                                               mappedItemId: match._id,
                                               firmCode: matchedListing.firmCode,
                                               rate: matchedListing.rate,
                                               availGemStock: matchedListing.availGemStock || 0,
                                               minQty: matchedListing.minQty || 1,
                                               gemLink: matchedListing.gemLink || ""
-                                            } : r));
+                                            });
                                           } else {
                                             setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: match._id } : r));
                                           }
@@ -2732,14 +3266,13 @@ export default function GeMSyncPage() {
                                                 key={prev.id}
                                                 type="button"
                                                 onClick={() => {
-                                                  setUploadedRows(prevRows => prevRows.map(r => r.index === row.index ? {
-                                                    ...r,
+                                                  patchRow(row.index, {
                                                     firmCode: prev.firmCode,
                                                     rate: prev.rate,
                                                     availGemStock: prev.availGemStock || 0,
                                                     minQty: prev.minQty || 1,
                                                     gemLink: prev.gemLink || ""
-                                                  } : r));
+                                                  });
                                                 }}
                                                 className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 hover:border-blue-300 text-[9px] py-0.5 px-1.5 rounded font-bold transition-all"
                                               >
@@ -2833,7 +3366,7 @@ export default function GeMSyncPage() {
                               <td className="py-2 px-2.5 w-[130px] min-w-[130px]">
                                 <select
                                   value={row.firmCode}
-                                  onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, firmCode: e.target.value } : r))}
+                                  onChange={(e) => patchRow(row.index, { firmCode: e.target.value })}
                                   className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2 focus:outline-none focus:border-blue-500 w-full"
                                 >
                                   <option value="">Select Firm...</option>
@@ -2848,7 +3381,7 @@ export default function GeMSyncPage() {
                                   <input
                                     type="number"
                                     value={row.rate || ""}
-                                    onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, rate: parseFloat(e.target.value) || 0 } : r))}
+                                    onChange={(e) => patchRow(row.index, { rate: parseFloat(e.target.value) || 0 })}
                                     className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
                                     placeholder="0.00"
                                   />
@@ -2869,7 +3402,7 @@ export default function GeMSyncPage() {
                                 <input
                                   type="number"
                                   value={row.availGemStock || ""}
-                                  onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, availGemStock: parseInt(e.target.value) || 0 } : r))}
+                                  onChange={(e) => patchRow(row.index, { availGemStock: parseInt(e.target.value) || 0 })}
                                   className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="0"
                                 />
@@ -2879,7 +3412,7 @@ export default function GeMSyncPage() {
                                 <input
                                   type="number"
                                   value={row.minQty}
-                                  onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, minQty: parseInt(e.target.value) || 1 } : r))}
+                                  onChange={(e) => patchRow(row.index, { minQty: parseInt(e.target.value) || 1 })}
                                   className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="1"
                                 />
@@ -2889,7 +3422,7 @@ export default function GeMSyncPage() {
                                 <input
                                   type="text"
                                   value={row.gemLink}
-                                  onChange={(e) => setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, gemLink: e.target.value } : r))}
+                                  onChange={(e) => patchRow(row.index, { gemLink: e.target.value })}
                                   className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
                                   placeholder="GeM Link..."
                                 />
@@ -2953,17 +3486,41 @@ export default function GeMSyncPage() {
                                       <FiSlash size={12} />
                                     </button>
                                   )}
-                                  {row.isCompleted && (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleRowCompleted(row.index)}
-                                      title="Marked Completed - click to undo"
-                                      className="w-7 h-7 flex items-center justify-center rounded bg-emerald-100 text-emerald-700 border border-emerald-300 transition-colors"
-                                    >
-                                      <FiCheck size={12} />
-                                    </button>
+                                  {/* A row goes green only while the Sync Checklist entry its
+                                      action created still exists. Delete that entry from Stock
+                                      Update (or from the New Upload Link checklist) and the tick
+                                      would otherwise keep claiming the row is done, with nothing
+                                      behind it - so it flips to a redo marker instead, saying the
+                                      row has to be set again. */}
+                                  {/* One marker per row, not two. "Completed" only ever means
+                                      an action was taken here; once the Sync Checklist confirms
+                                      the listing is actually Synced on GeM, that is the stronger
+                                      fact, so the violet link replaces the green tick rather than
+                                      sitting next to it. And if the checklist entry the action
+                                      created has since been deleted, neither is true any more -
+                                      the row flips to a redo marker saying it must be set again. */}
+                                  {row.isCompleted && gemSyncStatus !== "synced" && (
+                                    gemSyncStatus === "none" ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRowCompleted(row.index)}
+                                        title="Is row ki Sync Checklist entry ab maujood nahi hai (delete ho chuki hai) - ise dobara set karna padega. Click karke wapas Uncompleted me bhejo."
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-400 hover:bg-amber-200 transition-colors"
+                                      >
+                                        <FiRotateCcw size={12} />
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRowCompleted(row.index)}
+                                        title="Marked Completed - click to undo"
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-emerald-100 text-emerald-700 border border-emerald-300 transition-colors"
+                                      >
+                                        <FiCheck size={12} />
+                                      </button>
+                                    )
                                   )}
-                                  {getRowGemSyncStatus(row) === "synced" && (
+                                  {gemSyncStatus === "synced" && (
                                     <span
                                       title="Confirmed synced to GeM's own catalogue (Sync Checklist entry is marked Synced)"
                                       className="w-7 h-7 flex items-center justify-center rounded bg-violet-100 text-violet-700 border border-violet-300"
@@ -3098,7 +3655,9 @@ export default function GeMSyncPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--gem-border)]/40">
-                            {displayListings.map(lst => (
+                            {displayListings.map(lst => {
+                              const listingItem = itemsById.get(lst.itemId);
+                              return (
                               <tr key={lst.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
                                 <td className="py-3.5 px-4 text-center">
                                   <input
@@ -3111,6 +3670,20 @@ export default function GeMSyncPage() {
 
                                 <td className="py-3.5 px-4">
                                   <span className="font-bold text-[var(--gem-text-primary)]">{lst.itemName}</span>
+                                  {/* Same sheet-context line the New Upload Link checklist
+                                      shows - only renders what this listing actually carries,
+                                      so listings created before it was recorded stay clean. */}
+                                  <span className="block text-[10px] text-[var(--gem-text-secondary)] mt-0.5 leading-relaxed">
+                                    {lst.spec && <span className="mr-2"><b>Spec:</b> {lst.spec}</span>}
+                                    {lst.remark && <span className="mr-2"><b>Remark:</b> {lst.remark}</span>}
+                                    {lst.requiredQty !== undefined && (
+                                      <span className="mr-2"><b>Req:</b> {lst.requiredQty}{lst.unit ? ` ${lst.unit}` : ""}</span>
+                                    )}
+                                    {listingItem?.sku && <span className="mr-2">{listingItem.sku}</span>}
+                                    {lst.sheetName && (
+                                      <span className="text-blue-600"><b>Sheet:</b> {lst.sheetName}</span>
+                                    )}
+                                  </span>
                                 </td>
 
                                 <td className="py-3.5 px-4">
@@ -3179,7 +3752,8 @@ export default function GeMSyncPage() {
                                   </div>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -3267,7 +3841,10 @@ export default function GeMSyncPage() {
                                       {entry.spec && <span className="mr-2"><b>Spec:</b> {entry.spec}</span>}
                                       {entry.remark && <span className="mr-2"><b>Remark:</b> {entry.remark}</span>}
                                       <span className="mr-2"><b>Req:</b> {entry.requiredQty}{entry.unit ? ` ${entry.unit}` : ""}</span>
-                                      {linkedItem && <span>{linkedItem.sku}</span>}
+                                      {linkedItem && <span className="mr-2">{linkedItem.sku}</span>}
+                                      {entry.sheetName && (
+                                        <span className="text-blue-600"><b>Sheet:</b> {entry.sheetName}</span>
+                                      )}
                                     </span>
                                   </td>
 
