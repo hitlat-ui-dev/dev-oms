@@ -1,4 +1,4 @@
-// lib/triggerGemSubmit.ts
+﻿// lib/triggerGemSubmit.ts
 //
 // Call this from the OMS webapp when the "Submit to GeM" button is pressed
 // (e.g. from the Generate Bill success state). The extension's
@@ -163,6 +163,52 @@ export function triggerGemCatalogueUpdate(params: UpdateGemCatalogueItemParams):
     chromeRuntime.sendMessage(
       GEM_EXTENSION_ID,
       { type: "UPDATE_GEM_CATALOGUE_ITEM", payload: { ...params, omsOrigin: window.location.origin } },
+      (response: any) => {
+        if (chromeRuntime.lastError) {
+          reject(new Error(chromeRuntime.lastError.message));
+        } else if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || "Unknown error"));
+        }
+      }
+    );
+  });
+}
+
+export interface PublishGemCatalogueItemParams {
+  gemUserId: string;
+  gemPassword: string;
+  gemMailId?: string;
+  firmCode: string;
+  /** The marketplace product page to create our own offering against (mkp.gem.gov.in/.../p-...-cat.html) */
+  productUrl: string;
+  newRate: number;
+  newStock: number;
+  newMinQty: number;
+  /** Delivery state to tick on the offering form */
+  state: string;
+  /** the gem_new_link_checklist entry's own "id" - so the extension can graduate it once published */
+  entryId: string;
+}
+
+// New Upload Link's "Publish to GeM" button. Unlike triggerGemCatalogueUpdate
+// (which edits an offering this firm already has), this creates one that does
+// not exist yet: SELL THIS ITEM on the marketplace product page -> pair with
+// the existing gem_catalog_id -> fill rate/stock/min qty + delivery state ->
+// undertaking -> terms -> VALIDATE CATALOG AND PUBLISH -> OTP. See
+// content-gem.js's publish steps for the actual page-by-page automation.
+export function triggerGemCataloguePublish(params: PublishGemCatalogueItemParams): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chromeRuntime = (window as any).chrome?.runtime;
+    if (!chromeRuntime?.sendMessage) {
+      reject(new Error("Extension detect nahi hua — install hai ya nahi check karo."));
+      return;
+    }
+
+    chromeRuntime.sendMessage(
+      GEM_EXTENSION_ID,
+      { type: "PUBLISH_GEM_CATALOGUE_ITEM", payload: { ...params, omsOrigin: window.location.origin } },
       (response: any) => {
         if (chromeRuntime.lastError) {
           reject(new Error(chromeRuntime.lastError.message));

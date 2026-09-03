@@ -1,4 +1,4 @@
-// background/background.js
+﻿// background/background.js
 // MV3 service worker — extension ka "brain"
 //
 // Har firm ka ALAG Gmail account ho sakta hai OTP ke liye, isliye
@@ -106,6 +106,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     return true;
   }
 
+  if (message.type === "PUBLISH_GEM_CATALOGUE_ITEM") {
+    handlePublishGemCatalogueItem(message.payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "NOTIFY_OMS") {
     // content-gem.js can't reach the OMS tab directly (different origin,
     // no shared context) - this injects a visible banner into it instead,
@@ -147,6 +154,57 @@ async function handleUpdateGemCatalogueItem(payload) {
   // skip the whole login step for it, instead of always forcing a fresh login.
   const tab = await chrome.tabs.create({ url: CATALOGUE_INDEX_URL, active: true });
   return { tabId: tab.id, message: "GeM catalogue tab khola gaya - pehle se login hai to seedha update shuru hoga, warna login step aayega." };
+}
+
+// New Upload Link's "Publish to GeM" button. Same pending-state machine as
+// handleUpdateGemCatalogueItem above (content-gem.js drives it across every
+// page navigation), just a different mode: this firm has no offering for the
+// product yet, so instead of searching its own catalogue it opens the
+// marketplace product page and creates one - SELL THIS ITEM -> pair with the
+// existing gem_catalog_id -> rate/stock/min qty + delivery state -> terms ->
+// VALIDATE CATALOG AND PUBLISH -> OTP. Reuses pendingCatalogueUpdate rather
+// than a second storage key so the whole login half of the flow (username +
+// captcha, password + OTP, already-logged-in detection) stays one code path.
+async function handlePublishGemCatalogueItem(payload) {
+  const { gemUserId, gemPassword, gemMailId, firmCode, productUrl, newRate, newStock, newMinQty, state, entryId, omsOrigin } = payload || {};
+  if (!gemUserId || !gemPassword) throw new Error("gemUserId aur gemPassword zaroori hain.");
+  if (!productUrl) throw new Error("productUrl (GeM marketplace product link) zaroori hai.");
+  if (!entryId || !omsOrigin) throw new Error("entryId aur omsOrigin zaroori hain (checklist row ko graduate karne ke liye).");
+
+  await chrome.storage.local.set({
+    pendingCatalogueUpdate: {
+      mode: "publish",
+      gemUserId, gemPassword, gemMailId: gemMailId || "",
+      firmCode: firmCode || "", productUrl,
+      newRate, newStock, newMinQty,
+      state: state || "Gujarat",
+      entryId, omsOrigin,
+      step: "LOGIN_USERNAME",
+      startedAt: Date.now(),
+    },
+  });
+
+  // Same reasoning as handleUpdateGemCatalogueItem: opening the catalogue
+  // index (not the SSO form) lets detectAlreadyLoggedIn() skip login when a
+  // session is already active. The product page itself is opened by the
+  // PUBLISH_OPEN_PRODUCT step once login is settled.
+  const tab = await chrome.tabs.create({ url: CATALOGUE_INDEX_URL, active: true });
+  return { tabId: tab.id, message: "GeM tab khola gaya - login check karke product page par jaake catalogue publish shuru hoga." };
+}
+
+// Called from content-gem.js once a brand-new catalogue is actually published
+// on GeM - graduates the New Upload Link entry into a real Master List
+// listing, the same thing "Push to Stock" does by hand.
+async function markNewLinkPublished(omsOrigin, entryId) {
+  const res = await fetch(`${omsOrigin}/api/gem-sync?action=mark_new_link_published`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: entryId }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `OMS publish-mark fail hua (status ${res.status}).`);
+  }
 }
 
 // Called from content-gem.js once Rate/Stock/Min Qty are updated on GeM's
@@ -379,6 +437,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "CLEAR_PENDING_CATALOGUE_UPDATE") {
     chrome.storage.local.remove("pendingCatalogueUpdate").then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === "MARK_NEW_LINK_PUBLISHED") {
+    // payload: { omsOrigin, entryId } - sent once content-gem.js finishes the
+    // publish flow (OTP verified), so the New Upload Link row graduates.
+    markNewLinkPublished(message.omsOrigin, message.entryId)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
 

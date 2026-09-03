@@ -1,4 +1,4 @@
-// content/content-gem.js
+﻿// content/content-gem.js
 // Runs on fulfilment.gem.gov.in. Drives the real multi-step "raise invoice"
 // flow, mapped out live on 20-Aug-2026 against a real order:
 //
@@ -232,26 +232,58 @@
 
     try {
       const step = data.step || "LOGIN_USERNAME";
+
+      // Two modes share this whole state machine and diverge only once login
+      // is settled: "update" edits an offering this firm already has (Catalogue
+      // Search -> Product ID -> Rate/Stock), "publish" creates one that does not
+      // exist yet (marketplace product page -> SELL THIS ITEM -> ... -> OTP).
+      // Keeping them on one pendingCatalogueUpdate record means the login half
+      // (username+captcha, password+OTP, already-logged-in detection) is one
+      // code path, not two that drift apart.
+      const afterLogin = async (needsNavigation) => {
+        if (data.mode === "publish") {
+          console.log("[GeM Bill Auto-Submit] Login settled - product page par ja raha hu:", data.productUrl);
+          await setCatalogueStep(data, "PUBLISH_SELL_ITEM");
+          window.location.href = data.productUrl;
+          return;
+        }
+        await setCatalogueStep(data, "CATALOGUE_SEARCH");
+        if (needsNavigation) {
+          window.location.href = CATALOGUE_INDEX_URL;
+        } else {
+          await catalogueSearchStep(data);
+        }
+      };
+
       if (step === "LOGIN_USERNAME") {
         if (await detectAlreadyLoggedIn()) {
-          console.log("[GeM Bill Auto-Submit] GeM me pehle se login hai (session already active) - login skip karke seedha Catalogue Search par ja raha hu.");
-          await setCatalogueStep(data, "CATALOGUE_SEARCH");
-          await catalogueSearchStep(data);
+          console.log("[GeM Bill Auto-Submit] GeM me pehle se login hai (session already active) - login skip kar raha hu.");
+          // Already sitting on the catalogue index, so update mode needs no navigation.
+          await afterLogin(false);
         } else {
           await catalogueLoginUsernameStep(data);
         }
       } else if (step === "LOGIN_PASSWORD") {
         await catalogueLoginPasswordStep(data);
       } else if (step === "CATALOGUE_NAV") {
-        console.log("[GeM Bill Auto-Submit] Login ho gaya, Catalogue Search par ja raha hu...");
-        await setCatalogueStep(data, "CATALOGUE_SEARCH");
-        window.location.href = CATALOGUE_INDEX_URL;
+        console.log("[GeM Bill Auto-Submit] Login ho gaya, aage badh raha hu...");
+        await afterLogin(true);
       } else if (step === "CATALOGUE_SEARCH") {
         await catalogueSearchStep(data);
       } else if (step === "RATE_UPDATE") {
         await catalogueRateUpdateStep(data);
       } else if (step === "STOCK_UPDATE") {
         await catalogueStockUpdateStep(data);
+      } else if (step === "PUBLISH_SELL_ITEM") {
+        await publishSellItemStep(data);
+      } else if (step === "PUBLISH_PAIR_CONFIRM") {
+        await publishPairConfirmStep(data);
+      } else if (step === "PUBLISH_OFFERING") {
+        await publishOfferingStep(data);
+      } else if (step === "PUBLISH_TERMS") {
+        await publishTermsStep(data);
+      } else if (step === "PUBLISH_OTP") {
+        await publishOtpStep(data);
       }
     } catch (err) {
       console.error("[GeM Bill Auto-Submit] Catalogue update automation fail hua:", err);
@@ -425,12 +457,32 @@
     el.dispatchEvent(new Event("blur", { bubbles: true }));
   }
 
-  function clickButtonByText(textRegex) {
-    const btn = Array.from(document.querySelectorAll("button, a.btn, input[type=submit]")).find(
+  function findButtonByText(textRegex) {
+    return Array.from(document.querySelectorAll("button, a.btn, input[type=submit]")).find(
       (b) => isVisible(b) && textRegex.test((b.textContent || b.value || "").trim())
     );
+  }
+
+  function clickButtonByText(textRegex) {
+    const btn = findButtonByText(textRegex);
     if (btn) btn.click();
     return !!btn;
+  }
+
+  function escapeRegex(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Pushes a visible banner onto the OMS tab. Every "do this bit by hand"
+  // message in the publish flow goes through here as well as the console -
+  // the person is watching the GeM tab, not DevTools.
+  async function notifyOms(data, text) {
+    if (!data?.omsOrigin) return;
+    try {
+      await chrome.runtime.sendMessage({ type: "NOTIFY_OMS", omsOrigin: data.omsOrigin, text });
+    } catch (err) {
+      console.warn("[GeM Bill Auto-Submit] OMS banner bhejne me error:", err.message);
+    }
   }
 
   // Finds a checkbox by its nearby label text and ticks it (a real .click(),
@@ -600,6 +652,220 @@
       console.log("[GeM Bill Auto-Submit] OMS Sync Checklist me is item ko Synced mark kar diya.");
     } catch (err) {
       console.warn("[GeM Bill Auto-Submit] OMS ko sync-mark bhejne me error:", err.message);
+    }
+
+    await chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+  }
+
+  // ===== New Upload Link "Publish to GeM": create a brand-new offering =====
+  // Built from the step-by-step walkthrough + screenshots of a real run, not
+  // from DevTools inspection, so every step degrades to a clear "do this bit
+  // by hand" banner on the OMS tab rather than failing silently. The flow is:
+  //   mkp product page -> SELL THIS ITEM
+  //   admin-mkp catalog/new -> "pair with existing gem_catalog_id?" -> Ok
+  //   offering form -> rate / stock / min qty / delivery state / undertaking
+  //   -> SAVE / PROCEED -> REVIEW TERMS -> VALIDATE CATALOG AND PUBLISH
+  //   -> OTP (fetched from the firm's Gmail) -> Verify OTP & PUBLISH
+
+  // mkp.gem.gov.in/.../p-<id>-cat.html - the public product page. "SELL THIS
+  // ITEM" starts a new offering against this existing catalogue and is a real
+  // cross-origin navigation to admin-mkp, so the step is stored BEFORE the
+  // click (a click-then-store race loses the step on fast navigations).
+  async function publishSellItemStep(data) {
+    const sellBtn = await waitForElementMatching(() => findButtonByText(/sell this item/i), 25000).catch(() => null);
+
+    if (!sellBtn) {
+      console.warn('[GeM Bill Auto-Submit] "SELL THIS ITEM" button nahi mila.');
+      await notifyOms(data, '⚠️ GeM product page par "SELL THIS ITEM" nahi mila — manually dabao, aage ka step apne aap chalega.');
+      return;
+    }
+
+    await setCatalogueStep(data, "PUBLISH_PAIR_CONFIRM");
+    sellBtn.click();
+  }
+
+  // admin-mkp catalog/new?...&gem_catalog_id=... - GeM asks "A gem catalog
+  // exists with this gem_catalog_id. Do you want to pair with it?". Pairing is
+  // the whole point (we are selling against THAT catalogue), so Ok. If the
+  // dialog never shows, GeM went straight to the form - not an error.
+  async function publishPairConfirmStep(data) {
+    const okBtn = await waitForElementMatching(() => {
+      if (!/gem catalog exists with this gem_catalog_id/i.test(document.body.textContent || "")) return null;
+      return findButtonByText(/^ok$/i);
+    }, 20000).catch(() => null);
+
+    if (okBtn) {
+      okBtn.click();
+      await sleep(2000);
+    } else {
+      console.log("[GeM Bill Auto-Submit] Pair-confirm dialog nahi aaya - seedha form par ja raha hu.");
+    }
+
+    // Angular renders the form in place (no reload), so chain rather than
+    // waiting for a page load that will never come.
+    await setCatalogueStep(data, "PUBLISH_OFFERING");
+    await publishOfferingStep(data);
+  }
+
+  // The offering form. Same three numeric fields the Stock Update flow fills
+  // (catalogueRateUpdateStep / catalogueStockUpdateStep use these exact
+  // labels), plus the delivery state and the undertaking checkbox.
+  async function publishOfferingStep(data) {
+    const formReady = await waitForElementMatching(() => {
+      return /terms of delivery|minimum quantity per consignee/i.test(document.body.textContent || "") ? true : null;
+    }, 30000).catch(() => null);
+
+    if (!formReady) {
+      console.warn("[GeM Bill Auto-Submit] Offering form render nahi hua.");
+      await notifyOms(data, "⚠️ GeM ka offering form nahi khula — manually bhar do.");
+      return;
+    }
+
+    const missed = [];
+
+    if (data.newRate !== undefined && data.newRate !== null) {
+      if (!setLabeledInputValue(/offer price including tax/i, data.newRate)) missed.push("Offer Price");
+    }
+    if (data.newStock !== undefined && data.newStock !== null) {
+      if (!setLabeledInputValue(/current\s*stock.*maximum\s*quantity/i, data.newStock)) missed.push("Current Stock");
+    }
+    if (data.newMinQty !== undefined && data.newMinQty !== null) {
+      if (!setLabeledInputValue(/minimum\s*quantity\s*per\s*consignee/i, data.newMinQty)) missed.push("Min Qty Per Consignee");
+    }
+
+    // Delivery state - the State table's checkbox cell carries just the state
+    // name, so a word-boundary match on it hits the right cell and nothing else.
+    const state = data.state || "Gujarat";
+    if (!checkCheckboxByLabel(new RegExp("\\b" + escapeRegex(state) + "\\b", "i"))) {
+      missed.push(`State "${state}"`);
+    }
+
+    // "I have read and agree to all the terms of the Undertaking." Ticking it
+    // pops the Chain Documents Undertaking modal on top of the form, which
+    // blocks SAVE / PROCEED until it is dismissed.
+    if (!checkCheckboxByLabel(/read and agree to all the terms of the undertaking/i)) {
+      missed.push("Undertaking checkbox");
+    } else {
+      const closeBtn = await waitForElementMatching(() => {
+        if (!/verification for chain documents undertaking/i.test(document.body.textContent || "")) return null;
+        return (
+          findButtonByText(/^(x|×|close)$/i) ||
+          document.querySelector('.modal.in [data-dismiss="modal"], .modal[style*="block"] .close, .modal-header .close')
+        );
+      }, 8000).catch(() => null);
+
+      if (closeBtn) {
+        closeBtn.click();
+        await sleep(800);
+      }
+    }
+
+    if (missed.length) {
+      console.warn("[GeM Bill Auto-Submit] Ye fields khud nahi bhare ja sake:", missed.join(", "));
+      await notifyOms(data, `⚠️ GeM form me ye khud nahi bhara: ${missed.join(", ")} — manually bhar ke SAVE/PROCEED dabao.`);
+    }
+
+    await waitForCaptchaIfPresent(data.omsOrigin);
+
+    if (!clickButtonByText(/save\s*\/?\s*proceed/i)) {
+      console.warn("[GeM Bill Auto-Submit] SAVE / PROCEED button nahi mila.");
+      await notifyOms(data, "⚠️ GeM par SAVE / PROCEED nahi mila — manually dabao.");
+      return;
+    }
+
+    await sleep(2500);
+    await setCatalogueStep(data, "PUBLISH_TERMS");
+    await publishTermsStep(data);
+  }
+
+  // Category terms block at the bottom of the same page: REVIEW TERMS AND
+  // CONDITIONS reveals the agreement checkbox, which in turn enables
+  // VALIDATE CATALOG AND PUBLISH (GeM's own on-page note says as much:
+  // "Click to enable publish button").
+  async function publishTermsStep(data) {
+    const reviewBtn = await waitForElementMatching(() => findButtonByText(/review terms and conditions/i), 25000).catch(() => null);
+    if (reviewBtn) {
+      reviewBtn.click();
+      await sleep(1500);
+    } else {
+      console.log("[GeM Bill Auto-Submit] REVIEW TERMS AND CONDITIONS button nahi mila - shayad pehle se reviewed hai.");
+    }
+
+    const agreed = await waitForElementMatching(() => {
+      return checkCheckboxByLabel(/read and agreed to all terms and conditions of government e-marketplace/i) ? true : null;
+    }, 15000).catch(() => null);
+
+    if (!agreed) {
+      console.warn("[GeM Bill Auto-Submit] Terms agreement checkbox nahi mila.");
+      await notifyOms(data, "⚠️ GeM ka terms-agreement checkbox nahi mila — manually tick karke PUBLISH dabao.");
+      return;
+    }
+    await sleep(800);
+
+    // Clock skew buffer, same as the login/bill OTP fetches - and taken BEFORE
+    // the click so the mail this triggers is definitely newer than the cutoff.
+    const otpSinceTs = Date.now() - 5000;
+
+    if (!clickButtonByText(/validate catalog and publish/i)) {
+      console.warn("[GeM Bill Auto-Submit] VALIDATE CATALOG AND PUBLISH button nahi mila.");
+      await notifyOms(data, "⚠️ GeM par VALIDATE CATALOG AND PUBLISH nahi mila — manually dabao.");
+      return;
+    }
+
+    await setCatalogueStep(data, "PUBLISH_OTP");
+    await publishOtpStep(data, otpSinceTs);
+  }
+
+  // GeM's publish OTP goes to the firm's registered mobile AND email. The
+  // email half is the one this can read, using the same Gmail token store the
+  // login/e-verify OTP fetches use. sinceTs defaults wide only when this step
+  // is resumed after a reload - normally publishTermsStep passes the exact
+  // moment the OTP was requested, so an older OTP mail can never be picked up.
+  async function publishOtpStep(data, sinceTs = Date.now() - 90 * 1000) {
+    const otpField = await waitForElementMatching(() => {
+      const el = Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find(
+        (inp) => isVisible(inp) && /verification code|enter otp/i.test(inp.placeholder || "")
+      );
+      return el && !el.disabled ? el : null;
+    }, 30000).catch(() => null);
+
+    if (!otpField) {
+      console.warn("[GeM Bill Auto-Submit] OTP box nahi mila.");
+      await notifyOms(data, "⚠️ GeM ka OTP box nahi mila — OTP manually daal ke publish karo.");
+      return;
+    }
+
+    if (!data.gemMailId) {
+      console.warn("[GeM Bill Auto-Submit] Is firm ka Mail ID save nahi hai - OTP manually daalo.");
+      await notifyOms(data, "⚠️ Is firm ka Mail ID GeM Login Setup me save nahi hai — OTP manually daal ke publish karo.");
+      return;
+    }
+
+    const otpResponse = await chrome.runtime.sendMessage({ type: "FETCH_LOGIN_OTP", gemMailId: data.gemMailId, sinceTs });
+    if (!otpResponse?.success) {
+      console.warn("[GeM Bill Auto-Submit] OTP fetch fail hua:", otpResponse?.error);
+      await notifyOms(data, `⚠️ OTP mail se nahi mil paya (${otpResponse?.error || "unknown"}) — manually daal ke publish karo.`);
+      return;
+    }
+
+    setNativeValue(otpField, otpResponse.otp);
+    fireEvents(otpField);
+    await sleep(500);
+
+    if (!clickButtonByText(/verify otp\s*&?\s*publish/i)) {
+      console.warn("[GeM Bill Auto-Submit] 'Verify OTP & PUBLISH' button nahi mila.");
+      await notifyOms(data, "⚠️ 'Verify OTP & PUBLISH' button nahi mila — OTP bhar diya hai, manually publish dabao.");
+      return;
+    }
+
+    await sleep(4000);
+    console.log("[GeM Bill Auto-Submit] Catalogue publish kar diya.");
+
+    try {
+      await chrome.runtime.sendMessage({ type: "MARK_NEW_LINK_PUBLISHED", omsOrigin: data.omsOrigin, entryId: data.entryId });
+      await notifyOms(data, "✅ GeM par listing publish ho gayi — New Upload Link row Stock Update me chali gayi.");
+    } catch (err) {
+      console.warn("[GeM Bill Auto-Submit] OMS ko publish-mark bhejne me error:", err.message);
     }
 
     await chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });

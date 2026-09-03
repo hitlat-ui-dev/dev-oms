@@ -35,7 +35,7 @@ import {
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
 import BuildSheetModal from "@/components/gemSync/BuildSheetModal";
-import { triggerGemCatalogueUpdate } from "@/lib/triggerGemSubmit";
+import { triggerGemCatalogueUpdate, triggerGemCataloguePublish } from "@/lib/triggerGemSubmit";
 
 // Types definition
 interface Buyer {
@@ -233,6 +233,13 @@ export default function GeMSyncPage() {
   const [showAllSynced, setShowAllSynced] = useState<boolean>(false);
   const [gemCredentials, setGemCredentials] = useState<{ firmCode: string; gemUserId: string; gemPassword: string; gemMailId: string }[]>([]);
   const [syncingListingId, setSyncingListingId] = useState<string | null>(null);
+  const [publishingEntryId, setPublishingEntryId] = useState<string | null>(null);
+  // Set once a publish automation is handed to the extension. That flow ends
+  // by writing to Mongo from the GeM tab, so this page's copy of the checklist
+  // and listings goes stale - and any later save from here (which replaces
+  // both collections wholesale) would wipe the extension's write. Refetching
+  // when the user comes back to this tab closes that window.
+  const awaitingPublishRef = useRef(false);
 
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
@@ -1771,16 +1778,28 @@ export default function GeMSyncPage() {
     return true;
   };
 
+  // A Variant Group is quoted against ONE GeM listing, so OK Link / Update
+  // Stock / Add New Link on any of its rows settles the whole group - the
+  // other variants have nothing left to decide, and leaving them in
+  // Uncompleted would have someone chasing a link that is already dealt with.
+  const rowsInScopeOf = (rows: UploadedRow[], rowIndex: number) => {
+    const groupId = rows.find(r => r.index === rowIndex)?.variantGroupId;
+    return (r: UploadedRow) => r.index === rowIndex || (!!groupId && r.variantGroupId === groupId);
+  };
+
   const setRowCompleted = (rowIndex: number, completed: boolean) => {
-    setUploadedRows(prev => prev.map(r => {
-      if (r.index !== rowIndex) return r;
-      return {
-        ...r,
-        isCompleted: completed,
-        completedBy: completed ? (currentUsername || "Unknown") : undefined,
-        completedAt: completed ? new Date().toISOString() : undefined,
-      };
-    }));
+    setUploadedRows(prev => {
+      const inScope = rowsInScopeOf(prev, rowIndex);
+      return prev.map(r => {
+        if (!inScope(r)) return r;
+        return {
+          ...r,
+          isCompleted: completed,
+          completedBy: completed ? (currentUsername || "Unknown") : undefined,
+          completedAt: completed ? new Date().toISOString() : undefined,
+        };
+      });
+    });
   };
 
   // "GeM Link Not Available" - this item genuinely has no listing on GeM to
@@ -2357,6 +2376,69 @@ export default function GeMSyncPage() {
     }
   };
 
+  // "PUBLISH TO GEM" - the New Upload Link counterpart of Stock Update's
+  // "Sync to GeM". That one edits an offering this firm already has; this one
+  // creates the offering itself against the marketplace product the sheet row
+  // pointed at (SELL THIS ITEM -> pair -> rate/stock/min qty + state -> terms
+  // -> publish -> OTP), and the extension graduates the row into the Master
+  // List once GeM confirms it. See content-gem.js's publish steps.
+  const handlePublishNewLinkToGem = async (entry: NewLinkChecklistEntry) => {
+    const link = (entry.gemLink || "").trim();
+    if (!link) {
+      alert("Is row par GeM Product URL nahi hai - 'Revise Rate' se link daalo, phir publish karo.");
+      return;
+    }
+    const rateVal = Number(entry.rate) || 0;
+    if (rateVal <= 0) {
+      alert("Rate blank hai - pehle 'Revise Rate' se rate bharo, phir publish karo.");
+      return;
+    }
+    const cred = gemCredentials.find(c => c.firmCode === entry.firmCode);
+    if (!cred || !cred.gemUserId || !cred.gemPassword) {
+      alert(`"${entry.firmCode}" firm ke GeM login credentials "GeM Login Setup" me save nahi hai - pehle wahan save karo.`);
+      return;
+    }
+
+    setPublishingEntryId(entry.id);
+    try {
+      await triggerGemCataloguePublish({
+        gemUserId: cred.gemUserId,
+        gemPassword: cred.gemPassword,
+        gemMailId: cred.gemMailId,
+        firmCode: entry.firmCode,
+        productUrl: link,
+        newRate: rateVal,
+        newStock: entry.availGemStock || 0,
+        newMinQty: entry.minQty || 1,
+        state: "Gujarat",
+        entryId: entry.id,
+      });
+      awaitingPublishRef.current = true;
+      alert("\u2713 GeM tab khul gaya, publish automation shuru ho gayi. Captcha aur OTP ke liye us tab par nazar rakho - poora hone par yeh row apne aap Stock Update me chali jayegi.");
+    } catch (err: any) {
+      alert("Extension trigger nahi hua: " + err.message);
+    } finally {
+      setPublishingEntryId(null);
+    }
+  };
+
+  // Pulls the checklist + listings back from Mongo when this tab regains
+  // focus after a publish was handed off - see awaitingPublishRef above.
+  useEffect(() => {
+    const onFocus = () => {
+      if (!awaitingPublishRef.current) return;
+      fetch("/api/gem-sync")
+        .then(res => res.json())
+        .then(state => {
+          if (Array.isArray(state?.listings)) setListings(state.listings);
+          if (Array.isArray(state?.newLinkChecklist)) setNewLinkChecklist(state.newLinkChecklist);
+        })
+        .catch(err => console.error("Failed to refresh after publish", err));
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   const handleDeleteListing = (listingId: string) => {
     if (!confirm("Are you sure you want to delete this listing from the sync checklist?")) return;
     const updatedListings = listings.filter(lst => lst.id !== listingId);
@@ -2388,17 +2470,22 @@ export default function GeMSyncPage() {
 
   const sheetGrandTotal = useMemo(() => firmWiseTotals.reduce((sum, f) => sum + f.total, 0), [firmWiseTotals]);
 
+  // Undo follows the same rule - the group went into Completed together, so
+  // it comes back out together rather than leaving half of it behind.
   const toggleRowCompleted = (rowIndex: number) => {
-    setUploadedRows(prev => prev.map(r => {
-      if (r.index !== rowIndex) return r;
-      const nowCompleted = !r.isCompleted;
-      return {
-        ...r,
-        isCompleted: nowCompleted,
-        completedBy: nowCompleted ? (currentUsername || "Unknown") : undefined,
-        completedAt: nowCompleted ? new Date().toISOString() : undefined,
-      };
-    }));
+    setUploadedRows(prev => {
+      const inScope = rowsInScopeOf(prev, rowIndex);
+      const nowCompleted = !prev.find(r => r.index === rowIndex)?.isCompleted;
+      return prev.map(r => {
+        if (!inScope(r)) return r;
+        return {
+          ...r,
+          isCompleted: nowCompleted,
+          completedBy: nowCompleted ? (currentUsername || "Unknown") : undefined,
+          completedAt: nowCompleted ? new Date().toISOString() : undefined,
+        };
+      });
+    });
   };
 
   // Per-column search over the Requirement Mapping Console. Four separate
@@ -3896,12 +3983,25 @@ export default function GeMSyncPage() {
                                         <FiEdit size={12} /> Revise Rate
                                       </button>
                                       <button
-                                        onClick={() => handlePushNewLinkToStock(entry)}
-                                        disabled={!entry.gemLink}
-                                        title={entry.gemLink ? "Listing GeM par upload ho gayi - is item ko Stock Update checklist (Master List) me bhej do" : "Is row par GeM Product URL nahi hai"}
+                                        onClick={() => handlePublishNewLinkToGem(entry)}
+                                        disabled={!entry.gemLink || publishingEntryId === entry.id}
+                                        title={entry.gemLink ? "GeM par is product ke against apni listing khud bana do (Sell This Item -> rate/stock -> publish -> OTP)" : "Is row par GeM Product URL nahi hai"}
                                         className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 hover:border-emerald-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3.5 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
-                                        <FiArrowRight size={12} /> Push to Stock
+                                        <FiRefreshCw size={12} className={publishingEntryId === entry.id ? "animate-spin" : ""} />
+                                        {publishingEntryId === entry.id ? "Starting..." : "Publish to GeM"}
+                                      </button>
+                                      {/* Manual fallback for when the automation could not finish
+                                          (GeM changed a page, captcha/OTP went wrong) and the
+                                          listing was created by hand instead - without this the
+                                          row would be stranded here with nowhere to go. */}
+                                      <button
+                                        onClick={() => handlePushNewLinkToStock(entry)}
+                                        disabled={!entry.gemLink}
+                                        title="GeM par listing khud bana li ho to is row ko manually Stock Update checklist me bhej do"
+                                        className="bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)] border border-[var(--gem-border)] text-[10px] font-black tracking-wider uppercase py-1.5 px-2 rounded-lg transition-all flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                      >
+                                        <FiArrowRight size={12} />
                                       </button>
                                       <button
                                         onClick={() => handleDeleteNewLinkEntry(entry.id)}

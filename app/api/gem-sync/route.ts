@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { uploadFileToR2, getFileFromR2, deleteFileFromR2 } from "@/lib/cloudflareR2";
 
@@ -282,6 +282,64 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: `No listing found for id=${id}.` }, { status: 404 });
       }
       return NextResponse.json({ success: true });
+    }
+
+    // Called by the extension once a brand-new catalogue has actually been
+    // published on GeM (SELL THIS ITEM -> pair -> offering -> publish -> OTP).
+    // Graduates the New Upload Link entry into a real Master List listing, the
+    // same thing "Push to Stock" does by hand - done here rather than in the
+    // page because the browser tab driving the automation is GeM's, not OMS's.
+    if (action === "mark_new_link_published") {
+      const id = (body.id || "").toString().trim();
+      if (!id) {
+        return NextResponse.json({ error: "id is required" }, { status: 400 });
+      }
+
+      const entry = await db.collection("gem_new_link_checklist").findOne({ id });
+      if (!entry) {
+        return NextResponse.json({ error: `No New Upload Link entry found for id=${id}.` }, { status: 404 });
+      }
+
+      const gemLink = (entry.gemLink || "").toString().trim();
+      // A re-run of the automation must not create a second listing for the
+      // same product under the same buyer+firm.
+      const existing = gemLink
+        ? await db.collection("gem_listings").findOne({ firmCode: entry.firmCode, buyerId: entry.buyerId, gemLink })
+        : null;
+
+      let listingId = existing?.id as string | undefined;
+      if (!existing) {
+        listingId = "listing_" + Date.now() + "_published";
+        await db.collection("gem_listings").insertOne({
+          id: listingId,
+          firmCode: entry.firmCode,
+          itemId: entry.mappedItemId || "",
+          itemName: entry.itemName,
+          gemLink,
+          rate: Number(entry.rate) || 0,
+          availGemStock: Number(entry.availGemStock) || 0,
+          minQty: Number(entry.minQty) || 1,
+          // Published WITH these exact rate/stock/min-qty values a moment ago,
+          // so there is nothing left to push to GeM - Pending would just be
+          // asking someone to redo work that is already done.
+          status: "Synced",
+          buyerId: entry.buyerId,
+          date: new Date().toISOString(),
+          spec: entry.spec,
+          remark: entry.remark,
+          requiredQty: entry.requiredQty,
+          unit: entry.unit,
+          sheetName: entry.sheetName,
+          sheetId: entry.sheetId,
+        });
+      }
+
+      await db.collection("gem_new_link_checklist").updateOne(
+        { id },
+        { $set: { status: "Synced", pushedListingId: listingId } }
+      );
+
+      return NextResponse.json({ success: true, listingId });
     }
 
     if (action === "save_new_link_checklist") {
