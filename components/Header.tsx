@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -284,7 +284,7 @@ export default function Header() {
               />
               
               {/* Dropdown Card - same viewport-safe positioning as the Chat card above */}
-              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-80 md:w-96 max-w-full bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
+              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-80 md:w-96 max-w-full sm:max-w-none bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
                 <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                     <FiCheckSquare className="text-blue-600" size={14} /> Team Tasks
