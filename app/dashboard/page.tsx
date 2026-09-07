@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -16,8 +16,8 @@ import {
   FiX,
   FiTruck,
   FiHash,
-  FiKey,
-  FiAlertTriangle
+  FiUserCheck,
+  FiKey
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
@@ -31,7 +31,7 @@ const QUICKADD_ENABLED = new Set(["Orders", "Purchase", "Stock", "Manage Stock",
 const SECTIONS = [
   { label: "Daily Operations", items: ["Orders", "Purchase", "Stock", "Manage Stock", "Print Label", "Account"] },
   { label: "GeM", items: ["GeM Bids", "GeM Links"] },
-  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review", "Urgent Tasks"] }
+  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review", "Attendance"] }
 ];
 
 export default function DashboardPage() {
@@ -98,7 +98,7 @@ export default function DashboardPage() {
     { name: "Courier Tracking", path: "/dashboard/admin/courier-tracking", sub: "DAILY DISPATCH MATCHING", icon: <FiTruck />, color: "bg-[#16a34a]", role: ["Owner"] },
     { name: "HSN & GST Review", path: "/dashboard/admin/hsn-gst-review", sub: "CONFIRM ITEM TAX DETAILS", icon: <FiHash />, color: "bg-[#7c3aed]", role: ["Owner", "Manager"] },
     { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" },
-    { name: "Urgent Tasks", path: "/dashboard/urgent-tasks", sub: "ASSIGN & TRACK", icon: <FiAlertTriangle />, color: "bg-[#dc2626]", role: ["Owner"] }
+    { name: "Attendance", path: "/dashboard/admin/attendance", sub: "DAILY REGISTER", icon: <FiUserCheck />, color: "bg-[#0a2540]", role: ["Owner"] }
   ];
 
   const usernameLower = user?.username?.trim().toLowerCase();
@@ -121,6 +121,9 @@ export default function DashboardPage() {
     if (item.name === "Account") return user?.permissions?.accountStatements === true;
     if (item.name === "Summary") return user?.permissions?.dashboardSummary === true;
     if (item.name === "GeM Bids") return user?.permissions?.gemBids === true;
+    // Same gate the page itself uses (BlockGuard permission="boss"), so nobody
+    // is shown a card that only tells them they have no access.
+    if (item.name === "Attendance") return user?.permissions?.boss === true;
     return true; // default fallback
   };
 
