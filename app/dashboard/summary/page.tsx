@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
@@ -16,6 +16,25 @@ import {
   FiFileText,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
+
+// Same wording the two GeM fetch-history popups use on their own pages, so a
+// firm's "2 days ago" reads identically wherever it is seen.
+function formatRelativeTime(dateInput: Date | string): string {
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return "—";
+  const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
 
 interface StatusRow {
   status: string;
@@ -142,6 +161,13 @@ export default function SummaryDashboardPage() {
   const [dailyBucketBy, setDailyBucketBy] = useState<"day" | "month">("day");
   const [dailyLoading, setDailyLoading] = useState(false);
 
+  // The two GeM fetch histories that otherwise only exist behind popups on
+  // their own pages (Fetch GeM Orders, GeM Catalogue). Here they answer one
+  // question at a glance: is any firm's data going stale?
+  const [orderFetchHistory, setOrderFetchHistory] = useState<{ firmCode: string; firmName: string; lastFetchedAt: string | null }[] | null>(null);
+  const [catalogueFetchLog, setCatalogueFetchLog] = useState<{ firmCode: string; itemCount: number; fetchedAt: string }[] | null>(null);
+  const [fetchHistoryLoading, setFetchHistoryLoading] = useState(false);
+
   useEffect(() => {
     fetch("/api/companies")
       .then((res) => res.json())
@@ -190,6 +216,24 @@ export default function SummaryDashboardPage() {
     setSelectedMember((prev) => (prev && perfData.some((r) => r.username === prev) ? prev : perfData[0].username));
   }, [perfData]);
 
+  // Gated the same way everything else on this page is - nothing loads until
+  // the user presses Scan Data. Neither endpoint takes a firm filter, so that
+  // is applied below when rendering rather than being pushed into the query.
+  useEffect(() => {
+    if (!data) return;
+    setFetchHistoryLoading(true);
+    Promise.all([
+      fetch(`/api/gem-orders/fetch-history?t=${Date.now()}`).then(r => r.json()).catch(() => []),
+      fetch("/api/gem-sync?catalogueFetchLog=1").then(r => r.json()).catch(() => ({})),
+    ])
+      .then(([orders, catalogue]) => {
+        setOrderFetchHistory(Array.isArray(orders) ? orders : []);
+        setCatalogueFetchLog(Array.isArray(catalogue?.log) ? catalogue.log : []);
+      })
+      .catch(err => console.error("Failed to load GeM fetch history", err))
+      .finally(() => setFetchHistoryLoading(false));
+  }, [data]);
+
   const fetchDailyPerformance = useCallback((username: string, range: "month" | "year") => {
     setDailyLoading(true);
     const params = new URLSearchParams({ username, range });
@@ -216,6 +260,22 @@ export default function SummaryDashboardPage() {
   );
 
   const dayScore = (r: DailyBucket) => r.totalActions + r.ordersCreated + r.filesUploaded + r.productsCompleted;
+  // Newest first, and firms never fetched at all sink to the bottom where
+  // they read as the warning they are.
+  const visibleOrderFetchHistory = useMemo(() => {
+    const rows = (orderFetchHistory || []).filter(r => !firmFilter || r.firmCode === firmFilter);
+    return [...rows].sort((a, b) => {
+      const ta = a.lastFetchedAt ? new Date(a.lastFetchedAt).getTime() : -1;
+      const tb = b.lastFetchedAt ? new Date(b.lastFetchedAt).getTime() : -1;
+      return tb - ta;
+    });
+  }, [orderFetchHistory, firmFilter]);
+
+  const visibleCatalogueFetchLog = useMemo(
+    () => (catalogueFetchLog || []).filter(r => !firmFilter || r.firmCode === firmFilter),
+    [catalogueFetchLog, firmFilter]
+  );
+
   const maxDailyValue = useMemo(() => Math.max(1, ...(dailySeries || []).map(dayScore)), [dailySeries]);
 
   const formatBucketLabel = (bucket: string, bucketBy: "day" | "month") => {
@@ -719,6 +779,107 @@ export default function SummaryDashboardPage() {
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* GeM fetch histories - both of these otherwise live behind a
+                  popup on their own page. Side by side here they answer the
+                  one question this dashboard should answer about them: which
+                  firm's data has gone stale. */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
+                {/* Orders: one row per firm, last fetch only */}
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div className="p-5 border-b border-slate-100">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiTruck className="text-blue-600" size={14} /> GeM Order Fetch — Firm-wise
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Last time each firm&apos;s GeM orders were pulled in, newest first.
+                    </p>
+                  </div>
+
+                  {fetchHistoryLoading ? (
+                    <div className="flex justify-center items-center py-10">
+                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-blue-500"></div>
+                    </div>
+                  ) : visibleOrderFetchHistory.length === 0 ? (
+                    <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-10">
+                      No firms fetched yet
+                    </p>
+                  ) : (
+                    <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                      {visibleOrderFetchHistory.map((f) => (
+                        <div key={f.firmCode} className="px-5 py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-black text-slate-800 truncate">{f.firmName || f.firmCode}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{f.firmCode}</p>
+                          </div>
+                          {f.lastFetchedAt ? (
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-bold text-slate-700 font-mono">
+                                {new Date(f.lastFetchedAt).toLocaleDateString("en-GB")}{" "}
+                                <span className="text-slate-400">{new Date(f.lastFetchedAt).toLocaleTimeString("en-GB")}</span>
+                              </p>
+                              <p className="text-[10px] font-bold text-blue-600">{formatRelativeTime(f.lastFetchedAt)}</p>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 rounded-lg py-1 px-2 shrink-0">
+                              Never fetched
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Catalogue: append-only, so every run shows, not just the last */}
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div className="p-5 border-b border-slate-100">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiPackage className="text-blue-600" size={14} /> GeM Catalogue Fetch History
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Every time the browser extension has fetched a firm&apos;s GeM catalogue, newest first.
+                    </p>
+                  </div>
+
+                  {fetchHistoryLoading ? (
+                    <div className="flex justify-center items-center py-10">
+                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-blue-500"></div>
+                    </div>
+                  ) : visibleCatalogueFetchLog.length === 0 ? (
+                    <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-10">
+                      No catalogue fetch recorded yet
+                    </p>
+                  ) : (
+                    <div className="max-h-80 overflow-y-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="sticky top-0 bg-slate-50 text-slate-400 font-black uppercase tracking-wider text-[10px]">
+                          <tr>
+                            <th className="py-2 px-5">Firm</th>
+                            <th className="py-2 px-2.5 text-right">Items</th>
+                            <th className="py-2 px-2.5">Fetched At</th>
+                            <th className="py-2 px-5 text-right">How Long Ago</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {visibleCatalogueFetchLog.map((entry, idx) => (
+                            <tr key={`${entry.firmCode}-${entry.fetchedAt}-${idx}`}>
+                              <td className="py-2.5 px-5 font-black text-slate-800">{entry.firmCode}</td>
+                              <td className="py-2.5 px-2.5 text-right font-mono text-slate-500">{entry.itemCount}</td>
+                              <td className="py-2.5 px-2.5 font-mono text-slate-500">
+                                {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              </td>
+                              <td className="py-2.5 px-5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
               </div>
             </>
           )}
