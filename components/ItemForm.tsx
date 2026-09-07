@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import {
   FiBox, FiTag, FiSave, FiPlus, FiHash,
@@ -97,7 +97,14 @@ export default function ItemForm({ onSuccess, initialData }: ItemFormProps) {
       const unitData = await unitRes.json();
       const groupData = await groupRes.json();
 
-      setFormData(prev => ({ ...prev, sku: itemData.nextSku || "S1100" }));
+      // ONLY when creating. This used to run unconditionally, and since it
+      // resolves after the synchronous initialData effect above, editing an
+      // existing item silently replaced its real SKU with the next free one -
+      // which is how several stock rows ended up stamped S2661/S2635 while
+      // `items` kept their true SKUs (fixed Sep-2026).
+      if (!initialData) {
+        setFormData(prev => ({ ...prev, sku: itemData.nextSku || "S1100" }));
+      }
       setCategories(catData);
       setUnits(unitData);
       setVariantGroups(Array.isArray(groupData) ? groupData : []);

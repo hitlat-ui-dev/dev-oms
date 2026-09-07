@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 
@@ -17,7 +17,14 @@ export async function PATCH(
     // 2. Define the fields allowed to change dynamically
     const updateFields: any = {};
     if (data.itemName !== undefined) updateFields.itemName = data.itemName;
-    if (data.sku !== undefined) updateFields.sku = data.sku;
+    // sku is deliberately NOT editable here. It is an identity, not an
+    // attribute: this route writes to `stock` by _id and only mirrors into
+    // `items` when the stock doc carries an itemId, so letting an edit change
+    // the sku silently drove the two collections apart - several stock rows
+    // ended up stamped with whatever next-SKU the form was holding while
+    // `items` kept their real ones (S2661/S2635, fixed Sep-2026). If a SKU
+    // ever genuinely has to change, it has to change in both collections at
+    // once, which is not what this endpoint does.
     if (data.category !== undefined) updateFields.category = data.category;
     if (data.unit !== undefined) updateFields.unit = data.unit;
     if (data.location !== undefined) updateFields.location = data.location;
@@ -42,6 +49,13 @@ export async function PATCH(
     // Use the itemId directly from the database record we just found
     const targetItemId = stockResult?.itemId || data.itemId;
 
+    // No itemId means this stock row has no link back to `items`, so the sync
+    // below cannot run. Silently skipping it is what let the two collections
+    // drift for months - say so instead, and let the caller see it.
+    if (!targetItemId) {
+      console.warn(`Stock doc ${id} has no itemId - items collection NOT synced.`);
+    }
+
     if (targetItemId) {
       itemsResult = await db.collection("items").updateOne(
         { _id: new ObjectId(targetItemId.toString()) }, // Force conversion to ObjectId
@@ -54,7 +68,9 @@ export async function PATCH(
     return NextResponse.json({
       success: true,
       stockUpdated: !!stockResult,
-      itemsUpdated: itemsResult.matchedCount > 0
+      itemsUpdated: itemsResult.matchedCount > 0,
+      // Surfaced so a half-applied edit is visible rather than looking clean.
+      itemsLinkMissing: !targetItemId,
     });
 
   } catch (error: any) {

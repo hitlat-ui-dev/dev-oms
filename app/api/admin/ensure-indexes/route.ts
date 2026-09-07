@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import dbConnect from "@/lib/dbConnect";
 import mongoose from "mongoose";
 
@@ -104,7 +104,20 @@ export async function GET() {
     // an index (this was the single biggest missing index found in the audit)
     const stock = db.collection("stock");
     await stock.createIndex({ sku: 1 });
-    indexResults["stock"] = ["{ sku: 1 }"];
+    // Uniqueness on sku, scoped to non-hidden rows - same shape and same
+    // reasoning as itemName_unique_visible_ci above. Without this, an edit
+    // could stamp one sku onto several stock rows and nothing stopped it:
+    // 7 rows had been silently corrupted this way (S2661 x5, S2635 x4) while
+    // `items` - which DOES have a unique sku index - stayed correct, so the
+    // two collections drifted apart unnoticed (repaired Sep-2026, see the
+    // note in components/ItemForm.tsx for the bug that caused it). Hidden
+    // rows are excluded because a hidden row is a retired duplicate on
+    // purpose, exactly as with items.
+    await stock.createIndex(
+      { sku: 1 },
+      { unique: true, partialFilterExpression: { hidden: { $in: [false, null] } }, name: "sku_unique_visible" }
+    );
+    indexResults["stock"] = ["{ sku: 1 }", "{ sku: 1 } (unique, non-hidden only)"];
 
     // 10. purchase_requests collection
     const purchaseRequests = db.collection("purchase_requests");
