@@ -31,25 +31,63 @@ function formatMiracleDate(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
 }
 
+// Invoice numbers are "<prefix><number>" (e.g. "SM14") - mirrors the same
+// helper used client-side (app/dashboard/account/bills/page.tsx) to filter
+// the Bill History table, so a range typed there and one typed here behave
+// identically regardless of whether the prefix was included.
+function extractNumericSuffix(s: string): number | null {
+  const m = /(\d+)\s*$/.exec(String(s || ""));
+  return m ? parseInt(m[1], 10) : null;
+}
+
 // GET /api/bills/export-miracle?date=YYYY-MM-DD
+// GET /api/bills/export-miracle?invoiceFrom=SM14&invoiceTo=SM20&firmCode=...
+// date and invoiceFrom/invoiceTo are independently optional and AND together
+// when both given - at least one is required. The invoice-number range is
+// scoped to firmCode (when provided) since numbering is per-firm and two
+// firms' invoices can land on the same numeric suffix.
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const date = searchParams.get("date");
-    if (!date) {
-      return NextResponse.json({ error: "date query param (YYYY-MM-DD) is required" }, { status: 400 });
+    const invoiceFrom = searchParams.get("invoiceFrom");
+    const invoiceTo = searchParams.get("invoiceTo");
+    const firmCode = searchParams.get("firmCode");
+
+    if (!date && !invoiceFrom && !invoiceTo) {
+      return NextResponse.json({ error: "Provide a date or an Invoice No. range (invoiceFrom/invoiceTo) to export." }, { status: 400 });
     }
 
     const client = await clientPromise;
     const db = client.db();
-    const bills = await db
+
+    const query: { invoiceDate?: { $gte: Date; $lte: Date }; firmCode?: string } = {};
+    if (date) query.invoiceDate = { $gte: new Date(`${date}T00:00:00`), $lte: new Date(`${date}T23:59:59`) };
+    if ((invoiceFrom || invoiceTo) && firmCode) query.firmCode = firmCode;
+
+    let bills = await db
       .collection("bills")
-      .find({ invoiceDate: { $gte: new Date(`${date}T00:00:00`), $lte: new Date(`${date}T23:59:59`) } })
+      .find(query)
       .sort({ firmCode: 1, invoiceNumber: 1 })
       .toArray();
 
+    let rangeDescription = "";
+    if (invoiceFrom || invoiceTo) {
+      const fromNum = invoiceFrom ? extractNumericSuffix(invoiceFrom) : null;
+      const toNum = invoiceTo ? extractNumericSuffix(invoiceTo) : null;
+      bills = bills.filter((b) => {
+        const n = extractNumericSuffix(b.invoiceNumber);
+        if (n === null) return false;
+        if (fromNum !== null && n < fromNum) return false;
+        if (toNum !== null && n > toNum) return false;
+        return true;
+      });
+      rangeDescription = ` from ${invoiceFrom || "the start"} to ${invoiceTo || "the end"}`;
+    }
+
     if (bills.length === 0) {
-      return NextResponse.json({ error: `No bills generated on ${date}` }, { status: 404 });
+      const dateDescription = date ? ` on ${date}` : "";
+      return NextResponse.json({ error: `No bills found${dateDescription}${rangeDescription}` }, { status: 404 });
     }
 
     const rows: Record<string, any>[] = [];
@@ -88,11 +126,15 @@ export async function GET(req: Request) {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Sales Profile");
     const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 
+    const filenameTag = invoiceFrom || invoiceTo
+      ? `${invoiceFrom || "start"}-${invoiceTo || "end"}`
+      : date;
+
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="Sales_Profile_${date}.xlsx"`,
+        "Content-Disposition": `attachment; filename="Sales_Profile_${filenameTag}.xlsx"`,
       },
     });
   } catch (error: any) {

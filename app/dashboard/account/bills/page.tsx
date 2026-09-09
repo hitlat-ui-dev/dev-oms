@@ -814,9 +814,28 @@ export default function GenerateBillPage() {
   };
 
   const handleExportMiracle = async () => {
+    const usingInvoiceRange = !!(invoiceRangeFrom || invoiceRangeTo);
+    if (!exportDate && !usingInvoiceRange) {
+      alert("Pick a date or an Invoice No. range to export.");
+      return;
+    }
     setExporting(true);
     try {
-      const res = await fetch(`/api/bills/export-miracle?date=${exportDate}`);
+      const params = new URLSearchParams();
+      // Date and Invoice No. range are alternatives here, not combined -
+      // exportDate always defaults to today, so ANDing it in behind the
+      // user's back the moment they fill in a range would silently turn
+      // "export SM14 to SM20" into "...that were also billed today" and
+      // just 404 with no obvious reason why.
+      if (usingInvoiceRange) {
+        if (invoiceRangeFrom) params.set("invoiceFrom", invoiceRangeFrom);
+        if (invoiceRangeTo) params.set("invoiceTo", invoiceRangeTo);
+      } else {
+        params.set("date", exportDate);
+      }
+      if (firmCode) params.set("firmCode", firmCode);
+
+      const res = await fetch(`/api/bills/export-miracle?${params.toString()}`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         alert(data.error || "Export failed.");
@@ -826,7 +845,10 @@ export default function GenerateBillPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Bills_${exportDate}.xlsx`;
+      const filenameTag = invoiceRangeFrom || invoiceRangeTo
+        ? `${invoiceRangeFrom || "start"}-${invoiceRangeTo || "end"}`
+        : exportDate;
+      a.download = `Bills_${filenameTag}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -1383,13 +1405,30 @@ export default function GenerateBillPage() {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
               <h2 className="font-black text-slate-800 uppercase tracking-tight">Bill History</h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <FiCalendar className="text-slate-400" />
                 <input
                   type="date"
                   value={exportDate}
                   onChange={(e) => setExportDate(e.target.value)}
                   className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none"
+                />
+                <span className="text-[10px] font-black text-slate-300 uppercase px-1">or</span>
+                <FiFileText className="text-slate-400" size={13} />
+                <input
+                  type="text"
+                  value={invoiceRangeFrom}
+                  onChange={(e) => setInvoiceRangeFrom(e.target.value)}
+                  placeholder={`E.G. ${company?.invoiceNumbering?.prefix || ""}14`}
+                  className="w-24 px-2 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:border-orange-400"
+                />
+                <span className="text-[10px] font-bold text-slate-400">to</span>
+                <input
+                  type="text"
+                  value={invoiceRangeTo}
+                  onChange={(e) => setInvoiceRangeTo(e.target.value)}
+                  placeholder={`E.G. ${company?.invoiceNumbering?.prefix || ""}20`}
+                  className="w-24 px-2 py-2 rounded-xl border border-slate-200 text-xs font-bold outline-none focus:border-orange-400"
                 />
                 <button
                   onClick={handleExportMiracle}
