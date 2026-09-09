@@ -30,7 +30,10 @@ import {
   FiArrowUp,
   FiArrowDown,
   FiArrowRight,
-  FiRotateCcw
+  FiRotateCcw,
+  FiEye,
+  FiShoppingCart,
+  FiFilter
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -158,6 +161,11 @@ interface UploadedRow {
   notAvailable?: boolean;
   notAvailableBy?: string;
   notAvailableAt?: string;
+  // Has this row's GeM link already been added to cart on the actual GeM
+  // portal? Tracked here (not derived from anything) so it survives a save/
+  // reload the same way isCompleted/notAvailable do - toggled from the Excel
+  // Preview popup's checkbox column.
+  addedToCart?: boolean;
   // Variant Group: several sheet rows that are the same product in different
   // sizes/variants, all quoted against ONE GeM listing. The colour is stored
   // rather than derived from group order so deleting one group never
@@ -267,6 +275,43 @@ export default function GeMSyncPage() {
   // Requirement Mapping Console table that can run 200+ rows, so keeping
   // that state local to the modal keeps typing in it from re-rendering all of this.
   const [showBuildSheetModal, setShowBuildSheetModal] = useState(false);
+
+  // Excel preview popup - shows the "Download Filled Excel" output on-screen
+  // (same rows, same Mapped Firm/Comment/variant-group styling) before an
+  // actual file is downloaded. See buildFilledExcelData/handlePreviewFilledExcel.
+  const [showExcelPreviewModal, setShowExcelPreviewModal] = useState(false);
+  const [excelPreviewData, setExcelPreviewData] = useState<Record<string, any>[]>([]);
+  // Column/row sizing the user has dragged in the preview grid, keyed by
+  // column name / row index - persists for the session (not reset each time
+  // the popup reopens) so a widened column stays widened.
+  const [previewColWidths, setPreviewColWidths] = useState<Record<string, number>>({});
+  const [previewRowHeights, setPreviewRowHeights] = useState<Record<number, number>>({});
+  // Excel-style AutoFilter for the preview grid: per column, the set of
+  // values UNCHECKED in that column's dropdown (absent/empty = show
+  // everything, matching Excel's default). View-only - never touches
+  // uploadedRows/originalExcelData or what actually gets downloaded.
+  const [previewColumnFilters, setPreviewColumnFilters] = useState<Record<string, Set<string>>>({});
+  const [previewOpenFilterCol, setPreviewOpenFilterCol] = useState<string | null>(null);
+  const [previewFilterSearch, setPreviewFilterSearch] = useState("");
+  const [previewSort, setPreviewSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  // Close the open filter dropdown on an outside click. A visual full-page
+  // "catcher" overlay was tried first but the dropdown lives inside a <th>
+  // with position:sticky + z-index, which establishes its OWN stacking
+  // context - the overlay's z-index then compares against that context as a
+  // whole (effectively the th's z-10), not against the dropdown's internal
+  // z-40, so the overlay could end up covering the dropdown instead of
+  // sitting behind it. A plain outside-click listener sidesteps that.
+  useEffect(() => {
+    if (!previewOpenFilterCol) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-preview-filter-dropdown]") && !target.closest("[data-preview-filter-trigger]")) {
+        setPreviewOpenFilterCol(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [previewOpenFilterCol]);
 
   // Master Rate Sheet popup - see MasterRateEntry above.
   const [showMasterRateModal, setShowMasterRateModal] = useState(false);
@@ -2054,14 +2099,11 @@ export default function GeMSyncPage() {
     alert("✓ Stock Update checklist me add ho gaya - Revise Rate / Sync to GeM ab wahan se chalega.");
   };
 
-  // Excel Download logic
-  const handleDownloadFilledExcel = () => {
-    if (uploadedRows.length === 0) {
-      alert("No data available to download. Please upload a sheet first.");
-      return;
-    }
-
-    const filledData = originalExcelData.map((row, index) => {
+  // Excel Download logic - the row-building part is shared with the on-screen
+  // preview (handlePreviewFilledExcel below), so the popup shows exactly the
+  // same rows/values that end up in the downloaded file.
+  const buildFilledExcelData = () => {
+    return originalExcelData.map((row, index) => {
       const mappedRow = uploadedRows.find(r => r.index === index);
 
       // Only rows that actually stand behind a quote get their numbers written
@@ -2134,7 +2176,15 @@ export default function GeMSyncPage() {
         "GeM Link": matchedListing?.gemLink || mappedRow?.gemLink || ""
       };
     });
+  };
 
+  const handleDownloadFilledExcel = () => {
+    if (uploadedRows.length === 0) {
+      alert("No data available to download. Please upload a sheet first.");
+      return;
+    }
+
+    const filledData = buildFilledExcelData();
     const worksheet = XLSX.utils.json_to_sheet(filledData);
 
     // Variant Groups: fill the CLIENT's own item-name column so the merged
@@ -2214,6 +2264,21 @@ export default function GeMSyncPage() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Quoted Requirements");
     XLSXStyle.writeFile(workbook, `Filled_${fileName || "Requirement"}.xlsx`);
+  };
+
+  // On-screen preview of the same rows/styling the download above produces,
+  // opened in a popup so the file doesn't have to be downloaded and reopened
+  // just to check how it will look.
+  const handlePreviewFilledExcel = () => {
+    if (uploadedRows.length === 0) {
+      alert("No data available to preview. Please upload a sheet first.");
+      return;
+    }
+    setExcelPreviewData(buildFilledExcelData());
+    setPreviewColumnFilters({});
+    setPreviewSort(null);
+    setPreviewOpenFilterCol(null);
+    setShowExcelPreviewModal(true);
   };
 
   // Rate Revision logic
@@ -2518,9 +2583,10 @@ export default function GeMSyncPage() {
 
   // Fields a group shares. The group exists precisely because its rows are
   // quoted against one GeM listing, so link, firm, rate, min qty and stock
-  // move together. Qty is deliberately NOT here - every row keeps its own,
-  // and only a merged display total is shown next to it.
-  const GROUP_SHARED_FIELDS: (keyof UploadedRow)[] = ["gemLink", "firmCode", "rate", "minQty", "availGemStock"];
+  // move together - and so does whether that one listing has been added to
+  // cart. Qty is deliberately NOT here - every row keeps its own, and only a
+  // merged display total is shown next to it.
+  const GROUP_SHARED_FIELDS: (keyof UploadedRow)[] = ["gemLink", "firmCode", "rate", "minQty", "availGemStock", "addedToCart"];
 
   // Single write path for row edits: the full patch lands on the edited row,
   // and only the shared subset spreads to its group siblings (so picking a
@@ -3064,12 +3130,20 @@ export default function GeMSyncPage() {
                     </div>
 
                     {mappingStatusFilter === "all" && (
-                      <button
-                        onClick={handleDownloadFilledExcel}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-lg"
-                      >
-                        <FiDownload size={12} /> Download Filled Excel
-                      </button>
+                      <>
+                        <button
+                          onClick={handlePreviewFilledExcel}
+                          className="bg-[var(--gem-card)] hover:bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                        >
+                          <FiEye size={12} /> Preview
+                        </button>
+                        <button
+                          onClick={handleDownloadFilledExcel}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-lg"
+                        >
+                          <FiDownload size={12} /> Download Filled Excel
+                        </button>
+                      </>
                     )}
                   </div>
 
@@ -3472,6 +3546,13 @@ export default function GeMSyncPage() {
                                     className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
                                     placeholder="0.00"
                                   />
+
+                                  {/* Qty x Rate total */}
+                                  {row.rate > 0 && (
+                                    <span className="text-[9px] text-[var(--gem-text-secondary)] block font-sans">
+                                      Total: ₹{(Math.round((Number(row.qty) || 0) * row.rate * 100) / 100).toLocaleString("en-IN")}
+                                    </span>
+                                  )}
 
                                   {/* Duplicate rate warning */}
                                   {duplicateWarning && (
@@ -4505,6 +4586,381 @@ export default function GeMSyncPage() {
               )}
             </div>
           )}
+
+          {/* =================== EXCEL PREVIEW MODAL =================== */}
+          {/* Same rows/values as buildFilledExcelData, with the same Mapped
+              Firm (green) / Comment (italic) / variant-group cell colors the
+              actual .xlsx download gets - shows what the file will look like
+              before it's downloaded. */}
+          {showExcelPreviewModal && (() => {
+            const previewKeys = excelPreviewData.length > 0 ? Object.keys(excelPreviewData[0]) : [];
+            const firstOriginal = originalExcelData[0] || {};
+            const itemNameKey =
+              ["Item Name", "item name", "Item", "item", "Name", "name", "Particulars", "particulars"]
+                .find(k => k in firstOriginal) || Object.keys(firstOriginal)[0];
+
+            const GUTTER_WIDTH = 36;
+            const CART_COL_WIDTH = 60;
+            const colWidth = (key: string) => previewColWidths[key] ?? 150;
+            const rowHeight = (i: number) => previewRowHeights[i] ?? 26;
+            // table-layout:fixed only reliably honors <colgroup> widths in
+            // Chromium/Edge when the <table> itself also carries an explicit
+            // width - without one, columns fall back to content-based auto
+            // sizing (confirmed live: some columns rendered 10x too wide,
+            // others too narrow, and every resize handle ended up positioned
+            // off in the wrong spot as a result). Recomputed on every render
+            // so a drag-resize actually grows/shrinks the table.
+            const totalTableWidth =
+              GUTTER_WIDTH + CART_COL_WIDTH + previewKeys.reduce((sum, key) => sum + colWidth(key), 0);
+
+            // Drag-to-resize, Excel style: grab the handle on a column's
+            // right edge or a row's bottom edge and drag. Uses Pointer Events
+            // + setPointerCapture (not window mousemove/mouseup listeners) so
+            // the drag keeps tracking the handle reliably even once the
+            // cursor moves off it - the standard, robust way to build this,
+            // and it needs no manual add/removeEventListener cleanup.
+            const makeColResizeHandlers = (key: string) => ({
+              onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.dataset.startX = String(e.clientX);
+                e.currentTarget.dataset.startWidth = String(colWidth(key));
+              },
+              onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+                if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                const startX = Number(e.currentTarget.dataset.startX || 0);
+                const startWidth = Number(e.currentTarget.dataset.startWidth || 150);
+                const next = Math.max(50, startWidth + (e.clientX - startX));
+                setPreviewColWidths(prev => ({ ...prev, [key]: next }));
+              },
+              onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              },
+            });
+            const makeRowResizeHandlers = (i: number) => ({
+              onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.dataset.startY = String(e.clientY);
+                e.currentTarget.dataset.startHeight = String(rowHeight(i));
+              },
+              onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+                if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                const startY = Number(e.currentTarget.dataset.startY || 0);
+                const startHeight = Number(e.currentTarget.dataset.startHeight || 26);
+                const next = Math.max(18, startHeight + (e.clientY - startY));
+                setPreviewRowHeights(prev => ({ ...prev, [i]: next }));
+              },
+              onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              },
+            });
+
+            // Excel-style AutoFilter. previewColumnFilters[key] holds the
+            // UNCHECKED values for that column (Excel's own convention -
+            // everything starts checked/visible). originalIndex is carried
+            // through the filter+sort so every downstream lookup (patchRow,
+            // groupedRow, rowHeight) still keys off the true row.index
+            // instead of the post-sort display position.
+            const columnUniqueValues = (key: string) => {
+              const seen = new Set<string>();
+              excelPreviewData.forEach((row) => seen.add(String(row[key] ?? "")));
+              return Array.from(seen).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+            };
+            const isRowVisible = (rowData: Record<string, unknown>) => {
+              for (const filterKey of Object.keys(previewColumnFilters)) {
+                const excluded = previewColumnFilters[filterKey];
+                if (!excluded || excluded.size === 0) continue;
+                if (excluded.has(String(rowData[filterKey] ?? ""))) return false;
+              }
+              return true;
+            };
+            const toggleFilterValue = (key: string, value: string) => {
+              setPreviewColumnFilters(prev => {
+                const next = { ...prev };
+                const set = new Set(next[key] || []);
+                if (set.has(value)) set.delete(value); else set.add(value);
+                if (set.size === 0) delete next[key]; else next[key] = set;
+                return next;
+              });
+            };
+            const setFilterAll = (key: string, values: string[], excludeAll: boolean) => {
+              setPreviewColumnFilters(prev => {
+                const next = { ...prev };
+                if (!excludeAll) delete next[key];
+                else next[key] = new Set(values);
+                return next;
+              });
+            };
+
+            const indexedRows = excelPreviewData.map((data, originalIndex) => ({ data, originalIndex }));
+            let visiblePreviewRows = indexedRows.filter(r => isRowVisible(r.data));
+            if (previewSort) {
+              const { key: sortKey, dir } = previewSort;
+              visiblePreviewRows = [...visiblePreviewRows].sort((a, b) => {
+                const av = String(a.data[sortKey] ?? "");
+                const bv = String(b.data[sortKey] ?? "");
+                const an = parseFloat(av);
+                const bn = parseFloat(bv);
+                const bothNumeric = av !== "" && bv !== "" && !isNaN(an) && !isNaN(bn);
+                const cmp = bothNumeric ? an - bn : av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+                return dir === "asc" ? cmp : -cmp;
+              });
+            }
+            const activeFilterCount = Object.values(previewColumnFilters).filter(s => s.size > 0).length;
+
+            return (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                onClick={() => setShowExcelPreviewModal(false)}
+              >
+                <div
+                  className="bg-white border border-[var(--gem-border)] rounded-2xl w-full max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="p-4 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex items-center justify-between shrink-0">
+                    <div>
+                      <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider">Excel Preview</h3>
+                      <p className="text-[10px] text-[var(--gem-text-secondary)] mt-0.5">
+                        Exactly what &quot;Filled_{fileName || "Requirement"}.xlsx&quot; will look like —{" "}
+                        {activeFilterCount > 0 || previewSort
+                          ? `${visiblePreviewRows.length} of ${excelPreviewData.length} row(s) shown`
+                          : `${excelPreviewData.length} row(s)`}
+                        . Drag a column&apos;s right edge or a row&apos;s bottom edge to resize it — use the funnel icon on a header to filter or sort it.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {(activeFilterCount > 0 || previewSort) && (
+                        <button
+                          onClick={() => { setPreviewColumnFilters({}); setPreviewSort(null); }}
+                          className="bg-white hover:bg-slate-50 text-slate-600 border border-slate-300 font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all"
+                        >
+                          Clear Filters
+                        </button>
+                      )}
+                      <button
+                        onClick={handleDownloadFilledExcel}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 shadow-md"
+                      >
+                        <FiDownload size={12} /> Download Excel
+                      </button>
+                      <button
+                        onClick={() => setShowExcelPreviewModal(false)}
+                        className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                      >
+                        <FiX size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-auto p-3 bg-white">
+                    <table className="border-collapse text-[11px]" style={{ tableLayout: "fixed", width: totalTableWidth }}>
+                      <colgroup>
+                        <col style={{ width: GUTTER_WIDTH }} />
+                        <col style={{ width: CART_COL_WIDTH }} />
+                        {previewKeys.map((key) => (
+                          <col key={key} style={{ width: colWidth(key) }} />
+                        ))}
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th className="bg-slate-100 border border-slate-300 sticky top-0 z-10 text-slate-400 text-center text-[10px] font-bold select-none">
+                            #
+                          </th>
+                          <th className="bg-slate-100 border border-slate-300 sticky top-0 z-10 text-slate-600 text-center text-[10px] font-bold select-none">
+                            <span className="inline-flex items-center gap-1">
+                              <FiShoppingCart size={11} /> Cart
+                            </span>
+                          </th>
+                          {previewKeys.map((key) => (
+                            <th
+                              key={key}
+                              className="relative bg-slate-100 text-slate-700 font-bold text-left px-2 py-1.5 border border-slate-300 sticky top-0 z-10 select-none"
+                            >
+                              <div className="flex items-center gap-1 pr-3">
+                                <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{key}</span>
+                                <button
+                                  data-preview-filter-trigger
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewFilterSearch("");
+                                    setPreviewOpenFilterCol(previewOpenFilterCol === key ? null : key);
+                                  }}
+                                  title="Filter / sort this column"
+                                  className={`shrink-0 p-0.5 rounded normal-case ${
+                                    (previewColumnFilters[key]?.size ?? 0) > 0 || previewSort?.key === key
+                                      ? "text-blue-600 bg-blue-100"
+                                      : "text-slate-400 hover:text-slate-700 hover:bg-slate-200"
+                                  }`}
+                                >
+                                  <FiFilter size={10} />
+                                </button>
+                              </div>
+                              {previewOpenFilterCol === key && (() => {
+                                const allValues = columnUniqueValues(key);
+                                const excluded = previewColumnFilters[key] || new Set<string>();
+                                const shownValues = previewFilterSearch
+                                  ? allValues.filter(v => v.toLowerCase().includes(previewFilterSearch.toLowerCase()))
+                                  : allValues;
+                                return (
+                                  <div
+                                    data-preview-filter-dropdown
+                                    className="absolute top-full left-0 mt-1 z-40 bg-white border border-slate-300 rounded-lg shadow-xl w-56 flex flex-col normal-case font-normal"
+                                  >
+                                    <div className="p-1.5 border-b border-slate-200 flex items-center gap-1">
+                                      <button
+                                        onClick={() => setPreviewSort({ key, dir: "asc" })}
+                                        className={`flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-bold rounded ${
+                                          previewSort?.key === key && previewSort.dir === "asc" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                                        }`}
+                                      >
+                                        <FiArrowUp size={10} /> A-Z
+                                      </button>
+                                      <button
+                                        onClick={() => setPreviewSort({ key, dir: "desc" })}
+                                        className={`flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-bold rounded ${
+                                          previewSort?.key === key && previewSort.dir === "desc" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                                        }`}
+                                      >
+                                        <FiArrowDown size={10} /> Z-A
+                                      </button>
+                                    </div>
+                                    <div className="p-1.5 border-b border-slate-200">
+                                      <div className="relative">
+                                        <FiSearch size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                          type="text"
+                                          value={previewFilterSearch}
+                                          onChange={(e) => setPreviewFilterSearch(e.target.value)}
+                                          placeholder="Search values..."
+                                          className="w-full text-[11px] border border-slate-200 rounded pl-6 pr-2 py-1 focus:outline-none focus:border-blue-400"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 text-[10px]">
+                                      <button onClick={() => setFilterAll(key, allValues, false)} className="font-bold text-blue-600 hover:underline">Select All</button>
+                                      <span className="text-slate-300">|</span>
+                                      <button onClick={() => setFilterAll(key, allValues, true)} className="font-bold text-blue-600 hover:underline">Clear</button>
+                                    </div>
+                                    <div className="max-h-56 overflow-y-auto py-1">
+                                      {shownValues.length === 0 && (
+                                        <div className="px-2 py-2 text-[10px] text-slate-400 text-center">No matches</div>
+                                      )}
+                                      {shownValues.map((val) => (
+                                        <label key={val} className="flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-slate-50 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={!excluded.has(val)}
+                                            onChange={() => toggleFilterValue(key, val)}
+                                            className="w-3 h-3 accent-blue-600 shrink-0"
+                                          />
+                                          <span className="truncate">{val === "" ? "(Blanks)" : val}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                              {/* Stays INSIDE this th's own box (no negative
+                                  offset) - extending it past the border into
+                                  the next column's <th> put it underneath
+                                  that sibling cell (same z-index, later in
+                                  DOM order always wins the tie), so every
+                                  click landed on the neighbor instead of the
+                                  handle. Confirmed live: elementFromPoint at
+                                  the handle's reported position returned the
+                                  next <th>, and 0 pointer events ever reached
+                                  the handle itself. */}
+                              <div
+                                {...makeColResizeHandlers(key)}
+                                title="Drag to resize column"
+                                className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize z-20 touch-none flex justify-center group"
+                              >
+                                <span className="w-0.5 h-full bg-transparent group-hover:bg-blue-400 group-active:bg-blue-500" />
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visiblePreviewRows.map(({ data: rowData, originalIndex: i }) => {
+                          const groupedRow = uploadedRows.find(r => r.index === i);
+                          const rowH = rowHeight(i);
+                          return (
+                            <tr key={i}>
+                              <td
+                                className="relative border border-slate-200 bg-slate-50 text-center text-slate-400 font-mono select-none"
+                                style={{ height: rowH, verticalAlign: "middle" }}
+                              >
+                                {i + 1}
+                                <div
+                                  {...makeRowResizeHandlers(i)}
+                                  title="Drag to resize row"
+                                  className="absolute left-0 right-0 -bottom-1.5 h-3 cursor-row-resize z-20 touch-none flex items-center group"
+                                >
+                                  <span className="h-0.5 w-full bg-transparent group-hover:bg-blue-400 group-active:bg-blue-500" />
+                                </div>
+                              </td>
+                              <td
+                                className="border border-slate-200 text-center bg-white"
+                                style={{ height: rowH, overflow: "hidden", verticalAlign: "middle" }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={!!groupedRow?.addedToCart}
+                                  onChange={() => patchRow(i, { addedToCart: !groupedRow?.addedToCart })}
+                                  title="Added to cart on GeM?"
+                                  className="w-3.5 h-3.5 accent-emerald-600 cursor-pointer"
+                                />
+                              </td>
+                              {previewKeys.map((key) => {
+                                const value = rowData[key];
+                                const isVariantItemCell = key === itemNameKey && !!groupedRow?.variantGroupId;
+                                const isMappedFirmCell = key === "Mapped Firm" && !!value;
+                                const isCommentCell = key === "Comment" && !!value;
+                                const style: React.CSSProperties = {
+                                  height: rowH,
+                                  overflow: "hidden",
+                                  verticalAlign: "top",
+                                };
+                                let cellClass = "px-2 py-1 border border-slate-200";
+                                if (isVariantItemCell) {
+                                  style.backgroundColor = variantColor(groupedRow!.variantGroupColor).ui;
+                                  cellClass += " font-bold text-slate-800 whitespace-nowrap overflow-hidden text-ellipsis";
+                                } else if (isMappedFirmCell) {
+                                  style.backgroundColor = "#C6EFCE";
+                                  style.color = "#006100";
+                                  cellClass += " font-bold whitespace-nowrap overflow-hidden text-ellipsis";
+                                } else if (isCommentCell) {
+                                  cellClass += " italic text-slate-500 whitespace-normal";
+                                } else {
+                                  cellClass += " text-slate-700 whitespace-nowrap overflow-hidden text-ellipsis";
+                                }
+                                return (
+                                  <td key={key} className={cellClass} style={style}>
+                                    {String(value ?? "")}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                        {visiblePreviewRows.length === 0 && (
+                          <tr>
+                            <td colSpan={2 + previewKeys.length} className="text-center py-8 text-slate-400 text-[11px] font-bold uppercase tracking-wider border border-slate-200">
+                              No rows match the current filter(s)
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* =================== BUILD SHEET FROM SCRATCH MODAL =================== */}
           {showBuildSheetModal && (
