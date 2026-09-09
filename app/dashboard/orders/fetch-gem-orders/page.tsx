@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import AddItemModal from "@/components/AddItemModal";
 import {
   FiArrowLeft,
   FiCheckCircle,
@@ -17,7 +18,8 @@ import {
   FiChevronUp,
   FiChevronDown,
   FiZap,
-  FiX
+  FiX,
+  FiPlus
 } from "react-icons/fi";
 
 interface RawGeMOrder {
@@ -83,6 +85,7 @@ export default function FetchGeMOrdersPage() {
   const [showFetchHistory, setShowFetchHistory] = useState(false);
   const [fetchHistory, setFetchHistory] = useState<{ firmCode: string; firmName: string; lastFetchedAt: string | null }[]>([]);
   const [loadingFetchHistory, setLoadingFetchHistory] = useState(false);
+  const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: "firmCode" | "instituteName" | "itemName"; direction: "asc" | "desc" } | null>(null);
 
@@ -527,6 +530,13 @@ export default function FetchGeMOrdersPage() {
         </button>
         <div className="flex items-center gap-3">
           <button
+            onClick={() => setIsAddItemModalOpen(true)}
+            title="Add a new stock item without leaving this page - useful when a row below shows No match"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+          >
+            <FiPlus size={14} /> Add New Item
+          </button>
+          <button
             onClick={openFetchHistory}
             title="Har firm ke GeM orders last kab fetch hue the"
             className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
@@ -895,6 +905,14 @@ export default function FetchGeMOrdersPage() {
           </div>
         </div>
       )}
+
+      <AddItemModal
+        isOpen={isAddItemModalOpen}
+        onClose={() => {
+          setIsAddItemModalOpen(false);
+          fetchStockItems(); // so a newly-added item shows up for matching right away
+        }}
+      />
     </div>
   );
 }
