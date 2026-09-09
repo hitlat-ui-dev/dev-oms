@@ -16,6 +16,7 @@ export default function NewDDEntryPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [accounts, setAccounts] = useState<FirmBankAccount[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -36,7 +37,10 @@ export default function NewDDEntryPage() {
   });
 
   useEffect(() => {
-    fetch("/api/firm-bank-accounts").then((r) => r.json()).then((d) => setAccounts(Array.isArray(d) ? d : []));
+    fetch("/api/firm-bank-accounts")
+      .then((r) => r.json())
+      .then((d) => setAccounts(Array.isArray(d) ? d : []))
+      .finally(() => setAccountsLoaded(true));
   }, []);
 
   const handleScan = async (file: File) => {
@@ -170,6 +174,15 @@ export default function NewDDEntryPage() {
                     <option key={a._id} value={a._id}>{a.firmCode} — {a.bankName} ({a.accountNumber.slice(-4)})</option>
                   ))}
                 </select>
+                {accountsLoaded && accounts.length === 0 && (
+                  <p className="mt-1.5 text-[10px] font-bold text-amber-700">
+                    No firm bank accounts set up yet —{" "}
+                    <Link href="/dashboard/account/dd-tracking/firm-bank-accounts" className="underline hover:text-amber-900">
+                      add one here first
+                    </Link>
+                    .
+                  </p>
+                )}
               </Field>
               <Field label="Purpose">
                 <select value={form.purpose} onChange={(e) => setForm({ ...form, purpose: e.target.value })} className={inputCls}>
