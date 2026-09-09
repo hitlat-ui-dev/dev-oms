@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Rate Variant Generator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #64748b;
+    --ink-faint: #94a3b8;
+    --paper: #f1f5f9;
+    --panel: #ffffff;
+    --line: #e2e8f0;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-dim: #eff6ff;
+    --up: #059669;
+    --down: #dc2626;
+    --gold: #1d4ed8;
+    --gold-dim: #eff6ff;
+    --mono: 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
+    --icon-1: #334155; --icon-2: #2563eb; --icon-3: #059669; --icon-4: #9333ea; --icon-5: #dc2626; --icon-6: #0284c7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 20px 0 40px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+
+  .tool-intro { margin: 0 0 18px; color: var(--ink-soft); font-size: 12px; max-width: 64ch; }
+
+  /* Tabs styled to match the app's pill sub-nav (see GeM Bids section tabs) */
+  .tabs {
+    display: flex; gap: 2px; margin: 0 0 22px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 4px; box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  }
+  .tab-btn {
+    background: none; border: none; padding: 10px 20px; font-size: 11px; cursor: pointer;
+    color: var(--ink-soft); font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+    border-radius: 8px; font-family: inherit; flex: 1;
+    transition: background .15s, color .15s;
+  }
+  .tab-btn:hover { color: var(--ink); }
+  .tab-btn.active { color: white; background: var(--accent); box-shadow: 0 1px 2px rgba(15,23,42,0.15); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px 24px; margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+  }
+  .panel h2 {
+    font-size: 12.5px; margin: 0 0 14px; font-weight: 800; color: var(--ink);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .panel h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 7px;
+    color: white; font-size: 11px; font-family: var(--mono); font-weight: 700;
+    flex-shrink: 0; box-shadow: 0 2px 4px rgba(15,23,42,0.15);
+  }
+  .panel h2 .num.c1 { background: var(--icon-1); }
+  .panel h2 .num.c2 { background: var(--icon-2); }
+  .panel h2 .num.c3 { background: var(--icon-3); }
+  .panel h2 .num.c4 { background: var(--icon-4); }
+  .panel h2 .num.c5 { background: var(--icon-5); }
+  .panel h2 .num.c6 { background: var(--icon-6); }
+
+  #dropzone1, #dropzone2 {
+    border: 1.5px dashed #cbd5e1; border-radius: 10px; padding: 26px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s; background: #f8fafc;
+  }
+  #dropzone1:hover, #dropzone1.drag, #dropzone2:hover, #dropzone2.drag { border-color: var(--accent); background: var(--accent-dim); }
+  .dz-main { font-size: 14px; margin-bottom: 4px; color: var(--ink); font-weight: 700; }
+  .dz-sub { font-size: 12px; color: var(--ink-faint); }
+  .file-status { margin-top: 12px; font-size: 13px; font-family: var(--mono); color: var(--ink); display: none; font-weight: 600; }
+
+  select, input[type=number], input[type=text] {
+    font-family: inherit; font-size: 14px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink);
+  }
+  select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+  label.field { display: block; margin-bottom: 14px; }
+  label.field .label-text { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+  .col-select-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .col-select-row label.field { flex: 1; min-width: 200px; }
+
+  table.brackets { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.brackets th {
+    text-align: left; font-weight: 700; font-size: 10.5px; color: var(--ink-soft);
+    padding: 6px 8px; border-bottom: 2px solid var(--line);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  table.brackets td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  table.brackets input { width: 100%; padding: 4px 6px; font-size: 13px; }
+  table.brackets tr:last-child td { border-bottom: none; }
+  table.brackets .remove {
+    background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 16px;
+    width: 28px; height: 28px; border-radius: 6px;
+  }
+  table.brackets .remove:hover { background: #fee2e2; color: var(--down); }
+
+  .variant-row {
+    display: grid; grid-template-columns: 24px 1fr 200px 32px; align-items: center; gap: 12px;
+    padding: 8px 0; border-bottom: 1px solid var(--line);
+  }
+  .variant-row:last-child { border-bottom: none; }
+  .variant-row .idx { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+  .variant-row .name { font-size: 13.5px; }
+  .variant-row select { width: 100%; }
+  .variant-row .remove {
+    background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 16px;
+    width: 28px; height: 28px; border-radius: 6px;
+  }
+  .variant-row .remove:hover { background: #fee2e2; color: var(--down); }
+
+  .dash-btn {
+    margin-top: 10px; font-size: 11px; background: none; border: 1.5px dashed #93c5fd;
+    color: var(--accent); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
+    font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .dash-btn:hover { background: var(--accent-dim); }
+  .dash-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .primary-btn {
+    background: var(--accent); color: white; border: none; padding: 11px 22px;
+    border-radius: 10px; font-size: 12px; cursor: pointer; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .primary-btn:hover { background: var(--accent-hover); }
+  .primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .secondary-btn {
+    background: #0f172a; color: white; border: none; padding: 10px 18px;
+    border-radius: 10px; font-size: 11px; cursor: pointer; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .secondary-btn:hover { background: #1e293b; }
+  .ghost-btn {
+    background: #f8fafc; color: var(--ink); border: 1px solid var(--line); padding: 9px 16px;
+    border-radius: 10px; font-size: 11px; cursor: pointer; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .ghost-btn:hover { background: #f1f5f9; }
+
+  /* Optional extras */
+  .opt-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line);
+  }
+  .opt-row:last-child { border-bottom: none; }
+  .opt-row input[type=checkbox] { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--accent); flex-shrink: 0; }
+  .opt-row .opt-body { flex: 1; }
+  .opt-row .opt-title { font-size: 13px; font-weight: 700; color: var(--ink); }
+  .opt-row .opt-desc { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .opt-row .opt-extra { margin-top: 8px; display: none; }
+  .opt-row.checked { background: var(--gold-dim); border-radius: 8px; margin: 0 -10px; padding: 10px; }
+  .opt-row.checked .opt-extra { display: block; }
+
+  #previewWrap1, #previewWrap2 { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table.preview { border-collapse: collapse; font-size: 12.5px; font-family: var(--mono); white-space: nowrap; width: 100%; }
+  table.preview th {
+    background: #f8fafc; color: var(--ink-soft); text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line);
+    font-family: Arial, Helvetica, sans-serif; font-weight: 800; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  table.preview th.best { background: var(--accent); color: white; }
+  table.preview th:first-child, table.preview td:first-child { text-align: left; }
+  table.preview td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+  table.preview .up { color: var(--up); }
+  table.preview .down { color: var(--down); }
+  table.preview tbody tr:hover { background: #f8fafc; }
+  table.preview tfoot td {
+    padding: 8px 10px; border-top: 2px solid #0f172a; font-weight: 700; background: #f8fafc;
+  }
+  table.preview tfoot td.best { background: var(--gold-dim); color: var(--gold); }
+
+  .footer-actions { display: flex; gap: 12px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  .note { font-size: 11px; color: var(--ink-faint); margin-top: 8px; }
+  .hidden { display: none !important; }
+  .preset-row { display: flex; gap: 10px; margin-top: 14px; }
+</style>
+</head>
+<body>
+
+  <div class="wrap">
+  <p class="tool-intro">Two tools in one: shift an existing rate up or down by a fixed amount per bracket, or mark up a base price by a percentage per bracket. Everything below is optional — nothing runs until you press its button.</p>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="tab1">Fixed ₹ Rate Variants</button>
+    <button class="tab-btn" data-tab="tab2">Margin % Calculator</button>
+  </div>
+
+  <!-- ============================= TAB 1 ============================= -->
+  <div class="tab-panel active" id="tab1">
+
+    <div class="panel">
+      <h2><span class="num c1">1</span>Upload your file</h2>
+      <div id="dropzone1">
+        <div class="dz-main">Click to choose a file, or drag one here</div>
+        <div class="dz-sub">.xlsx, .xls or .csv</div>
+        <input type="file" id="fileInput1" accept=".xlsx,.xls,.csv" style="display:none" />
+      </div>
+      <div id="fileStatus1" class="file-status"></div>
+      <div class="preset-row">
+        <button class="ghost-btn" id="savePresetBtn">💾 Save these settings for next time</button>
+        <button class="ghost-btn" id="loadPresetBtn">📂 Load saved settings</button>
+      </div>
+      <div class="note" id="presetNote"></div>
+    </div>
+
+    <div class="panel hidden" id="configPanel1">
+      <h2><span class="num c2">2</span>Which columns are which?</h2>
+      <div class="col-select-row">
+        <label class="field"><span class="label-text">Rate column</span><select id="rateColSelect1"></select></label>
+        <label class="field"><span class="label-text">Quantity column (optional — adds Total)</span><select id="qtyColSelect1"><option value="-1">None</option></select></label>
+        <label class="field"><span class="label-text">Sheet</span><select id="sheetSelect1"></select></label>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="bracketPanel1">
+      <h2><span class="num c3">3</span>Difference ranges by rate size</h2>
+      <table class="brackets">
+        <thead><tr><th>Rate from</th><th>Rate to</th><th>Min diff</th><th>Max diff</th><th></th></tr></thead>
+        <tbody id="bracketBody1"></tbody>
+      </table>
+      <button class="dash-btn" id="addBracketBtn1">+ Add another range</button>
+      <div class="note">Edit any of these, or add rows for finer bands. Values apply as ± around the original rate.</div>
+    </div>
+
+    <div class="panel hidden" id="variantPanel1">
+      <h2><span class="num c4">4</span>How many variant rate columns?</h2>
+      <div id="variantList1"></div>
+      <button class="dash-btn" id="addVariantBtn1">+ Add another variant column</button>
+    </div>
+
+    <div class="panel hidden" id="extrasPanel1">
+      <h2><span class="num c5">5</span>Optional extras <span style="font-weight:400;color:#8a8a80;">— tick only what you want</span></h2>
+
+      <div class="opt-row" id="optRound1">
+        <input type="checkbox" id="chkRound1">
+        <div class="opt-body">
+          <div class="opt-title">Round to clean numbers</div>
+          <div class="opt-desc">Rounds each generated rate to the nearest ₹ you choose, so quotations look tidy.</div>
+          <div class="opt-extra">
+            <label class="field" style="max-width:160px;"><span class="label-text">Round to nearest</span>
+              <input type="number" id="roundUnit1" value="5" min="0.05" step="0.05">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optFloor1">
+        <input type="checkbox" id="chkFloor1">
+        <div class="opt-body">
+          <div class="opt-title">Enforce a minimum floor price</div>
+          <div class="opt-desc">No generated rate will be allowed to go below the value in a column you pick (e.g. your cost price).</div>
+          <div class="opt-extra">
+            <label class="field" style="max-width:260px;"><span class="label-text">Floor price column</span>
+              <select id="floorColSelect1"></select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optHighlight1">
+        <input type="checkbox" id="chkHighlight1">
+        <div class="opt-body">
+          <div class="opt-title">Highlight the best-value variant</div>
+          <div class="opt-desc">Marks whichever variant column has the lowest Grand Total — useful for picking the most competitive quote. Needs a Quantity column.</div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optSheets1">
+        <input type="checkbox" id="chkSheets1">
+        <div class="opt-body">
+          <div class="opt-title">Export each variant as its own sheet</div>
+          <div class="opt-desc">Adds extra tabs (Rate 1, Rate 2, ...) to the downloaded file, each with just that variant's columns — handy for separate bid documents.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="generatePanel1">
+      <h2><span class="num c6">6</span>Generate &amp; preview</h2>
+      <button class="primary-btn" id="generateBtn1">Generate variant rates</button>
+      <div id="previewSection1" class="hidden" style="margin-top:18px;">
+        <div id="previewWrap1"><table class="preview" id="previewTable1"></table></div>
+        <div class="footer-actions">
+          <button class="secondary-btn" id="downloadBtn1">Download Excel</button>
+          <button class="secondary-btn" id="downloadCsvBtn1">Download CSV</button>
+          <button class="secondary-btn" id="regenBtn1">Re-roll (new random values)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================= TAB 2 ============================= -->
+  <div class="tab-panel" id="tab2">
+
+    <div class="panel">
+      <h2><span class="num c1">1</span>Upload your base price file</h2>
+      <div id="dropzone2">
+        <div class="dz-main">Click to choose a file, or drag one here</div>
+        <div class="dz-sub">.xlsx, .xls or .csv</div>
+        <input type="file" id="fileInput2" accept=".xlsx,.xls,.csv" style="display:none" />
+      </div>
+      <div id="fileStatus2" class="file-status"></div>
+    </div>
+
+    <div class="panel hidden" id="configPanel2">
+      <h2><span class="num c2">2</span>Which columns are which?</h2>
+      <div class="col-select-row">
+        <label class="field"><span class="label-text">Base price column</span><select id="rateColSelect2"></select></label>
+        <label class="field"><span class="label-text">Quantity column (optional — adds Total)</span><select id="qtyColSelect2"><option value="-1">None</option></select></label>
+        <label class="field"><span class="label-text">Sheet</span><select id="sheetSelect2"></select></label>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="bracketPanel2">
+      <h2><span class="num c3">3</span>Margin % ranges by base price size</h2>
+      <table class="brackets">
+        <thead><tr><th>Price from</th><th>Price to</th><th>Min margin %</th><th>Max margin %</th><th></th></tr></thead>
+        <tbody id="bracketBody2"></tbody>
+      </table>
+      <button class="dash-btn" id="addBracketBtn2">+ Add another range</button>
+      <div class="note">A cheap item and an expensive item rarely want the same % margin — set that here. Margin is applied as a percentage of the base price.</div>
+    </div>
+
+    <div class="panel hidden" id="variantPanel2">
+      <h2><span class="num c4">4</span>How many margin columns?</h2>
+      <div id="variantList2"></div>
+      <button class="dash-btn" id="addVariantBtn2">+ Add another margin column</button>
+    </div>
+
+    <div class="panel hidden" id="extrasPanel2">
+      <h2><span class="num c5">5</span>Optional extras <span style="font-weight:400;color:#8a8a80;">— tick only what you want</span></h2>
+
+      <div class="opt-row" id="optRound2">
+        <input type="checkbox" id="chkRound2">
+        <div class="opt-body">
+          <div class="opt-title">Round to clean numbers</div>
+          <div class="opt-desc">Rounds each marked-up price to the nearest ₹ you choose.</div>
+          <div class="opt-extra">
+            <label class="field" style="max-width:160px;"><span class="label-text">Round to nearest</span>
+              <input type="number" id="roundUnit2" value="5" min="0.05" step="0.05">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optFloor2">
+        <input type="checkbox" id="chkFloor2">
+        <div class="opt-body">
+          <div class="opt-title">Enforce a minimum floor price</div>
+          <div class="opt-desc">No marked-up price will go below the value in a column you pick.</div>
+          <div class="opt-extra">
+            <label class="field" style="max-width:260px;"><span class="label-text">Floor price column</span>
+              <select id="floorColSelect2"></select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optHighlight2">
+        <input type="checkbox" id="chkHighlight2">
+        <div class="opt-body">
+          <div class="opt-title">Highlight the best-value column</div>
+          <div class="opt-desc">Marks whichever margin column has the lowest Grand Total. Needs a Quantity column.</div>
+        </div>
+      </div>
+
+      <div class="opt-row" id="optSheets2">
+        <input type="checkbox" id="chkSheets2">
+        <div class="opt-body">
+          <div class="opt-title">Export each margin column as its own sheet</div>
+          <div class="opt-desc">Adds extra tabs to the downloaded file, one per margin column.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="generatePanel2">
+      <h2><span class="num c6">6</span>Generate &amp; preview</h2>
+      <button class="primary-btn" id="generateBtn2">Apply margin</button>
+      <div id="previewSection2" class="hidden" style="margin-top:18px;">
+        <div id="previewWrap2"><table class="preview" id="previewTable2"></table></div>
+        <div class="footer-actions">
+          <button class="secondary-btn" id="downloadBtn2">Download Excel</button>
+          <button class="secondary-btn" id="downloadCsvBtn2">Download CSV</button>
+          <button class="secondary-btn" id="regenBtn2">Re-roll (new random values)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   Shared helpers
+   ============================================================ */
+function colLetter(idx0) {
+  let s = '', n = idx0 + 1;
+  while (n > 0) { const rem = (n - 1) % 26; s = String.fromCharCode(65 + rem) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+function roundToNearest(value, unit) {
+  if (!unit || unit <= 0) return value;
+  return Math.round(value / unit) * unit;
+}
+function readWorkbookFile(file, cb) {
+  const isCsv = /\.csv$/i.test(file.name);
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let wb;
+    if (isCsv) {
+      wb = XLSX.read(e.target.result, { type: 'string' });
+    } else {
+      wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+    }
+    const data = {};
+    wb.SheetNames.forEach(name => { data[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' }); });
+    cb(wb.SheetNames, data);
+  };
+  if (isCsv) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+function csvDownload(headers, rows, filename) {
+  const esc = (v) => {
+    const s = (v === null || v === undefined) ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [headers.map(esc).join(',')];
+  rows.forEach(r => lines.push(r.map(esc).join(',')));
+  const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ============================================================
+   Tabs
+   ============================================================ */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ============================================================
+   Optional-extras row toggling (shared behaviour, both tabs)
+   ============================================================ */
+document.querySelectorAll('.opt-row input[type=checkbox]').forEach(chk => {
+  chk.addEventListener('change', () => {
+    chk.closest('.opt-row').classList.toggle('checked', chk.checked);
+  });
+});
+
+/* ============================================================
+   Factory: builds one tool instance (used for Tab 1 and Tab 2)
+   mode: 'fixed' (± amount) or 'percent' (± % of base price)
+   ============================================================ */
+function buildTool(mode, ids) {
+  const state = {
+    workbookData: null, sheetName: null, headers: [], rows: [],
+    rateColIndex: -1, qtyColIndex: -1, floorColIndex: -1,
+    brackets: mode === 'fixed'
+      ? [
+          { from: 0, to: 10, min: 0.5, max: 0.5 },
+          { from: 10, to: 100, min: 1, max: 4 },
+          { from: 100, to: 500, min: 10, max: 30 },
+          { from: 500, to: 1000, min: 20, max: 30 },
+          { from: 1000, to: 3000, min: 50, max: 130 },
+          { from: 3000, to: 20000, min: 150, max: 400 },
+        ]
+      : [
+          { from: 0, to: 100, min: 5, max: 10 },
+          { from: 100, to: 500, min: 4, max: 8 },
+          { from: 500, to: 2000, min: 3, max: 6 },
+          { from: 2000, to: 20000, min: 2, max: 5 },
+        ],
+    variants: [],
+    generatedRows: null,
+    variantCount: 0,
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const dropzone = $(ids.dropzone), fileInput = $(ids.fileInput), fileStatus = $(ids.fileStatus);
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+  function handleFile(file) {
+    readWorkbookFile(file, (sheetNames, data) => {
+      state.workbookData = data;
+      fileStatus.textContent = `Loaded "${file.name}" — ${sheetNames.length} sheet(s)`;
+      fileStatus.style.display = 'block';
+      const sheetSel = $(ids.sheetSelect);
+      sheetSel.innerHTML = '';
+      sheetNames.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sheetSel.appendChild(o); });
+      sheetSel.value = sheetNames[0];
+      sheetSel.onchange = () => loadSheet(sheetSel.value);
+      loadSheet(sheetNames[0]);
+      [ids.configPanel, ids.bracketPanel, ids.variantPanel, ids.extrasPanel, ids.generatePanel].forEach(p => $(p).classList.remove('hidden'));
+    });
+  }
+
+  function loadSheet(name) {
+    state.sheetName = name;
+    const raw = state.workbookData[name];
+    state.headers = (raw[0] || []).map(h => (h === '' || h == null) ? '(unnamed)' : String(h));
+    state.rows = raw.slice(1).filter(r => r.some(c => c !== ''));
+    populateColumnSelects();
+  }
+
+  function populateColumnSelects() {
+    const rateSel = $(ids.rateColSelect), qtySel = $(ids.qtyColSelect), floorSel = $(ids.floorColSelect);
+    rateSel.innerHTML = ''; qtySel.innerHTML = '<option value="-1">None</option>'; floorSel.innerHTML = '';
+    state.headers.forEach((h, i) => {
+      const label = `${colLetter(i)} — ${h}`;
+      const o1 = document.createElement('option'); o1.value = i; o1.textContent = label; rateSel.appendChild(o1);
+      const o2 = document.createElement('option'); o2.value = i; o2.textContent = label; qtySel.appendChild(o2);
+      const o3 = document.createElement('option'); o3.value = i; o3.textContent = label; floorSel.appendChild(o3);
+    });
+    let rateGuess = state.headers.findIndex(h => /rate|price/i.test(h));
+    if (rateGuess === -1) rateGuess = Math.min(2, state.headers.length - 1);
+    rateSel.value = rateGuess; state.rateColIndex = rateGuess;
+    rateSel.onchange = () => { state.rateColIndex = parseInt(rateSel.value, 10); };
+
+    let qtyGuess = state.headers.findIndex(h => /qty|quantity/i.test(h));
+    qtySel.value = qtyGuess === -1 ? -1 : qtyGuess; state.qtyColIndex = qtyGuess;
+    qtySel.onchange = () => { state.qtyColIndex = parseInt(qtySel.value, 10); };
+
+    floorSel.value = 0; state.floorColIndex = 0;
+    floorSel.onchange = () => { state.floorColIndex = parseInt(floorSel.value, 10); };
+  }
+
+  /* ---- bracket table ---- */
+  function renderBrackets() {
+    const body = $(ids.bracketBody);
+    body.innerHTML = '';
+    state.brackets.forEach((b, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="number" step="any" value="${b.from}" data-b="${i}" data-f="from"></td>
+        <td><input type="number" step="any" value="${b.to}" data-b="${i}" data-f="to"></td>
+        <td><input type="number" step="any" value="${b.min}" data-b="${i}" data-f="min"></td>
+        <td><input type="number" step="any" value="${b.max}" data-b="${i}" data-f="max"></td>
+        <td><button class="remove" data-remove="${i}">&times;</button></td>`;
+      body.appendChild(tr);
+    });
+    body.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('change', () => { state.brackets[parseInt(inp.dataset.b,10)][inp.dataset.f] = parseFloat(inp.value); });
+    });
+    body.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (state.brackets.length <= 1) return;
+        state.brackets.splice(parseInt(btn.dataset.remove, 10), 1);
+        renderBrackets();
+      });
+    });
+    $(ids.addBracketBtn).disabled = state.brackets.length >= 20;
+  }
+  $(ids.addBracketBtn).addEventListener('click', () => {
+    if (state.brackets.length >= 20) return;
+    const last = state.brackets[state.brackets.length - 1];
+    const newFrom = last ? last.to : 0;
+    state.brackets.push(mode === 'fixed'
+      ? { from: newFrom, to: newFrom + 1000, min: 1, max: 1 }
+      : { from: newFrom, to: newFrom + 1000, min: 1, max: 5 });
+    renderBrackets();
+  });
+  renderBrackets();
+
+  /* ---- variant rows ---- */
+  function renderVariants() {
+    const list = $(ids.variantList);
+    list.innerHTML = '';
+    state.variants.forEach((v, i) => {
+      const row = document.createElement('div');
+      row.className = 'variant-row';
+      const label = mode === 'fixed' ? `Rate ${i+1}` : `Margin ${i+1}`;
+      const opt1 = mode === 'fixed' ? 'Always higher' : 'Always add margin (higher)';
+      const opt2 = mode === 'fixed' ? 'Always lower' : 'Always reduce (lower)';
+      row.innerHTML = `
+        <div class="idx">${i+1}</div>
+        <div class="name">${label}</div>
+        <select>
+          <option value="higher" ${v.direction==='higher'?'selected':''}>${opt1}</option>
+          <option value="lower" ${v.direction==='lower'?'selected':''}>${opt2}</option>
+          <option value="mixed" ${v.direction==='mixed'?'selected':''}>Mixed (higher or lower per item)</option>
+        </select>
+        <button class="remove">&times;</button>`;
+      row.querySelector('select').addEventListener('change', e => { v.direction = e.target.value; });
+      row.querySelector('.remove').addEventListener('click', () => { state.variants.splice(i, 1); renderVariants(); });
+      list.appendChild(row);
+    });
+    $(ids.addVariantBtn).disabled = state.variants.length >= 6;
+  }
+  $(ids.addVariantBtn).addEventListener('click', () => {
+    if (state.variants.length >= 6) return;
+    state.variants.push({ direction: 'mixed' });
+    renderVariants();
+  });
+  state.variants.push({ direction: 'mixed' }, { direction: 'mixed' }, { direction: 'mixed' });
+  renderVariants();
+
+  /* ---- generation ---- */
+  function bracketFor(rate) {
+    for (const b of state.brackets) if (rate >= b.from && rate <= b.to) return b;
+    return state.brackets[state.brackets.length - 1];
+  }
+  function makeVariant(rate, direction, floor) {
+    const b = bracketFor(rate);
+    const mag = b.min === b.max ? b.min : (b.min + Math.random() * (b.max - b.min));
+    let sign = direction === 'higher' ? 1 : direction === 'lower' ? -1 : (Math.random() < 0.5 ? 1 : -1);
+
+    let diff, newRate;
+    if (mode === 'fixed') {
+      diff = sign * Math.round(mag * 100) / 100;
+      newRate = rate + diff;
+    } else {
+      diff = sign * (rate * mag / 100);
+      newRate = rate + diff;
+    }
+    if (newRate <= 0) { newRate = rate + Math.abs(diff); diff = Math.abs(diff); }
+
+    const roundOn = $(ids.chkRound).checked;
+    if (roundOn) {
+      const unit = parseFloat($(ids.roundUnit).value) || 1;
+      newRate = roundToNearest(newRate, unit);
+      diff = newRate - rate;
+    }
+
+    const floorOn = $(ids.chkFloor).checked;
+    if (floorOn && floor !== null && !isNaN(floor) && newRate < floor) {
+      newRate = floor;
+      diff = newRate - rate;
+    }
+
+    return {
+      rate: Math.round(newRate * 100) / 100,
+      diff: Math.round(diff * 100) / 100,
+      pct: mode === 'percent' ? Math.round((diff / rate) * 10000) / 100 : null,
+    };
+  }
+
+  function generate() {
+    state.variantCount = state.variants.length;
+    const hasQty = state.qtyColIndex >= 0;
+    const floorOn = $(ids.chkFloor).checked;
+    state.generatedRows = state.rows.map(row => {
+      const rate = parseFloat(row[state.rateColIndex]);
+      const qty = hasQty ? parseFloat(row[state.qtyColIndex]) : null;
+      const floor = floorOn ? parseFloat(row[state.floorColIndex]) : null;
+      const out = { original: row, variants: [] };
+      if (!isNaN(rate)) {
+        state.variants.forEach(v => {
+          const rv = makeVariant(rate, v.direction, floor);
+          rv.total = (hasQty && !isNaN(qty)) ? Math.round(qty * rv.rate * 100) / 100 : '';
+          out.variants.push(rv);
+        });
+      } else {
+        state.variants.forEach(() => out.variants.push({ rate: '', diff: '', total: '', pct: null }));
+      }
+      return out;
+    });
+    renderPreview();
+    $(ids.previewSection).classList.remove('hidden');
+  }
+
+  function bestVariantIndex() {
+    if (!$(ids.chkHighlight).checked || state.qtyColIndex < 0) return -1;
+    let best = -1, bestSum = Infinity;
+    for (let i = 0; i < state.variantCount; i++) {
+      const sum = state.generatedRows.reduce((acc, r) => acc + (typeof r.variants[i].total === 'number' ? r.variants[i].total : 0), 0);
+      if (sum < bestSum) { bestSum = sum; best = i; }
+    }
+    return best;
+  }
+
+  function renderPreview() {
+    const table = $(ids.previewTable);
+    const hasQty = state.qtyColIndex >= 0;
+    const best = bestVariantIndex();
+    const rateLabel = mode === 'fixed' ? 'Rate' : 'Price';
+    const diffLabel = mode === 'fixed' ? 'Diff' : 'Margin';
+
+    let head = '<thead><tr>';
+    state.headers.forEach(h => head += `<th>${h}</th>`);
+    for (let i = 0; i < state.variantCount; i++) {
+      const cls = i === best ? ' class="best"' : '';
+      head += `<th${cls}>${rateLabel} ${i+1}${i===best?' ★':''}</th><th${cls}>${diffLabel} ${i+1}</th>`;
+      if (hasQty) head += `<th${cls}>Total ${i+1}</th>`;
+    }
+    head += '</tr></thead>';
+
+    let body = '<tbody>';
+    state.generatedRows.slice(0, 15).forEach(r => {
+      body += '<tr>';
+      r.original.forEach((cell, ci) => { body += `<td>${ci === state.rateColIndex ? '<strong>' + cell + '</strong>' : cell}</td>`; });
+      r.variants.forEach(v => {
+        const cls = v.diff > 0 ? 'up' : (v.diff < 0 ? 'down' : '');
+        const sign = v.diff > 0 ? '+' : '';
+        const diffText = mode === 'percent' && v.pct !== null ? `${sign}${v.pct}%` : (v.diff === '' ? '' : sign + v.diff);
+        body += `<td>${v.rate}</td><td class="${cls}">${diffText}</td>`;
+        if (hasQty) body += `<td>${v.total}</td>`;
+      });
+      body += '</tr>';
+    });
+    body += '</tbody>';
+
+    let foot = '';
+    if (hasQty) {
+      foot = '<tfoot><tr>';
+      foot += `<td colspan="${state.headers.length}">Grand Total (all ${state.generatedRows.length} rows)</td>`;
+      for (let i = 0; i < state.variantCount; i++) {
+        const sum = state.generatedRows.reduce((acc, r) => acc + (typeof r.variants[i].total === 'number' ? r.variants[i].total : 0), 0);
+        const cls = i === best ? ' class="best"' : '';
+        foot += `<td${cls}></td><td${cls}></td><td${cls}>${Math.round(sum*100)/100}</td>`;
+      }
+      foot += '</tr></tfoot>';
+    }
+
+    table.innerHTML = head + body + foot;
+    table.parentElement.querySelectorAll('.note.dyn').forEach(n => n.remove());
+    if (state.generatedRows.length > 15) {
+      const note = document.createElement('div');
+      note.className = 'note dyn'; note.style.padding = '8px 10px';
+      note.textContent = `Showing first 15 of ${state.generatedRows.length} rows in this preview — totals above are for all rows.`;
+      table.parentElement.after(note);
+    }
+  }
+
+  $(ids.generateBtn).addEventListener('click', generate);
+  $(ids.regenBtn).addEventListener('click', generate);
+
+  /* ---- download: Excel (with formulas) ---- */
+  function buildOutputSheet(variantIndices) {
+    const hasQty = state.qtyColIndex >= 0;
+    const rateLabel = mode === 'fixed' ? 'Rate' : 'Price';
+    const diffLabel = mode === 'fixed' ? 'Difference' : 'Margin %';
+    const headers = [...state.headers];
+    variantIndices.forEach(i => {
+      headers.push(`${rateLabel} ${i+1}`, `${diffLabel} ${i+1}`);
+      if (hasQty) headers.push(`Total ${i+1}`);
+    });
+
+    const perCols = hasQty ? 3 : 2;
+    const rateColLetters = {}, totalColLetters = {};
+    variantIndices.forEach((i, pos) => {
+      const idx = state.headers.length + pos * perCols;
+      rateColLetters[i] = colLetter(idx);
+      if (hasQty) totalColLetters[i] = colLetter(idx + 2);
+    });
+    const qtyLetter = hasQty ? colLetter(state.qtyColIndex) : null;
+
+    const outRows = [headers];
+    state.generatedRows.forEach(r => {
+      const row = [...r.original];
+      variantIndices.forEach(i => {
+        const v = r.variants[i];
+        const diffOut = mode === 'percent' && v.pct !== null ? v.pct : v.diff;
+        row.push(v.rate, diffOut);
+        if (hasQty) row.push('');
+      });
+      outRows.push(row);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(outRows);
+    if (hasQty) {
+      state.generatedRows.forEach((r, i) => {
+        const excelRow = i + 2;
+        variantIndices.forEach(vi => {
+          ws[totalColLetters[vi] + excelRow] = { t: 'n', f: `${qtyLetter}${excelRow}*${rateColLetters[vi]}${excelRow}` };
+        });
+      });
+      const grandRow = state.generatedRows.length + 2;
+      ws[colLetter(0) + grandRow] = { t: 's', v: 'Grand Total' };
+      variantIndices.forEach(vi => {
+        const first = totalColLetters[vi] + 2, last = totalColLetters[vi] + (state.generatedRows.length + 1);
+        ws[totalColLetters[vi] + grandRow] = { t: 'n', f: `SUM(${first}:${last})` };
+      });
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      range.e.r = grandRow - 1;
+      ws['!ref'] = XLSX.utils.encode_range(range);
+    }
+    return { ws, headers };
+  }
+
+  $(ids.downloadBtn).addEventListener('click', () => {
+    if (!state.generatedRows) return;
+    const allIdx = [...Array(state.variantCount).keys()];
+    const wb = XLSX.utils.book_new();
+    const { ws } = buildOutputSheet(allIdx);
+    XLSX.utils.book_append_sheet(wb, ws, (state.sheetName || 'Sheet1').slice(0, 28));
+
+    if ($(ids.chkSheets).checked) {
+      const rateLabel = mode === 'fixed' ? 'Rate' : 'Price';
+      allIdx.forEach(i => {
+        const { ws: wsOne } = buildOutputSheet([i]);
+        XLSX.utils.book_append_sheet(wb, wsOne, `${rateLabel} ${i+1}`);
+      });
+    }
+    XLSX.writeFile(wb, `${mode === 'fixed' ? 'rate-variants' : 'margin-prices'}-${Date.now()}.xlsx`);
+  });
+
+  $(ids.downloadCsvBtn).addEventListener('click', () => {
+    if (!state.generatedRows) return;
+    const allIdx = [...Array(state.variantCount).keys()];
+    const hasQty = state.qtyColIndex >= 0;
+    const rateLabel = mode === 'fixed' ? 'Rate' : 'Price';
+    const diffLabel = mode === 'fixed' ? 'Difference' : 'Margin %';
+    const headers = [...state.headers];
+    allIdx.forEach(i => { headers.push(`${rateLabel} ${i+1}`, `${diffLabel} ${i+1}`); if (hasQty) headers.push(`Total ${i+1}`); });
+    const rows = state.generatedRows.map(r => {
+      const row = [...r.original];
+      r.variants.forEach(v => {
+        const diffOut = mode === 'percent' && v.pct !== null ? v.pct : v.diff;
+        row.push(v.rate, diffOut);
+        if (hasQty) row.push(v.total);
+      });
+      return row;
+    });
+    csvDownload(headers, rows, `${mode === 'fixed' ? 'rate-variants' : 'margin-prices'}-${Date.now()}.csv`);
+  });
+
+  state.renderBrackets = renderBrackets;
+  state.renderVariants = renderVariants;
+  return state;
+}
+
+/* ============================================================
+   Instantiate both tools
+   ============================================================ */
+const tool1 = buildTool('fixed', {
+  dropzone: 'dropzone1', fileInput: 'fileInput1', fileStatus: 'fileStatus1',
+  sheetSelect: 'sheetSelect1', rateColSelect: 'rateColSelect1', qtyColSelect: 'qtyColSelect1',
+  floorColSelect: 'floorColSelect1', configPanel: 'configPanel1', bracketPanel: 'bracketPanel1',
+  bracketBody: 'bracketBody1', addBracketBtn: 'addBracketBtn1', variantPanel: 'variantPanel1',
+  variantList: 'variantList1', addVariantBtn: 'addVariantBtn1', extrasPanel: 'extrasPanel1',
+  chkRound: 'chkRound1', roundUnit: 'roundUnit1', chkFloor: 'chkFloor1', chkHighlight: 'chkHighlight1',
+  chkSheets: 'chkSheets1', generatePanel: 'generatePanel1', generateBtn: 'generateBtn1',
+  regenBtn: 'regenBtn1', previewSection: 'previewSection1', previewTable: 'previewTable1',
+  downloadBtn: 'downloadBtn1', downloadCsvBtn: 'downloadCsvBtn1',
+});
+
+const tool2 = buildTool('percent', {
+  dropzone: 'dropzone2', fileInput: 'fileInput2', fileStatus: 'fileStatus2',
+  sheetSelect: 'sheetSelect2', rateColSelect: 'rateColSelect2', qtyColSelect: 'qtyColSelect2',
+  floorColSelect: 'floorColSelect2', configPanel: 'configPanel2', bracketPanel: 'bracketPanel2',
+  bracketBody: 'bracketBody2', addBracketBtn: 'addBracketBtn2', variantPanel: 'variantPanel2',
+  variantList: 'variantList2', addVariantBtn: 'addVariantBtn2', extrasPanel: 'extrasPanel2',
+  chkRound: 'chkRound2', roundUnit: 'roundUnit2', chkFloor: 'chkFloor2', chkHighlight: 'chkHighlight2',
+  chkSheets: 'chkSheets2', generatePanel: 'generatePanel2', generateBtn: 'generateBtn2',
+  regenBtn: 'regenBtn2', previewSection: 'previewSection2', previewTable: 'previewTable2',
+  downloadBtn: 'downloadBtn2', downloadCsvBtn: 'downloadCsvBtn2',
+});
+
+/* ============================================================
+   Presets (Tab 1 only) — saved to this browser via localStorage
+   ============================================================ */
+const PRESET_KEY = 'rateVariantTool_preset_v1';
+document.getElementById('savePresetBtn').addEventListener('click', () => {
+  const data = {
+    brackets: tool1.brackets,
+    variants: tool1.variants,
+    round: document.getElementById('chkRound1').checked,
+    roundUnit: document.getElementById('roundUnit1').value,
+    highlight: document.getElementById('chkHighlight1').checked,
+    sheets: document.getElementById('chkSheets1').checked,
+  };
+  localStorage.setItem(PRESET_KEY, JSON.stringify(data));
+  document.getElementById('presetNote').textContent = 'Saved. These ranges, variant directions and toggles will load next time you click "Load saved settings".';
+});
+document.getElementById('loadPresetBtn').addEventListener('click', () => {
+  const raw = localStorage.getItem(PRESET_KEY);
+  if (!raw) { document.getElementById('presetNote').textContent = 'No saved settings yet — use "Save these settings" first.'; return; }
+  const data = JSON.parse(raw);
+  tool1.brackets.length = 0; data.brackets.forEach(b => tool1.brackets.push(b));
+  tool1.variants.length = 0; data.variants.forEach(v => tool1.variants.push(v));
+  document.getElementById('chkRound1').checked = !!data.round;
+  document.getElementById('roundUnit1').value = data.roundUnit || 5;
+  document.getElementById('chkHighlight1').checked = !!data.highlight;
+  document.getElementById('chkSheets1').checked = !!data.sheets;
+  document.querySelectorAll('#tab1 .opt-row').forEach(r => {
+    const chk = r.querySelector('input[type=checkbox]');
+    if (chk) r.classList.toggle('checked', chk.checked);
+  });
+  tool1.renderBrackets();
+  tool1.renderVariants();
+  document.getElementById('presetNote').textContent = 'Loaded saved settings.';
+});
+</script>
+</body>
+</html>

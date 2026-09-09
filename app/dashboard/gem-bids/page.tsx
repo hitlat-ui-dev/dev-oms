@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { FiArrowLeft, FiX, FiLayers, FiFileText } from "react-icons/fi";
+import { FiArrowLeft, FiX, FiLayers, FiFileText, FiPercent } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import GemBidTable, { GemBid } from "@/components/GemBidTable";
 import { SECTIONS, SectionKey, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
@@ -245,6 +245,12 @@ export default function GemBidsPage() {
                   Start Sync
                 </button>
               )}
+              <Link
+                href="/dashboard/gem-bids/rate-variant-tool"
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+              >
+                <FiPercent size={13} /> Rate Variant Tool →
+              </Link>
               <Link
                 href="/dashboard/gem-bids/document-maker"
                 className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
