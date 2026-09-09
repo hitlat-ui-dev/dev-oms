@@ -1107,6 +1107,29 @@
       );
     }
 
+    // Re-assert the invoice number as the LAST field touched before
+    // CONTINUE. It's set FIRST above, but everything filled after it here
+    // (Billing Address, Place of Supply, State/UT Code) is exactly the kind
+    // of dependent-field change GeM's own form logic sometimes reacts to by
+    // silently resetting an earlier field - seen live: every other field
+    // shows correctly filled, but SELL_INVOICE_NO is back to empty and
+    // CONTINUE throws "Please fill all the mandatory fields" on an
+    // otherwise-complete form. Re-querying by id instead of reusing the
+    // earlier `invoiceNoInput` reference in case GeM re-rendered that node.
+    const invoiceNoInputFinal = document.getElementById("INVOICE_CREATION_FORM-SELL_INVOICE_NO");
+    if (invoiceNoInputFinal) {
+      setNativeValue(invoiceNoInputFinal, data.billNo);
+      fireEvents(invoiceNoInputFinal);
+      if (invoiceNoInputFinal.value !== String(data.billNo)) {
+        console.warn(
+          "[GeM Bill Auto-Submit] Invoice number field still doesn't hold the expected value right before CONTINUE:",
+          { expected: data.billNo, actual: invoiceNoInputFinal.value }
+        );
+      }
+    } else {
+      console.warn("[GeM Bill Auto-Submit] #INVOICE_CREATION_FORM-SELL_INVOICE_NO not found for the final re-assert.");
+    }
+
     await sleep(300);
     const continueBtn = await waitForElementByText(["button"], /^continue$/i, MAX_WAIT_MS);
     continueBtn.click();
