@@ -242,12 +242,13 @@ export default function GeMSyncPage() {
   const [gemCredentials, setGemCredentials] = useState<{ firmCode: string; gemUserId: string; gemPassword: string; gemMailId: string }[]>([]);
   const [syncingListingId, setSyncingListingId] = useState<string | null>(null);
   const [publishingEntryId, setPublishingEntryId] = useState<string | null>(null);
-  // Set once a publish automation is handed to the extension. That flow ends
-  // by writing to Mongo from the GeM tab, so this page's copy of the checklist
-  // and listings goes stale - and any later save from here (which replaces
-  // both collections wholesale) would wipe the extension's write. Refetching
-  // when the user comes back to this tab closes that window.
-  const awaitingPublishRef = useRef(false);
+  // Set once a Sync-to-GeM or Publish-to-GeM automation is handed to the
+  // extension. Both flows end by writing to Mongo straight from the GeM tab
+  // (mark_listing_synced / mark_new_link_published), with no way to push that
+  // into this already-open tab's React state - refetching when the user
+  // comes back to this tab is what makes the checklist row's tick show up
+  // without a manual reload.
+  const awaitingGemSyncRef = useRef(false);
 
   // Excel Upload states
   const [sheets, setSheets] = useState<SavedSheet[]>([]);
@@ -728,8 +729,15 @@ export default function GeMSyncPage() {
     }).catch(err => console.error("Failed to sync buyers to MongoDB", err));
   };
 
-  const saveListings = (updatedListings: FirmItemListing[]) => {
-    // Deduplicate listings array by (itemId/itemName + firmCode + buyerId)
+  // Updates local (React + localStorage) listings state, keeping the same
+  // dedup-by-(item+firm+buyer) safety net the old full-collection saveListings
+  // used to apply. Persistence is now a SEPARATE, scoped call per mutation
+  // (persistListingUpsert/persistListingDelete below) instead of resending
+  // this whole array - resending the full array let one tab's stale copy of
+  // OTHER teammates'/the browser extension's changes silently wipe them out
+  // (e.g. one user's Sync Checklist tick reverting a moment later because a
+  // second open tab, or the extension's own auto-mark-Synced call, raced it).
+  const applyListingsLocally = (updatedListings: FirmItemListing[]) => {
     const seen = new Map<string, FirmItemListing>();
     for (const lst of updatedListings) {
       if (!lst) continue;
@@ -752,11 +760,26 @@ export default function GeMSyncPage() {
     const deduplicated = Array.from(seen.values());
     setListings(deduplicated);
     localStorage.setItem("oms_firm_listings", JSON.stringify(deduplicated));
-    fetch("/api/gem-sync?action=save_listings", {
+    return deduplicated;
+  };
+
+  // Persists exactly ONE listing (add or update) via a scoped upsert-by-id -
+  // never touches any other document, so it can't collide with a concurrent
+  // edit to a different listing from another tab/teammate or the extension.
+  const persistListingUpsert = (listing: FirmItemListing) => {
+    fetch("/api/gem-sync?action=upsert_listing", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(deduplicated)
-    }).catch(err => console.error("Failed to sync listings to MongoDB", err));
+      body: JSON.stringify(listing)
+    }).catch(err => console.error("Failed to sync listing to MongoDB", err));
+  };
+
+  const persistListingDelete = (id: string) => {
+    fetch("/api/gem-sync?action=delete_listing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    }).catch(err => console.error("Failed to delete listing from MongoDB", err));
   };
 
   const saveRateHistory = (updatedHistory: RateHistory[]) => {
@@ -1670,7 +1693,8 @@ export default function GeMSyncPage() {
       date: new Date().toISOString()
     };
 
-    saveListings([...listings, newListing]);
+    applyListingsLocally([...listings, newListing]);
+    persistListingUpsert(newListing);
 
     // 3. Write initial entry to RateHistory
     const newHistory: RateHistory = {
@@ -1779,12 +1803,10 @@ export default function GeMSyncPage() {
         : undefined);
 
     if (existing) {
-      const updatedListings = listings.map(lst =>
-        lst.id === existing.id
-          ? { ...lst, ...sheetContext, rate: row.rate, minQty: row.minQty, gemLink: row.gemLink || "", availGemStock: row.availGemStock || 0, status: "Pending" as const }
-          : lst
-      );
-      saveListings(updatedListings);
+      const revisedListing: FirmItemListing = { ...existing, ...sheetContext, rate: row.rate, minQty: row.minQty, gemLink: row.gemLink || "", availGemStock: row.availGemStock || 0, status: "Pending" as const };
+      const updatedListings = listings.map(lst => lst.id === existing.id ? revisedListing : lst);
+      applyListingsLocally(updatedListings);
+      persistListingUpsert(revisedListing);
       return true;
     }
 
@@ -1803,7 +1825,8 @@ export default function GeMSyncPage() {
       ...sheetContext
     };
 
-    saveListings([...listings, newListing]);
+    applyListingsLocally([...listings, newListing]);
+    persistListingUpsert(newListing);
 
     const newHistory: RateHistory = {
       id: "hist_" + Date.now() + "_" + row.index,
@@ -2073,7 +2096,8 @@ export default function GeMSyncPage() {
       sheetName: entry.sheetName,
       sheetId: entry.sheetId
     };
-    saveListings([...listings, newListing]);
+    applyListingsLocally([...listings, newListing]);
+    persistListingUpsert(newListing);
 
     const newHistory: RateHistory = {
       id: "hist_" + Date.now(),
@@ -2326,21 +2350,18 @@ export default function GeMSyncPage() {
     }
 
     // Update listings
-    const updatedListings = listings.map(lst => {
-      if (lst.id === selectedListingForRevision.id) {
-        return {
-          ...lst,
-          rate: rateVal,
-          minQty: minQtyVal,
-          gemLink: newGemLinkValue.trim(),
-          availGemStock: availStockVal,
-          status: "Pending" as const // Flag checklist as pending again
-        };
-      }
-      return lst;
-    });
+    const revisedListing: FirmItemListing = {
+      ...selectedListingForRevision,
+      rate: rateVal,
+      minQty: minQtyVal,
+      gemLink: newGemLinkValue.trim(),
+      availGemStock: availStockVal,
+      status: "Pending" as const // Flag checklist as pending again
+    };
+    const updatedListings = listings.map(lst => lst.id === selectedListingForRevision.id ? revisedListing : lst);
 
-    saveListings(updatedListings);
+    applyListingsLocally(updatedListings);
+    persistListingUpsert(revisedListing);
 
     // Keep the open sheet's Requirement Mapping row in step with the revision.
     // Without this the console keeps showing the sheet's original quote while
@@ -2382,18 +2403,22 @@ export default function GeMSyncPage() {
     alert("✓ Rate revision updated and history logged!");
   };
 
-  // Toggle synced checkmark in per-firm sync checklist
+  // Toggle synced checkmark in per-firm sync checklist. Scoped to this one
+  // listing (not a full-collection resave) so ticking this checkbox can never
+  // clobber a teammate's concurrent edit to a DIFFERENT listing, or the
+  // browser extension's own auto-mark-Synced call landing on this same
+  // listing around the same time.
   const toggleSyncStatus = (listingId: string) => {
+    let toggled: FirmItemListing | null = null;
     const updatedListings = listings.map(lst => {
       if (lst.id === listingId) {
-        return {
-          ...lst,
-          status: (lst.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending"
-        };
+        toggled = { ...lst, status: (lst.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending" };
+        return toggled;
       }
       return lst;
     });
-    saveListings(updatedListings);
+    applyListingsLocally(updatedListings);
+    if (toggled) persistListingUpsert(toggled);
   };
 
   // Sync Checklist's "Sync" button needs GeM's own Product ID to find the
@@ -2433,6 +2458,7 @@ export default function GeMSyncPage() {
         newMinQty: lst.minQty,
         listingId: lst.id,
       });
+      awaitingGemSyncRef.current = true;
       alert("✓ GeM tab khul gaya, automation shuru ho gayi. Captcha bharna hoga - baaki khud ho jayega. Poora hone par yeh row apne aap Synced ho jayegi.");
     } catch (err: any) {
       alert("Extension trigger nahi hua: " + err.message);
@@ -2478,7 +2504,7 @@ export default function GeMSyncPage() {
         state: "Gujarat",
         entryId: entry.id,
       });
-      awaitingPublishRef.current = true;
+      awaitingGemSyncRef.current = true;
       alert("\u2713 GeM tab khul gaya, publish automation shuru ho gayi. Captcha aur OTP ke liye us tab par nazar rakho - poora hone par yeh row apne aap Stock Update me chali jayegi.");
     } catch (err: any) {
       alert("Extension trigger nahi hua: " + err.message);
@@ -2488,10 +2514,11 @@ export default function GeMSyncPage() {
   };
 
   // Pulls the checklist + listings back from Mongo when this tab regains
-  // focus after a publish was handed off - see awaitingPublishRef above.
+  // focus after a Sync/Publish-to-GeM automation was handed off - see
+  // awaitingGemSyncRef above.
   useEffect(() => {
     const onFocus = () => {
-      if (!awaitingPublishRef.current) return;
+      if (!awaitingGemSyncRef.current) return;
       fetch("/api/gem-sync")
         .then(res => res.json())
         .then(state => {
@@ -2507,7 +2534,8 @@ export default function GeMSyncPage() {
   const handleDeleteListing = (listingId: string) => {
     if (!confirm("Are you sure you want to delete this listing from the sync checklist?")) return;
     const updatedListings = listings.filter(lst => lst.id !== listingId);
-    saveListings(updatedListings);
+    applyListingsLocally(updatedListings);
+    persistListingDelete(listingId);
   };
 
   const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted && !r.notAvailable).length, [uploadedRows]);

@@ -186,13 +186,32 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    if (action === "save_listings") {
-      await db.collection("gem_listings").deleteMany({});
-      const sanitized = deduplicateListings(sanitizeBody(body));
-      if (sanitized.length > 0) {
-        await db.collection("gem_listings").insertMany(sanitized);
+    // Scoped upsert-by-id for a single listing (add or edit) - replaces the
+    // old whole-collection "save_listings" (deleteMany + insertMany of every
+    // listing the calling tab knew about). That pattern let one tab's stale
+    // in-memory snapshot silently wipe out listings another teammate had just
+    // added/edited, or a Sync Checklist tick the gem-bill-submit browser
+    // extension had just applied (via mark_listing_synced below) moments
+    // earlier - confirmed live: one user's items marked Synced kept reverting
+    // to Pending, and a second user's login still showed them as Pending with
+    // "the list unchanged", because whichever tab saved next overwrote the
+    // entire collection with its own outdated copy.
+    if (action === "upsert_listing") {
+      const listing = sanitizeBody([body])[0];
+      if (!listing?.id) {
+        return NextResponse.json({ error: "listing.id is required" }, { status: 400 });
       }
-      return NextResponse.json({ success: true, count: sanitized.length });
+      await db.collection("gem_listings").updateOne({ id: listing.id }, { $set: listing }, { upsert: true });
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delete_listing") {
+      const id = (body.id || "").toString().trim();
+      if (!id) {
+        return NextResponse.json({ error: "id is required" }, { status: 400 });
+      }
+      await db.collection("gem_listings").deleteOne({ id });
+      return NextResponse.json({ success: true });
     }
 
     if (action === "cleanup_duplicates") {
