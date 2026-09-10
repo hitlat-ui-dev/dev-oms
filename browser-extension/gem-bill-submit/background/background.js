@@ -390,6 +390,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "TRUSTED_CLICK") {
+    // payload: { x, y } - viewport CSS-pixel coordinates (element.
+    // getBoundingClientRect() center), sent from content-gem.js when a
+    // plain element.click() silently didn't work on some GeM page (likely
+    // an isTrusted check on GeM's own JS rejecting the synthetic click).
+    trustedClick(sender.tab.id, message.x, message.y)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "FETCH_AND_UPLOAD_GEM_DOCUMENT") {
     fetchAndUploadGemDocument(message.gemDocumentUrl, message.billId, message.omsOrigin)
       .then(() => sendResponse({ success: true }))
@@ -940,6 +951,40 @@ function waitForDownloadComplete(downloadId) {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// 6. GENUINELY TRUSTED CLICK (chrome.debugger's Input.dispatchMouseEvent) -
+//    for the rare button whose page JS checks event.isTrusted and silently
+//    ignores a plain element.click() (script-dispatched, always untrusted).
+//    CDP-injected input goes through the browser's real input pipeline, the
+//    same mechanism tools like Puppeteer/Selenium use for a "real" click -
+//    a page's own JS cannot tell it apart from an actual mouse click.
+// ---------------------------------------------------------------------------
+function sendDebuggerCommand(tabId, method, params) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
+}
+
+async function trustedClick(tabId, x, y) {
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      resolve();
+    });
+  });
+
+  try {
+    await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+    await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  } finally {
+    await new Promise((resolve) => chrome.debugger.detach({ tabId }, () => resolve()));
+  }
 }
 
 // ---------------------------------------------------------------------------

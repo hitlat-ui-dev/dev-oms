@@ -687,16 +687,25 @@
     // GeM's own page sometimes doesn't react to it (a real user clicking the
     // SAME button by hand navigates fine straight after) - most likely an
     // isTrusted check on GeM's side silently ignoring the script-dispatched
-    // click. If we're still sitting on this same mkp.gem.gov.in page a few
-    // seconds later, that's exactly what happened - notify the OMS tab
-    // instead of leaving the user staring at an unchanged page with no
-    // explanation at all. The step stays PUBLISH_PAIR_CONFIRM regardless - a
-    // manual click here leads to the exact same next screen either way.
-    await sleep(4000);
-    if (location.hostname === "mkp.gem.gov.in") {
-      console.warn('[GeM Bill Auto-Submit] "SELL THIS ITEM" click GeM par kaam nahi kiya - page navigate nahi hua.');
-      await notifyOms(data, '⚠️ "SELL THIS ITEM" apne aap click nahi ho paya - is page par khud dabao, aage ka step apne aap chalega.');
-    }
+    // click. The step stays PUBLISH_PAIR_CONFIRM regardless of which of the
+    // attempts below actually lands - a click here leads to the exact same
+    // next screen either way.
+    await sleep(2500);
+    if (location.hostname !== "mkp.gem.gov.in") return; // it worked, page has already navigated on
+
+    console.warn('[GeM Bill Auto-Submit] Plain click kaam nahi kiya - genuinely trusted click try kar raha hu (chrome.debugger).');
+    sellBtn.scrollIntoView({ block: "center" });
+    await sleep(300);
+    const rect = sellBtn.getBoundingClientRect();
+    const trustedResult = await chrome.runtime
+      .sendMessage({ type: "TRUSTED_CLICK", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      .catch((err) => ({ success: false, error: err.message }));
+
+    await sleep(2500);
+    if (location.hostname !== "mkp.gem.gov.in") return; // trusted click worked
+
+    console.warn('[GeM Bill Auto-Submit] Trusted click bhi kaam nahi kiya:', trustedResult?.error);
+    await notifyOms(data, '⚠️ "SELL THIS ITEM" apne aap click nahi ho paya - is page par khud dabao, aage ka step apne aap chalega.');
   }
 
   // admin-mkp catalog/new?...&gem_catalog_id=... - GeM asks "A gem catalog
