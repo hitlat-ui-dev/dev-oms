@@ -155,6 +155,17 @@ interface UploadedRow {
   isCompleted?: boolean;
   completedBy?: string;
   completedAt?: string;
+  // The exact Stock Update (gem_listings) or New Upload Link
+  // (gem_new_link_checklist) entry id this row was linked to by OK Link/
+  // Update Stock/New Link - stamped once, at the moment of that action.
+  // "Is the link broken?" is decided by checking whether THIS specific id
+  // still exists, not by re-deriving a match from the row's current
+  // firmCode/mappedItemId/gemLink - a live edit to those fields (picking a
+  // different Firm, say) used to make the row look "broken" (no current
+  // match) even though nothing was actually deleted. Only a genuine
+  // deletion of the linked entry now shows the redo marker.
+  linkedListingId?: string;
+  linkedNewLinkEntryId?: string;
   // No GeM listing exists for this item at all (client wants it, but it can't
   // be found on GeM) - pulls the row out of Uncompleted into its own tab
   // instead of leaving it stuck there forever with nothing actionable.
@@ -1089,6 +1100,19 @@ export default function GeMSyncPage() {
   // create a listing, which is not the same thing when a rate is about to be
   // quoted to the client (see handleDownloadFilledExcel).
   const getRowMasterListingStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
+    // A row already stamped with the id of the exact listing OK Link/Update
+    // Stock linked it to (see linkedListingId on UploadedRow) is checked
+    // strictly against that one document, not re-derived from the row's
+    // current fields - editing this row's Firm/Item mapping/GeM Link
+    // afterwards without re-clicking OK Link/Update Stock must NOT make it
+    // look "broken" (nothing was deleted, it's just mid-edit); only that
+    // specific listing actually being removed from Stock Update should.
+    // Rows from before this tracking existed have no linkedListingId - they
+    // fall through to the derived match below exactly as before.
+    if (row.linkedListingId) {
+      const listing = listings.find(l => l.id === row.linkedListingId);
+      return listing ? (listing.status === "Synced" ? "synced" : "pending") : "none";
+    }
     if (!row.firmCode) return "none";
     if (row.mappedItemId) {
       const listing = listingByBuyerItemFirm.get(`${selectedBuyerId}::${row.mappedItemId}::${row.firmCode}`);
@@ -1118,6 +1142,16 @@ export default function GeMSyncPage() {
   const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
     const listingStatus = getRowMasterListingStatus(row);
     if (listingStatus !== "none") return listingStatus;
+    // This row was explicitly linked to a Master List entry (not a New
+    // Upload Link one) that's now confirmed gone - report it as gone rather
+    // than falling through and accidentally picking up an unrelated New
+    // Upload Link entry that just happens to derive-match the same
+    // item/firm/buyer.
+    if (row.linkedListingId) return "none";
+    if (row.linkedNewLinkEntryId) {
+      const entry = newLinkChecklist.find(e => e.id === row.linkedNewLinkEntryId);
+      return entry ? (entry.status === "Synced" ? "synced" : "pending") : "none";
+    }
     if (!row.firmCode) return "none";
     if (row.mappedItemId) {
       const entry = newLinkEntryByBuyerFirmItem.get(`${selectedBuyerId}::${row.firmCode}::${row.mappedItemId}`);
@@ -1840,6 +1874,7 @@ export default function GeMSyncPage() {
       const updatedListings = listings.map(lst => lst.id === existing.id ? revisedListing : lst);
       applyListingsLocally(updatedListings);
       persistListingUpsert(revisedListing);
+      stampLinkedListing(row.index, existing.id);
       return true;
     }
 
@@ -1860,6 +1895,7 @@ export default function GeMSyncPage() {
 
     applyListingsLocally([...listings, newListing]);
     persistListingUpsert(newListing);
+    stampLinkedListing(row.index, newListing.id);
 
     const newHistory: RateHistory = {
       id: "hist_" + Date.now() + "_" + row.index,
@@ -1886,6 +1922,25 @@ export default function GeMSyncPage() {
   const rowsInScopeOf = (rows: UploadedRow[], rowIndex: number) => {
     const groupId = rows.find(r => r.index === rowIndex)?.variantGroupId;
     return (r: UploadedRow) => r.index === rowIndex || (!!groupId && r.variantGroupId === groupId);
+  };
+
+  // Stamps which exact Master List entry a row (and its whole Variant Group,
+  // which settles together - see rowsInScopeOf above) is now linked to, so
+  // getRowMasterListingStatus can check that one document directly instead of
+  // re-deriving a match every render. Clears any stale New Upload Link
+  // stamp - a row can only genuinely be linked to one or the other at a time.
+  const stampLinkedListing = (rowIndex: number, listingId: string) => {
+    setUploadedRows(prev => {
+      const inScope = rowsInScopeOf(prev, rowIndex);
+      return prev.map(r => (inScope(r) ? { ...r, linkedListingId: listingId, linkedNewLinkEntryId: undefined } : r));
+    });
+  };
+
+  const stampLinkedNewLinkEntry = (rowIndex: number, entryId: string) => {
+    setUploadedRows(prev => {
+      const inScope = rowsInScopeOf(prev, rowIndex);
+      return prev.map(r => (inScope(r) ? { ...r, linkedNewLinkEntryId: entryId, linkedListingId: undefined } : r));
+    });
   };
 
   const setRowCompleted = (rowIndex: number, completed: boolean) => {
@@ -1932,7 +1987,7 @@ export default function GeMSyncPage() {
         // so Firm/Rate/Stock/Min Qty/GeM Link would all be stale/meaningless
         // leftovers - clear them back to the same blank state a fresh row starts at.
         ...(nowNotAvailable
-          ? { firmCode: "", rate: 0, availGemStock: 0, minQty: 1, gemLink: "" }
+          ? { firmCode: "", rate: 0, availGemStock: 0, minQty: 1, gemLink: "", linkedListingId: undefined, linkedNewLinkEntryId: undefined }
           : {}),
       };
     }));
@@ -2012,6 +2067,7 @@ export default function GeMSyncPage() {
     };
 
     saveNewLinkChecklist([...newLinkChecklist, newEntry]);
+    stampLinkedNewLinkEntry(row.index, newEntry.id);
     setRowCompleted(row.index, true);
     logGemAction("new_link", row, newEntry.itemName);
     alert("✓ Added to New Upload Link checklist.");
@@ -2219,7 +2275,12 @@ export default function GeMSyncPage() {
       // name. Falls back to the row's own GeM link for the same buyer+firm,
       // the way upsertMasterListing resolves the same ambiguity.
       const rowLink = (mappedRow?.gemLink || "").trim();
+      // Prefer the exact listing this row is stamped as linked to (see
+      // linkedListingId on UploadedRow) - authoritative and immune to the
+      // buyer-id drift the derived matches below can still hit for rows from
+      // before that stamping existed.
       const matchedListing =
+        (mappedRow?.linkedListingId ? listings.find(lst => lst.id === mappedRow.linkedListingId) : undefined) ||
         listings.find(lst =>
           lst.buyerId === selectedBuyerId &&
           lst.firmCode === mappedRow?.firmCode &&
