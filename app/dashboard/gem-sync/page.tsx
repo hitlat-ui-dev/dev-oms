@@ -1064,6 +1064,25 @@ export default function GeMSyncPage() {
     return map;
   }, [newLinkChecklist]);
 
+  // Resolves any buyerId to a stable, comparable name. allBuyerOptions merges
+  // two id sources for "the same" buyer - the Sellers Directory (_id) and the
+  // older gem-sync Buyers list ("buyer_"+timestamp) - preferring whichever one
+  // already has that name first. If a buyer gets (re-)selected from a Sheet
+  // Library dropdown built at a different moment (e.g. the buyer only existed
+  // in gem-sync Buyers when a sheet's rows were first OK'd, and was added to
+  // the Sellers Directory only afterwards), handleChangeSheetBuyer can end up
+  // storing a DIFFERENT id for the exact same real buyer. That silently
+  // orphans every listing already created under the old id - every row that
+  // was properly OK'd/Update Stock'd shows the "link broken, redo it" marker
+  // at once, even though nothing about the actual GeM listing changed.
+  // Comparing by name is the fallback, the same way item matching already
+  // falls back from itemId to gemLink elsewhere in this file.
+  const buyerNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    allBuyerOptions.forEach(b => map.set(b.id, b.name.trim().toLowerCase()));
+    return map;
+  }, [allBuyerOptions]);
+
   // Master List (gem_listings) only - a row backed by one of these has a real
   // listing live under this firm on GeM. Deliberately separate from
   // getRowGemSyncStatus below: a New Upload Link entry is only an intention to
@@ -1077,6 +1096,20 @@ export default function GeMSyncPage() {
     }
     if (row.gemLink) {
       const listing = listingByBuyerFirmGemLink.get(`${selectedBuyerId}::${row.firmCode}::${row.gemLink.trim()}`);
+      if (listing) return listing.status === "Synced" ? "synced" : "pending";
+    }
+    // Exact buyerId match failed - fall back to matching by buyer NAME (see
+    // buyerNameById above) before concluding this row's link is really gone.
+    const selectedBuyerName = buyerNameById.get(selectedBuyerId);
+    if (selectedBuyerName) {
+      const listing = listings.find(lst =>
+        lst.firmCode === row.firmCode &&
+        buyerNameById.get(lst.buyerId) === selectedBuyerName &&
+        (
+          (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
+          (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
+        )
+      );
       if (listing) return listing.status === "Synced" ? "synced" : "pending";
     }
     return "none";
@@ -2147,17 +2180,19 @@ export default function GeMSyncPage() {
       // uploaded and pushed across to Stock Update. Quoting a client a rate
       // against a listing nobody can buy from is the thing being prevented.
       const listingStatus = mappedRow ? getRowMasterListingStatus(mappedRow) : "none";
-      // A confirmed live-Synced Master List entry overrides a stale
-      // notAvailable flag - a row marked Not Available and later properly
-      // OK'd/Update Stock'd could be left with notAvailable still true from
-      // before (setRowCompleted now clears it going forward, but this keeps
-      // already-affected rows from staying silently blanked out here too).
-      // Not extended to the "pending" branch below: that one isn't backed by
-      // a confirmed GeM sync, so a genuine Not Available cancellation still
-      // has to win there.
+      // isCompleted and notAvailable are meant to be mutually exclusive -
+      // toggleRowNotAvailable clears isCompleted when cancelling a row, and
+      // setRowCompleted now likewise clears notAvailable when OK Link/Update
+      // Stock is done. So isCompleted:true together with notAvailable:true
+      // can only be stale leftover data from before that setRowCompleted fix
+      // existed, never a genuine CURRENT cancellation - a real one would have
+      // isCompleted:false. Trusting isCompleted here (in both branches, not
+      // just "synced") is what lets an already-affected row start exporting
+      // correctly again with no need to re-click anything.
       const isQuotable =
         !!mappedRow &&
-        (listingStatus === "synced" || (!mappedRow.notAvailable && !!mappedRow.isCompleted && listingStatus === "pending"));
+        (mappedRow.isCompleted || !mappedRow.notAvailable) &&
+        (listingStatus === "synced" || (!!mappedRow.isCompleted && listingStatus === "pending"));
 
       if (!isQuotable) {
         // The client's own columns stay exactly as they came in - only the
