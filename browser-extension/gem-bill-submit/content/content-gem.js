@@ -682,6 +682,21 @@
 
     await setCatalogueStep(data, "PUBLISH_PAIR_CONFIRM");
     sellBtn.click();
+
+    // Confirmed live: button IS found and .click() fires with no error, but
+    // GeM's own page sometimes doesn't react to it (a real user clicking the
+    // SAME button by hand navigates fine straight after) - most likely an
+    // isTrusted check on GeM's side silently ignoring the script-dispatched
+    // click. If we're still sitting on this same mkp.gem.gov.in page a few
+    // seconds later, that's exactly what happened - notify the OMS tab
+    // instead of leaving the user staring at an unchanged page with no
+    // explanation at all. The step stays PUBLISH_PAIR_CONFIRM regardless - a
+    // manual click here leads to the exact same next screen either way.
+    await sleep(4000);
+    if (location.hostname === "mkp.gem.gov.in") {
+      console.warn('[GeM Bill Auto-Submit] "SELL THIS ITEM" click GeM par kaam nahi kiya - page navigate nahi hua.');
+      await notifyOms(data, '⚠️ "SELL THIS ITEM" apne aap click nahi ho paya - is page par khud dabao, aage ka step apne aap chalega.');
+    }
   }
 
   // admin-mkp catalog/new?...&gem_catalog_id=... - GeM asks "A gem catalog
