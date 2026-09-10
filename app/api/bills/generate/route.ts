@@ -145,6 +145,18 @@ export async function POST(req: Request) {
           instituteName: { $regex: `^${String(orders[0].instituteName || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
         });
 
+    // Miracle export's Party Name column must come from Seller Directory's
+    // "Seller Bill Name" (raw GeM institute names like "SIDDHPUR ITI" aren't
+    // valid accounting party names) - block the bill here rather than let it
+    // silently print the wrong name later at export time.
+    if (!seller?.sellerBillName?.trim()) {
+      const instituteNameForError = seller?.instituteName || orders[0].instituteName || "This institute";
+      return NextResponse.json(
+        { error: `"${instituteNameForError}" has no Seller Bill Name set. Open Seller Directory → Update Seller and fill in "Seller Bill Name" before generating this bill.` },
+        { status: 400 }
+      );
+    }
+
     const billType = decideBillType(company);
     const isTaxInvoice = billType === "TAX_INVOICE";
     const gstSplit = decideGstSplit(company.state, seller?.state);

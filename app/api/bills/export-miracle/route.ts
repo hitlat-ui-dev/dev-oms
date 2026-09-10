@@ -90,10 +90,26 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: `No bills found${dateDescription}${rangeDescription}` }, { status: 404 });
     }
 
+    // Look up each bill's Seller Directory entry live (by institute name)
+    // rather than trusting only the buyerSnapshot frozen at bill-creation
+    // time - so a Seller Bill Name filled in *after* a bill was generated
+    // (fixing a name Export for Miracle previously showed wrong/blank) is
+    // picked up on the very next export, with no need to regenerate the bill.
+    const instituteNames = [...new Set(bills.map((b) => String(b.buyerSnapshot?.instituteName || "").trim().toUpperCase()).filter(Boolean))];
+    const sellers = instituteNames.length
+      ? await db.collection("sellers").find({}, { projection: { instituteName: 1, sellerBillName: 1 } }).toArray()
+      : [];
+    const sellerBillNameByInstitute = new Map(
+      sellers
+        .filter((s) => instituteNames.includes(String(s.instituteName || "").trim().toUpperCase()))
+        .map((s) => [String(s.instituteName || "").trim().toUpperCase(), String(s.sellerBillName || "").trim()])
+    );
+
     const rows: Record<string, any>[] = [];
     for (const bill of bills) {
       const billDate = formatMiracleDate(new Date(bill.invoiceDate));
-      const partyName = bill.buyerSnapshot.sellerBillName || bill.buyerSnapshot.instituteName;
+      const instituteKey = String(bill.buyerSnapshot.instituteName || "").trim().toUpperCase();
+      const partyName = sellerBillNameByInstitute.get(instituteKey) || bill.buyerSnapshot.sellerBillName || bill.buyerSnapshot.instituteName;
       const stateName = bill.buyerSnapshot.state || bill.placeOfSupply || "";
 
       for (const it of bill.items) {
