@@ -275,15 +275,25 @@
       } else if (step === "STOCK_UPDATE") {
         await catalogueStockUpdateStep(data);
       } else if (step === "PUBLISH_SELL_ITEM") {
-        await publishSellItemStep(data);
+        // Confirmed live: pendingCatalogueUpdate persists up to 15 minutes
+        // (see the timeout check above) and checkPendingCatalogueUpdate runs
+        // on every matched GeM page, not just the one a step expects - a
+        // stale "publish" state re-ran this exact step's element search on
+        // fulfilment.gem.gov.in (nothing to do with the product page at
+        // all), logging a confusing "SELL THIS ITEM button nahi mila"
+        // warning with nothing the user could act on. Each PUBLISH_* step
+        // below only runs on the host it's actually meant for - on any other
+        // page it just waits quietly for the right one instead of warning
+        // about something that was never supposed to be there.
+        if (location.hostname === "mkp.gem.gov.in") await publishSellItemStep(data);
       } else if (step === "PUBLISH_PAIR_CONFIRM") {
-        await publishPairConfirmStep(data);
+        if (location.hostname === "admin-mkp.gem.gov.in") await publishPairConfirmStep(data);
       } else if (step === "PUBLISH_OFFERING") {
-        await publishOfferingStep(data);
+        if (location.hostname === "admin-mkp.gem.gov.in") await publishOfferingStep(data);
       } else if (step === "PUBLISH_TERMS") {
-        await publishTermsStep(data);
+        if (location.hostname === "admin-mkp.gem.gov.in") await publishTermsStep(data);
       } else if (step === "PUBLISH_OTP") {
-        await publishOtpStep(data);
+        if (location.hostname === "admin-mkp.gem.gov.in") await publishOtpStep(data);
       }
     } catch (err) {
       console.error("[GeM Bill Auto-Submit] Catalogue update automation fail hua:", err);
