@@ -1865,6 +1865,14 @@ export default function GeMSyncPage() {
           isCompleted: completed,
           completedBy: completed ? (currentUsername || "Unknown") : undefined,
           completedAt: completed ? new Date().toISOString() : undefined,
+          // Mutually exclusive with Not Available, same as toggleRowNotAvailable
+          // already enforces the other way (marking Not Available clears
+          // isCompleted) - without this, a row once marked Not Available and
+          // later properly OK'd/Update Stock'd stayed stuck with
+          // notAvailable:true, which silently blanks Comment/Rate/Firm/GeM
+          // Link in the exported Excel (see buildFilledExcelData's isQuotable
+          // check) even though the checklist showed it fully mapped/synced.
+          ...(completed ? { notAvailable: false, notAvailableBy: undefined, notAvailableAt: undefined } : {}),
         };
       });
     });
@@ -2139,10 +2147,17 @@ export default function GeMSyncPage() {
       // uploaded and pushed across to Stock Update. Quoting a client a rate
       // against a listing nobody can buy from is the thing being prevented.
       const listingStatus = mappedRow ? getRowMasterListingStatus(mappedRow) : "none";
+      // A confirmed live-Synced Master List entry overrides a stale
+      // notAvailable flag - a row marked Not Available and later properly
+      // OK'd/Update Stock'd could be left with notAvailable still true from
+      // before (setRowCompleted now clears it going forward, but this keeps
+      // already-affected rows from staying silently blanked out here too).
+      // Not extended to the "pending" branch below: that one isn't backed by
+      // a confirmed GeM sync, so a genuine Not Available cancellation still
+      // has to win there.
       const isQuotable =
         !!mappedRow &&
-        !mappedRow.notAvailable &&
-        (listingStatus === "synced" || (!!mappedRow.isCompleted && listingStatus === "pending"));
+        (listingStatus === "synced" || (!mappedRow.notAvailable && !!mappedRow.isCompleted && listingStatus === "pending"));
 
       if (!isQuotable) {
         // The client's own columns stay exactly as they came in - only the
