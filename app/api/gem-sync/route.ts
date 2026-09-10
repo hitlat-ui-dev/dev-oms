@@ -32,6 +32,30 @@ function deduplicateListings(items: any[]) {
   return Array.from(seen.values());
 }
 
+// A listing's firmCode/rate/availGemStock/minQty hold its last CONFIRMED-
+// synced values - the Requirement Mapping Console's Master List tab and
+// Excel quoting only ever read those, never a staged pendingRevision (see
+// FirmItemListing.pendingRevision in app/dashboard/gem-sync/page.tsx). This
+// is the Mongo-side $set clause that promotes a confirmed sync: copies
+// pendingRevision into the confirmed fields (a listing with nothing staged,
+// e.g. paired via "Add to Master List" against an already-live GeM
+// Catalogue item, just gets marked confirmed as-is).
+function promoteListingSetClause(doc: any): Record<string, any> {
+  const pending = doc?.pendingRevision;
+  if (pending) {
+    return {
+      firmCode: pending.firmCode,
+      rate: pending.rate,
+      availGemStock: pending.availGemStock,
+      minQty: pending.minQty,
+      pendingRevision: null,
+      everSynced: true,
+      status: "Synced",
+    };
+  }
+  return { everSynced: true, status: "Synced" };
+}
+
 // GET: Fetch the shared console state from MongoDB (with auto-deduplicated listings).
 // ?sheetContent={id} instead fetches just that one sheet's heavy uploadedRows/
 // originalExcelData payload from R2 on demand — never eagerly loaded for every
@@ -296,10 +320,11 @@ export async function POST(req: Request) {
       if (!id) {
         return NextResponse.json({ error: "id is required" }, { status: 400 });
       }
-      const result = await db.collection("gem_listings").updateOne({ id }, { $set: { status: "Synced" } });
-      if (result.matchedCount === 0) {
+      const doc = await db.collection("gem_listings").findOne({ id });
+      if (!doc) {
         return NextResponse.json({ error: `No listing found for id=${id}.` }, { status: 404 });
       }
+      await db.collection("gem_listings").updateOne({ id }, { $set: promoteListingSetClause(doc) });
       return NextResponse.json({ success: true });
     }
 
@@ -342,6 +367,7 @@ export async function POST(req: Request) {
           // so there is nothing left to push to GeM - Pending would just be
           // asking someone to redo work that is already done.
           status: "Synced",
+          everSynced: true,
           buyerId: entry.buyerId,
           date: new Date().toISOString(),
           spec: entry.spec,
@@ -351,6 +377,12 @@ export async function POST(req: Request) {
           sheetName: entry.sheetName,
           sheetId: entry.sheetId,
         });
+      } else {
+        // A listing already existed for this gemLink (e.g. "Push to Stock"
+        // was used by hand first, with its own pendingRevision still
+        // staged) - this automation run confirms it's genuinely live now,
+        // same promotion as mark_listing_synced above.
+        await db.collection("gem_listings").updateOne({ id: existing.id }, { $set: promoteListingSetClause(existing) });
       }
 
       await db.collection("gem_new_link_checklist").updateOne(
@@ -519,6 +551,7 @@ export async function POST(req: Request) {
         availGemStock: Number(body.availGemStock) || 0,
         minQty: Number(body.minQty) || 1,
         status: "Synced",
+        everSynced: true,
         buyerId: "",
         date: new Date().toISOString(),
       };

@@ -92,6 +92,27 @@ interface FirmItemListing {
   unit?: string;
   sheetName?: string;
   sheetId?: string;
+  // True once this listing has been CONFIRMED live on GeM at least once
+  // (status flipped to "Synced" at least once, manually or via the
+  // extension). firmCode/rate/availGemStock/minQty above always hold the
+  // last CONFIRMED-synced values - the Master List tab and Excel quoting
+  // only ever read those, and only for listings where this is true. A
+  // listing whose very first Update Stock/Push to Stock hasn't been synced
+  // yet has nothing confirmed to show.
+  everSynced?: boolean;
+  // A revision proposed via Update Stock/Push to Stock/Revise Rate that
+  // hasn't been confirmed live on GeM yet. The confirmed fields above stay
+  // untouched while this sits staged - "Sync to GeM" pushes THESE values to
+  // GeM, and confirming the sync (Sync Checklist tick, or the extension's
+  // own confirmation) promotes them into the confirmed fields and clears
+  // this. Cancelling a pending revision (see handleDeleteListing) discards
+  // just this, leaving the confirmed fields exactly as they were.
+  pendingRevision?: {
+    firmCode: string;
+    rate: number;
+    availGemStock: number;
+    minQty: number;
+  };
 }
 
 interface RateHistory {
@@ -1030,8 +1051,9 @@ export default function GeMSyncPage() {
   // Link), not that GeM's own catalogue has actually been confirmed updated.
   // The real status lives on the Sync Checklist entry this row's action
   // created (gem_listings for OK Link/Update Stock, gem_new_link_checklist
-  // for New Link) - keyed the same way upsertMasterListing matches an
-  // existing listing (buyer+item+firm, falling back to buyer+firm+gemLink).
+  // for New Link) - keyed the same way findMatchingListing/
+  // proposeListingRevision match an existing listing (buyer+item+firm,
+  // falling back to buyer+firm+gemLink).
   const listingByBuyerItemFirm = useMemo(() => {
     const map = new Map<string, FirmItemListing>();
     listings.forEach(lst => {
@@ -1094,39 +1116,34 @@ export default function GeMSyncPage() {
     return map;
   }, [allBuyerOptions]);
 
-  // Master List (gem_listings) only - a row backed by one of these has a real
-  // listing live under this firm on GeM. Deliberately separate from
-  // getRowGemSyncStatus below: a New Upload Link entry is only an intention to
-  // create a listing, which is not the same thing when a rate is about to be
-  // quoted to the client (see handleDownloadFilledExcel).
-  const getRowMasterListingStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
-    // A row already stamped with the id of the exact listing OK Link/Update
-    // Stock linked it to (see linkedListingId on UploadedRow) is checked
-    // strictly against that one document, not re-derived from the row's
-    // current fields - editing this row's Firm/Item mapping/GeM Link
-    // afterwards without re-clicking OK Link/Update Stock must NOT make it
-    // look "broken" (nothing was deleted, it's just mid-edit); only that
-    // specific listing actually being removed from Stock Update should.
-    // Rows from before this tracking existed have no linkedListingId - they
-    // fall through to the derived match below exactly as before.
+  // Resolves the exact Master List entry backing a row. row.linkedListingId
+  // (stamped by OK Link/Update Stock - see UploadedRow) is authoritative
+  // when present - checked strictly against that one document, not
+  // re-derived from the row's current fields, so editing this row's Firm/
+  // Item mapping/GeM Link afterwards without re-clicking OK Link/Update
+  // Stock doesn't make it look "broken" (nothing was deleted, it's just
+  // mid-edit); only that specific listing actually being removed from Stock
+  // Update should. If linkedListingId points at nothing, that's a genuine
+  // miss - no falling through to a coincidental derived match. Rows from
+  // before this tracking existed have no linkedListingId and fall through to
+  // the derived match (with a buyer-NAME fallback for drifted buyer ids -
+  // see buyerNameById above).
+  const resolveRowListing = (row: UploadedRow): FirmItemListing | undefined => {
     if (row.linkedListingId) {
-      const listing = listings.find(l => l.id === row.linkedListingId);
-      return listing ? (listing.status === "Synced" ? "synced" : "pending") : "none";
+      return listings.find(l => l.id === row.linkedListingId);
     }
-    if (!row.firmCode) return "none";
+    if (!row.firmCode) return undefined;
     if (row.mappedItemId) {
       const listing = listingByBuyerItemFirm.get(`${selectedBuyerId}::${row.mappedItemId}::${row.firmCode}`);
-      if (listing) return listing.status === "Synced" ? "synced" : "pending";
+      if (listing) return listing;
     }
     if (row.gemLink) {
       const listing = listingByBuyerFirmGemLink.get(`${selectedBuyerId}::${row.firmCode}::${row.gemLink.trim()}`);
-      if (listing) return listing.status === "Synced" ? "synced" : "pending";
+      if (listing) return listing;
     }
-    // Exact buyerId match failed - fall back to matching by buyer NAME (see
-    // buyerNameById above) before concluding this row's link is really gone.
     const selectedBuyerName = buyerNameById.get(selectedBuyerId);
     if (selectedBuyerName) {
-      const listing = listings.find(lst =>
+      return listings.find(lst =>
         lst.firmCode === row.firmCode &&
         buyerNameById.get(lst.buyerId) === selectedBuyerName &&
         (
@@ -1134,9 +1151,18 @@ export default function GeMSyncPage() {
           (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
         )
       );
-      if (listing) return listing.status === "Synced" ? "synced" : "pending";
     }
-    return "none";
+    return undefined;
+  };
+
+  // Master List (gem_listings) only - a row backed by one of these has a real
+  // listing live under this firm on GeM. Deliberately separate from
+  // getRowGemSyncStatus below: a New Upload Link entry is only an intention to
+  // create a listing, which is not the same thing when a rate is about to be
+  // quoted to the client (see handleDownloadFilledExcel).
+  const getRowMasterListingStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
+    const listing = resolveRowListing(row);
+    return listing ? (listing.status === "Synced" ? "synced" : "pending") : "none";
   };
 
   const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
@@ -1544,8 +1570,13 @@ export default function GeMSyncPage() {
         }
       }
     }
-    let list = Array.from(seen.values());
-    
+    // Master List only ever shows CONFIRMED-live data (see everSynced on
+    // FirmItemListing) - a listing whose very first Update Stock/Push to
+    // Stock hasn't been synced yet has nothing confirmed to show. Listings
+    // from before this tracking existed have everSynced undefined, treated
+    // as already-confirmed so nothing historical disappears.
+    let list = Array.from(seen.values()).filter(lst => lst.everSynced !== false);
+
     const itemQuery = masterItemSearch.trim().toLowerCase();
     const firmQuery = masterFirmSearch.trim().toLowerCase();
     const urlQuery = masterUrlSearch.trim().toLowerCase();
@@ -1807,13 +1838,55 @@ export default function GeMSyncPage() {
     });
   };
 
-  // Create-or-update this row's Master List (Stock Update checklist) entry -
-  // shared by both "OK Link" and "Update Stock" below. Unlike the old single
-  // "Link Row" button, this never toggles a matching entry off - with three
-  // explicit buttons there's no ambiguity about intent, so a re-click should
-  // never silently unlink. Returns false (and alerts) if required fields are
-  // missing, so callers know not to also mark the row completed.
-  const upsertMasterListing = (row: UploadedRow): boolean => {
+  // Finds the Master List entry a row's current Firm/Item (falling back to
+  // GeM Link, then to a buyer-name match) already identifies - shared by OK
+  // Link (link to it, no write) and proposeListingRevision (revise it) below.
+  // Same identity rule as resolveRowListing, but ignores row.linkedListingId
+  // - callers here are specifically looking for what the row's CURRENT
+  // fields point at, not what it was previously linked to.
+  const findMatchingListing = (row: UploadedRow): FirmItemListing | undefined => {
+    if (!row.firmCode) return undefined;
+    const trimmedLink = row.gemLink ? row.gemLink.trim() : "";
+    const exact =
+      listings.find(lst =>
+        lst.buyerId === selectedBuyerId &&
+        lst.itemId === row.mappedItemId &&
+        lst.firmCode === row.firmCode &&
+        !!row.mappedItemId
+      ) ||
+      (trimmedLink
+        ? listings.find(lst =>
+            lst.buyerId === selectedBuyerId &&
+            lst.firmCode === row.firmCode &&
+            lst.gemLink &&
+            lst.gemLink.trim() === trimmedLink
+          )
+        : undefined);
+    if (exact) return exact;
+
+    const selectedBuyerName = buyerNameById.get(selectedBuyerId);
+    if (!selectedBuyerName) return undefined;
+    return listings.find(lst =>
+      lst.firmCode === row.firmCode &&
+      buyerNameById.get(lst.buyerId) === selectedBuyerName &&
+      (
+        (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
+        (!!trimmedLink && !!lst.gemLink && lst.gemLink.trim() === trimmedLink)
+      )
+    );
+  };
+
+  // "Update Stock"/"Push to Stock" PROPOSE a revision rather than writing it
+  // straight into Master List's confirmed fields - see pendingRevision on
+  // FirmItemListing. The listing document itself is created/updated
+  // immediately (Sync Checklist/"Sync to GeM" need something to act on), but
+  // its confirmed firmCode/rate/availGemStock/minQty stay untouched - "Sync
+  // to GeM" pushes the STAGED values, and only once that sync is confirmed
+  // (toggleSyncStatus, or the extension's mark_listing_synced) do they get
+  // promoted into the confirmed fields Master List/Excel quoting read from.
+  // Returns false (and alerts) if required fields are missing, so callers
+  // know not to also mark the row completed.
+  const proposeListingRevision = (row: UploadedRow): boolean => {
     if (!row.mappedItemId) {
       alert("Please select or create an Item mapping first.");
       return false;
@@ -1842,35 +1915,17 @@ export default function GeMSyncPage() {
       sheetId: activeSheetId || undefined,
     };
 
-    // The real identity of a Master List row is "this buyer's copy of this
-    // exact GeM product" - normally that's {buyerId, itemId, firmCode}, but
-    // this row's locally-picked stock item isn't always the same item the
-    // listing was ORIGINALLY created under (e.g. re-imported/re-typed sheets
-    // can map the same real product to a differently-named stock entry).
-    // The GeM link itself is a stronger, unambiguous identity for the same
-    // buyer+firm - if it's already registered, this row IS that listing, so
-    // "Update Stock"/"OK Link" should update it in place instead of either
-    // creating a confusing second row or refusing to save at all.
-    const trimmedLink = row.gemLink ? row.gemLink.trim() : "";
-    const existing =
-      listings.find(lst =>
-        lst.buyerId === selectedBuyerId &&
-        lst.itemId === row.mappedItemId &&
-        lst.firmCode === row.firmCode &&
-        row.mappedItemId &&
-        row.firmCode
-      ) ||
-      (trimmedLink
-        ? listings.find(lst =>
-            lst.buyerId === selectedBuyerId &&
-            lst.firmCode === row.firmCode &&
-            lst.gemLink &&
-            lst.gemLink.trim() === trimmedLink
-          )
-        : undefined);
+    const pendingRevision = {
+      firmCode: row.firmCode,
+      rate: row.rate,
+      availGemStock: row.availGemStock || 0,
+      minQty: row.minQty || 1,
+    };
+
+    const existing = findMatchingListing(row);
 
     if (existing) {
-      const revisedListing: FirmItemListing = { ...existing, ...sheetContext, rate: row.rate, minQty: row.minQty, gemLink: row.gemLink || "", availGemStock: row.availGemStock || 0, status: "Pending" as const };
+      const revisedListing: FirmItemListing = { ...existing, ...sheetContext, gemLink: row.gemLink || existing.gemLink, status: "Pending" as const, pendingRevision };
       const updatedListings = listings.map(lst => lst.id === existing.id ? revisedListing : lst);
       applyListingsLocally(updatedListings);
       persistListingUpsert(revisedListing);
@@ -1878,6 +1933,9 @@ export default function GeMSyncPage() {
       return true;
     }
 
+    // Brand new item+firm - confirmed fields are seeded the same as the
+    // pending revision (they're not shown anywhere until everSynced flips
+    // true, so what they hold meanwhile doesn't matter).
     const newListing: FirmItemListing = {
       id: "listing_" + Date.now() + "_" + row.index,
       firmCode: row.firmCode,
@@ -1890,6 +1948,8 @@ export default function GeMSyncPage() {
       status: "Pending",
       buyerId: selectedBuyerId,
       date: new Date().toISOString(),
+      everSynced: false,
+      pendingRevision,
       ...sheetContext
     };
 
@@ -2011,20 +2071,30 @@ export default function GeMSyncPage() {
     }).catch(err => console.error("Failed to log GeM action", err));
   };
 
-  // "OK LINK" - the mapping/rate/firm already showing in the row is correct
-  // as-is, nothing more to decide. Links it into the Stock Update checklist
-  // and marks the row done in one click (previously two separate clicks).
+  // "OK LINK" - the mapping/rate/firm already showing in the row matches an
+  // EXISTING Master List entry exactly, nothing to change. This never
+  // creates or revises a listing - it's purely a "this link is fine as-is"
+  // confirmation: links the row to that entry (for the redo marker to track)
+  // and marks it done. A row with no matching entry at all can't be OK'd -
+  // that's what "Update Stock" is for (it creates one, once synced).
   const handleOkLink = (row: UploadedRow) => {
-    if (!upsertMasterListing(row)) return;
+    const existing = findMatchingListing(row);
+    if (!existing) {
+      alert("Is item ki Master List me abhi koi entry nahi hai - pehle 'Update Stock' se entry banao (Sync hone ke baad Master List me aayegi).");
+      return;
+    }
+    stampLinkedListing(row.index, existing.id);
     setRowCompleted(row.index, true);
     logGemAction("ok_link", row, allItemsList.find(i => i._id === row.mappedItemId)?.itemName || row.originalName);
   };
 
   // "UPDATE STOCK" - only enabled once the row's Rate/Stock/Min Qty (edited
   // directly in their columns) differ from what's already stored on this
-  // item's existing Master List entry - pushes that revision through.
+  // item's existing Master List entry - proposes that revision (see
+  // proposeListingRevision) rather than writing it into Master List's
+  // confirmed fields right away.
   const handleUpdateStock = (row: UploadedRow) => {
-    if (!upsertMasterListing(row)) return;
+    if (!proposeListingRevision(row)) return;
     setRowCompleted(row.index, true);
     logGemAction("update_stock", row, allItemsList.find(i => i._id === row.mappedItemId)?.itemName || row.originalName);
   };
@@ -2172,6 +2242,10 @@ export default function GeMSyncPage() {
     }
 
     const buyerObj = buyers.find(b => b.id === entry.buyerId);
+    // Same pendingRevision mechanism as proposeListingRevision - this
+    // graduated entry hasn't actually been confirmed synced on GeM yet
+    // either, so it stays out of Master List/Excel quoting (everSynced:
+    // false) until that's confirmed (Sync Checklist tick, or the extension).
     const newListing: FirmItemListing = {
       id: "listing_" + Date.now() + "_newlink",
       firmCode: entry.firmCode,
@@ -2184,6 +2258,13 @@ export default function GeMSyncPage() {
       status: "Pending",
       buyerId: entry.buyerId,
       date: new Date().toISOString(),
+      everSynced: false,
+      pendingRevision: {
+        firmCode: entry.firmCode,
+        rate: rateVal,
+        availGemStock: entry.availGemStock || 0,
+        minQty: entry.minQty || 1,
+      },
       // The entry already carries the sheet line - hand it straight over so
       // the row reads the same after it graduates into Stock Update.
       spec: entry.spec,
@@ -2227,28 +2308,28 @@ export default function GeMSyncPage() {
     return originalExcelData.map((row, index) => {
       const mappedRow = uploadedRows.find(r => r.index === index);
 
-      // Only rows that actually stand behind a quote get their numbers written
-      // out: the link was OK'd / stock-updated and its Master List entry is
-      // still there, or GeM itself is confirmed Synced. Everything else is
-      // blanked - a cancelled (Not Available) row, an untouched one, one whose
-      // checklist entry has since been deleted, and an "Add New Link" row,
-      // whose listing does not exist on GeM yet and only will once it has been
-      // uploaded and pushed across to Stock Update. Quoting a client a rate
-      // against a listing nobody can buy from is the thing being prevented.
-      const listingStatus = mappedRow ? getRowMasterListingStatus(mappedRow) : "none";
+      // Only rows that actually stand behind a CONFIRMED-live quote get
+      // their numbers written out - the Master List entry this row resolves
+      // to has to have been synced at least once (see rowHasConfirmedListing/
+      // everSynced on FirmItemListing). A row still awaiting its very first
+      // sync, a cancelled (Not Available) row, an untouched one, one whose
+      // checklist entry has since been deleted, and an "Add New Link" row
+      // never pushed across to Stock Update, are all blanked - quoting a
+      // client a rate that isn't actually live on GeM yet is exactly what
+      // this (and the pendingRevision mechanism generally) prevents.
+      const matchedListing = mappedRow ? resolveRowListing(mappedRow) : undefined;
       // isCompleted and notAvailable are meant to be mutually exclusive -
       // toggleRowNotAvailable clears isCompleted when cancelling a row, and
-      // setRowCompleted now likewise clears notAvailable when OK Link/Update
-      // Stock is done. So isCompleted:true together with notAvailable:true
-      // can only be stale leftover data from before that setRowCompleted fix
-      // existed, never a genuine CURRENT cancellation - a real one would have
-      // isCompleted:false. Trusting isCompleted here (in both branches, not
-      // just "synced") is what lets an already-affected row start exporting
-      // correctly again with no need to re-click anything.
+      // setRowCompleted clears notAvailable when OK Link/Update Stock is
+      // done. So isCompleted:true together with notAvailable:true can only be
+      // stale leftover data, never a genuine CURRENT cancellation - trusting
+      // isCompleted here is what lets an already-affected row export
+      // correctly with no need to re-click anything.
       const isQuotable =
         !!mappedRow &&
         (mappedRow.isCompleted || !mappedRow.notAvailable) &&
-        (listingStatus === "synced" || (!!mappedRow.isCompleted && listingStatus === "pending"));
+        !!matchedListing &&
+        matchedListing.everSynced !== false;
 
       if (!isQuotable) {
         // The client's own columns stay exactly as they came in - only the
@@ -2267,37 +2348,10 @@ export default function GeMSyncPage() {
         };
       }
 
-      // Firm has to be part of the match. The same item is routinely listed
-      // under more than one firm for the same buyer (two sheet rows quoting
-      // the same product from different firms is normal), and matching on
-      // buyer+item alone returned whichever of those listings happened to be
-      // first - so both rows could come out carrying one firm's rate, link and
-      // name. Falls back to the row's own GeM link for the same buyer+firm,
-      // the way upsertMasterListing resolves the same ambiguity.
-      const rowLink = (mappedRow?.gemLink || "").trim();
-      // Prefer the exact listing this row is stamped as linked to (see
-      // linkedListingId on UploadedRow) - authoritative and immune to the
-      // buyer-id drift the derived matches below can still hit for rows from
-      // before that stamping existed.
-      const matchedListing =
-        (mappedRow?.linkedListingId ? listings.find(lst => lst.id === mappedRow.linkedListingId) : undefined) ||
-        listings.find(lst =>
-          lst.buyerId === selectedBuyerId &&
-          lst.firmCode === mappedRow?.firmCode &&
-          lst.itemId === mappedRow?.mappedItemId &&
-          !!mappedRow?.mappedItemId &&
-          !!mappedRow?.firmCode
-        ) ||
-        (rowLink
-          ? listings.find(lst =>
-              lst.buyerId === selectedBuyerId &&
-              lst.firmCode === mappedRow?.firmCode &&
-              lst.gemLink &&
-              lst.gemLink.trim() === rowLink
-            )
-          : undefined);
-
-      const firmCode = matchedListing?.firmCode || mappedRow?.firmCode || "";
+      // matchedListing's own firmCode/rate/gemLink (never the row's own
+      // possibly-still-pending fields) - these are the CONFIRMED values,
+      // guaranteed present since isQuotable already checked everSynced.
+      const firmCode = matchedListing!.firmCode;
       const company = companies.find(c => c.firmCode?.toUpperCase() === firmCode.toUpperCase());
       const sellerRegisterAddress = company?.sellerRegisterAddress || "";
       const mappedFirmName = company?.firmName || firmCode;
@@ -2305,10 +2359,10 @@ export default function GeMSyncPage() {
       return {
         ...row,
         "Comment": mappedRow?.comment || "",
-        "Quoted Rate (₹)": matchedListing?.rate || mappedRow?.rate || "",
+        "Quoted Rate (₹)": matchedListing!.rate,
         "Seller Register Address": sellerRegisterAddress,
         "Mapped Firm": mappedFirmName,
-        "GeM Link": matchedListing?.gemLink || mappedRow?.gemLink || ""
+        "GeM Link": matchedListing!.gemLink || ""
       };
     });
   };
@@ -2460,14 +2514,22 @@ export default function GeMSyncPage() {
       }
     }
 
-    // Update listings
+    // Same pendingRevision mechanism as proposeListingRevision (Update
+    // Stock) - this negotiated rate isn't confirmed live on GeM yet either,
+    // so it's staged rather than overwriting Master List's confirmed
+    // firmCode/rate/availGemStock/minQty right away. gemLink updates
+    // immediately, same convention as elsewhere - it's a reference to which
+    // GeM listing this is, not a value pushed to GeM.
     const revisedListing: FirmItemListing = {
       ...selectedListingForRevision,
-      rate: rateVal,
-      minQty: minQtyVal,
       gemLink: newGemLinkValue.trim(),
-      availGemStock: availStockVal,
-      status: "Pending" as const // Flag checklist as pending again
+      status: "Pending" as const,
+      pendingRevision: {
+        firmCode: selectedListingForRevision.firmCode,
+        rate: rateVal,
+        availGemStock: availStockVal,
+        minQty: minQtyVal,
+      },
     };
     const updatedListings = listings.map(lst => lst.id === selectedListingForRevision.id ? revisedListing : lst);
 
@@ -2519,14 +2581,35 @@ export default function GeMSyncPage() {
   // clobber a teammate's concurrent edit to a DIFFERENT listing, or the
   // browser extension's own auto-mark-Synced call landing on this same
   // listing around the same time.
+  //
+  // Ticking Synced PROMOTES a staged pendingRevision (see FirmItemListing) -
+  // its firmCode/rate/availGemStock/minQty become the new confirmed values
+  // Master List/Excel quoting read, and everSynced flips true. A listing
+  // with nothing staged (e.g. paired via "Add to Master List" on the GeM
+  // Catalogue page, already confirmed live) just gets everSynced set too.
+  // Un-ticking is a plain manual correction - it does not un-promote
+  // anything back into pendingRevision.
   const toggleSyncStatus = (listingId: string) => {
     let toggled: FirmItemListing | null = null;
     const updatedListings = listings.map(lst => {
-      if (lst.id === listingId) {
-        toggled = { ...lst, status: (lst.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending" };
-        return toggled;
+      if (lst.id !== listingId) return lst;
+      if (lst.status === "Synced") {
+        toggled = { ...lst, status: "Pending" as const };
+      } else if (lst.pendingRevision) {
+        toggled = {
+          ...lst,
+          firmCode: lst.pendingRevision.firmCode,
+          rate: lst.pendingRevision.rate,
+          availGemStock: lst.pendingRevision.availGemStock,
+          minQty: lst.pendingRevision.minQty,
+          pendingRevision: undefined,
+          everSynced: true,
+          status: "Synced" as const,
+        };
+      } else {
+        toggled = { ...lst, everSynced: true, status: "Synced" as const };
       }
-      return lst;
+      return toggled;
     });
     applyListingsLocally(updatedListings);
     if (toggled) persistListingUpsert(toggled);
@@ -2545,14 +2628,23 @@ export default function GeMSyncPage() {
   };
 
   const handleSyncToGem = async (lst: FirmItemListing) => {
+    // Push the STAGED revision when there is one (see pendingRevision on
+    // FirmItemListing) - lst.firmCode/rate/availGemStock/minQty are the last
+    // CONFIRMED-synced values, not what Update Stock just proposed. Falls
+    // back to the confirmed fields for a listing with nothing pending (e.g.
+    // re-pushing an already-synced item unchanged). Credentials are looked
+    // up for the firm actually being pushed TO, in case the revision moves
+    // this item to a different firm.
+    const toPush = lst.pendingRevision || { firmCode: lst.firmCode, rate: lst.rate, availGemStock: lst.availGemStock || 0, minQty: lst.minQty };
+
     const productId = lst.gemCatalogueId || (lst.gemLink ? extractProductIdFromGemLink(lst.gemLink) : "");
     if (!productId) {
       alert("Ye listing GeM Catalogue se 'Add to Master List' ke through link nahi hui aur gemLink me se bhi Product ID nahi mila - is button se sync nahi ho sakta. Manually GeM par update karo.");
       return;
     }
-    const cred = gemCredentials.find(c => c.firmCode === lst.firmCode);
+    const cred = gemCredentials.find(c => c.firmCode === toPush.firmCode);
     if (!cred || !cred.gemUserId || !cred.gemPassword) {
-      alert(`"${lst.firmCode}" firm ke GeM login credentials "GeM Login Setup" me save nahi hai - pehle wahan save karo.`);
+      alert(`"${toPush.firmCode}" firm ke GeM login credentials "GeM Login Setup" me save nahi hai - pehle wahan save karo.`);
       return;
     }
 
@@ -2562,11 +2654,11 @@ export default function GeMSyncPage() {
         gemUserId: cred.gemUserId,
         gemPassword: cred.gemPassword,
         gemMailId: cred.gemMailId,
-        firmCode: lst.firmCode,
+        firmCode: toPush.firmCode,
         productId,
-        newRate: lst.rate,
-        newStock: lst.availGemStock,
-        newMinQty: lst.minQty,
+        newRate: toPush.rate,
+        newStock: toPush.availGemStock,
+        newMinQty: toPush.minQty,
         listingId: lst.id,
       });
       awaitingGemSyncRef.current = true;
@@ -2642,11 +2734,46 @@ export default function GeMSyncPage() {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
+  // Deleting a listing that's mid a pending sync revision (e.g. GeM rejected
+  // it and the rate/stock needs correcting) has two different outcomes
+  // depending on whether it was EVER confirmed live before:
+  // - Never confirmed (a brand new item+firm, everSynced still false): the
+  //   whole document is dropped - there was nothing confirmed to keep.
+  // - Confirmed before (has real history on GeM, just a NEW revision got
+  //   abandoned): only the staged pendingRevision is discarded - Master
+  //   List's last-confirmed firmCode/rate/stock/minQty stay exactly as they
+  //   were, untouched.
+  // Either way, any row in the CURRENTLY open sheet linked to this listing
+  // (see linkedListingId on UploadedRow) goes back to Uncompleted - the
+  // proposal it made got cancelled, so it needs deciding again. A row on a
+  // different sheet self-heals the next time that sheet is opened (the redo
+  // marker picks up the now-missing/reverted link automatically).
   const handleDeleteListing = (listingId: string) => {
-    if (!confirm("Are you sure you want to delete this listing from the sync checklist?")) return;
-    const updatedListings = listings.filter(lst => lst.id !== listingId);
-    applyListingsLocally(updatedListings);
-    persistListingDelete(listingId);
+    const lst = listings.find(l => l.id === listingId);
+    if (!lst) return;
+
+    const isRevisionOnly = !!lst.pendingRevision && lst.everSynced === true;
+    const confirmMsg = isRevisionOnly
+      ? "Yeh pending revision cancel ho jaayegi - Master List ki last-confirmed values waisi hi rahengi. Continue?"
+      : "Are you sure you want to delete this listing from the sync checklist?";
+    if (!confirm(confirmMsg)) return;
+
+    if (isRevisionOnly) {
+      const reverted: FirmItemListing = { ...lst, pendingRevision: undefined, status: "Synced" as const };
+      const updatedListings = listings.map(l => (l.id === listingId ? reverted : l));
+      applyListingsLocally(updatedListings);
+      persistListingUpsert(reverted);
+    } else {
+      const updatedListings = listings.filter(l => l.id !== listingId);
+      applyListingsLocally(updatedListings);
+      persistListingDelete(listingId);
+    }
+
+    setUploadedRows(prev => prev.map(r =>
+      r.linkedListingId === listingId
+        ? { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined, linkedListingId: undefined }
+        : r
+    ));
   };
 
   const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted && !r.notAvailable).length, [uploadedRows]);
@@ -4022,14 +4149,29 @@ export default function GeMSyncPage() {
 
                                 <td className="py-3.5 px-4 text-center font-mono font-bold text-[var(--gem-text-primary)]">
                                   ₹{lst.rate}
+                                  {lst.pendingRevision && (
+                                    <span className="block text-[9px] font-black text-amber-600 normal-case tracking-normal" title="Sync to GeM push karega isi value ko - confirm hone par yahi Master List ki asli value ban jaayegi">
+                                      → ₹{lst.pendingRevision.rate} pending
+                                    </span>
+                                  )}
                                 </td>
 
                                 <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
                                   {lst.availGemStock || 0}
+                                  {lst.pendingRevision && (
+                                    <span className="block text-[9px] font-black text-amber-600" title="Sync to GeM push karega isi value ko">
+                                      → {lst.pendingRevision.availGemStock} pending
+                                    </span>
+                                  )}
                                 </td>
 
                                 <td className="py-3.5 px-4 text-center font-mono text-[var(--gem-text-primary)]">
                                   {lst.minQty}
+                                  {lst.pendingRevision && (
+                                    <span className="block text-[9px] font-black text-amber-600" title="Sync to GeM push karega isi value ko">
+                                      → {lst.pendingRevision.minQty} pending
+                                    </span>
+                                  )}
                                 </td>
 
                                 <td className="py-3.5 px-4 text-center">
