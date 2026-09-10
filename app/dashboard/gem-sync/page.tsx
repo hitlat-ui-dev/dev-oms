@@ -2744,10 +2744,14 @@ export default function GeMSyncPage() {
   //   List's last-confirmed firmCode/rate/stock/minQty stay exactly as they
   //   were, untouched.
   // Either way, any row in the CURRENTLY open sheet linked to this listing
-  // (see linkedListingId on UploadedRow) goes back to Uncompleted - the
-  // proposal it made got cancelled, so it needs deciding again. A row on a
-  // different sheet self-heals the next time that sheet is opened (the redo
-  // marker picks up the now-missing/reverted link automatically).
+  // goes back to Uncompleted - the proposal it made got cancelled, so it
+  // needs deciding again. Matched via resolveRowListing (not just
+  // linkedListingId directly) so a row completed before that stamping
+  // existed - which has no linkedListingId at all, only a derivable match -
+  // still gets caught here instead of silently staying stuck "Completed"
+  // with a dead link. A row on a different sheet self-heals the next time
+  // that sheet is opened (the redo marker picks up the now-missing/reverted
+  // link automatically).
   const handleDeleteListing = (listingId: string) => {
     const lst = listings.find(l => l.id === listingId);
     if (!lst) return;
@@ -2769,11 +2773,11 @@ export default function GeMSyncPage() {
       persistListingDelete(listingId);
     }
 
-    setUploadedRows(prev => prev.map(r =>
-      r.linkedListingId === listingId
-        ? { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined, linkedListingId: undefined }
-        : r
-    ));
+    setUploadedRows(prev => prev.map(r => {
+      if (!r.isCompleted) return r;
+      if (resolveRowListing(r)?.id !== listingId) return r;
+      return { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined, linkedListingId: undefined };
+    }));
   };
 
   const uncompletedRowsCount = useMemo(() => uploadedRows.filter(r => !r.isCompleted && !r.notAvailable).length, [uploadedRows]);
