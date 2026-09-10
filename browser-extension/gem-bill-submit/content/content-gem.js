@@ -1150,9 +1150,15 @@
 
     // Supplied Qty is always read straight off the page's own "Pending
     // items to ship" figure (ground truth) - always the FULL pending
-    // quantity, never partial, even if goods shipped in batches.
-    const pendingQty = getPendingQtyFromPage();
-    setTextValueById("INVOICE_ITEMS_FORM-SuppliedQty", pendingQty || String(firstItem?.qty ?? ""));
+    // quantity, never partial, even if goods shipped in batches. Both the
+    // figure's text and the input field itself can still be missing right
+    // when this step starts (Product Details renders asynchronously right
+    // after Invoice Details' CONTINUE click) - retry both instead of a
+    // single immediate attempt, which was silently leaving Supplied Qty
+    // empty ("Invalid qty") and Preview stuck disabled.
+    const pendingQty = await getPendingQtyFromPageWithRetry();
+    const suppliedQtyValue = pendingQty || String(firstItem?.qty ?? "");
+    await setTextValueByIdWithRetry("INVOICE_ITEMS_FORM-SuppliedQty", suppliedQtyValue);
 
     await setSelectValueByIdWithRetry("INVOICE_ITEMS_FORM-GST_UQ_NAME", "NOS");
 
@@ -1165,6 +1171,27 @@
       if (firstItem?.hsnSac) {
         setTextValueById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
       }
+    }
+
+    // Re-assert Supplied Qty as the LAST field touched before Preview - same
+    // fix already applied to Invoice Number on the previous step (see
+    // stepInvoiceDetails): GeM's own form logic can silently clear an
+    // earlier-filled field once a later one (GST UQ Name / Tax Rate / HSN
+    // Code here) changes, leaving Supplied Qty back at empty/"Invalid qty"
+    // and Preview stuck disabled - which then times out the next step's
+    // wait for #prevCheckbox in the Preview modal that never opens.
+    const suppliedQtyField = document.getElementById("INVOICE_ITEMS_FORM-SuppliedQty");
+    if (suppliedQtyField) {
+      setNativeValue(suppliedQtyField, suppliedQtyValue);
+      fireEvents(suppliedQtyField);
+      if (suppliedQtyField.value !== suppliedQtyValue) {
+        console.warn(
+          "[GeM Bill Auto-Submit] Supplied Qty field still doesn't hold the expected value right before Preview:",
+          { expected: suppliedQtyValue, actual: suppliedQtyField.value }
+        );
+      }
+    } else {
+      console.warn("[GeM Bill Auto-Submit] #INVOICE_ITEMS_FORM-SuppliedQty not found for the final re-assert.");
     }
 
     await sleep(300);
@@ -1341,6 +1368,21 @@
     return true;
   }
 
+  // Text-input counterpart to setSelectValueByIdWithRetry below - a field
+  // can still not exist in the DOM yet right after a tab switch inside
+  // GeM's SPA (e.g. Product Details renders asynchronously once Invoice
+  // Details' CONTINUE is clicked), so a single immediate setTextValueById
+  // attempt can silently no-op and leave a required field empty/"Invalid".
+  async function setTextValueByIdWithRetry(id, value, timeoutMs = 6000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (setTextValueById(id, value)) return true;
+      await sleep(300);
+    }
+    console.warn(`[GeM Bill Auto-Submit] #${id} never appeared to fill "${value}" after ${timeoutMs}ms.`);
+    return false;
+  }
+
   // Sets a <select>'s value by exact option value, falling back to exact
   // visible text (GeM's option value is sometimes a short code, e.g. "NOS",
   // while the visible label is a longer word, e.g. "NUMBERS").
@@ -1459,6 +1501,20 @@
   function getPendingQtyFromPage() {
     const match = document.body.textContent.match(/Pending items to ship\s*:\s*(\d+)/i);
     return match ? match[1] : null;
+  }
+
+  // Retries getPendingQtyFromPage - this text is rendered by GeM's own
+  // Angular code shortly after the Product Details tab switch, so a single
+  // immediate read right when stepProductDetails starts can come back null.
+  async function getPendingQtyFromPageWithRetry(timeoutMs = 6000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const qty = getPendingQtyFromPage();
+      if (qty) return qty;
+      await sleep(300);
+    }
+    console.warn(`[GeM Bill Auto-Submit] "Pending items to ship" text never appeared after ${timeoutMs}ms.`);
+    return null;
   }
 
   function waitForElement(selector, timeoutMs = MAX_WAIT_MS) {

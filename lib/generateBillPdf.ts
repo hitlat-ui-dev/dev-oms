@@ -258,7 +258,9 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     { key: "rate", label: "Rate", w: 55, align: "right" },
   ];
   if (hasDiscount) cols.push({ key: "discount", label: "Discount", w: 60, align: "right" });
-  cols.push({ key: "gst", label: "GST %", w: 45, align: "center" });
+  // GST % has no place on a Bill of Supply/Retail Invoice - a non-GST or
+  // composition-scheme firm can't legally show a tax rate on its bill at all.
+  if (isTaxInvoice) cols.push({ key: "gst", label: "GST %", w: 45, align: "center" });
   cols.push({ key: "amount", label: "Amount", w: 70, align: "right" });
 
   const fixedW = cols.reduce((s, c) => s + c.w, 0);
