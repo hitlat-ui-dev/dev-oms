@@ -1169,17 +1169,23 @@
         await selectDropdownByIdSubstringWithRetry("INVOICE_ITEMS_FORM-TAX_RATE", `${firstItem.gstPercent}`);
       }
       if (firstItem?.hsnSac) {
-        setTextValueById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
+        // Same missing-element race as Supplied Qty below - this field can
+        // still not exist right when this step starts, and setTextValueById
+        // has no retry of its own, so a single immediate attempt was
+        // silently leaving HSN Code empty ("Please Enter HSN Code for
+        // product ...") on Regular/Tax Invoice firms.
+        await setTextValueByIdWithRetry("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
       }
     }
 
-    // Re-assert Supplied Qty as the LAST field touched before Preview - same
-    // fix already applied to Invoice Number on the previous step (see
-    // stepInvoiceDetails): GeM's own form logic can silently clear an
-    // earlier-filled field once a later one (GST UQ Name / Tax Rate / HSN
-    // Code here) changes, leaving Supplied Qty back at empty/"Invalid qty"
-    // and Preview stuck disabled - which then times out the next step's
-    // wait for #prevCheckbox in the Preview modal that never opens.
+    // Re-assert Supplied Qty (and, on Tax Invoice bills, HSN Code) as the
+    // LAST fields touched before Preview - same fix already applied to
+    // Invoice Number on the previous step (see stepInvoiceDetails): GeM's
+    // own form logic can silently clear an earlier-filled field once a later
+    // one (GST UQ Name / Tax Rate here) changes, leaving Supplied Qty/HSN
+    // Code back at empty and Preview stuck disabled - which then times out
+    // the next step's wait for #prevCheckbox in the Preview modal that never
+    // opens.
     const suppliedQtyField = document.getElementById("INVOICE_ITEMS_FORM-SuppliedQty");
     if (suppliedQtyField) {
       setNativeValue(suppliedQtyField, suppliedQtyValue);
@@ -1192,6 +1198,22 @@
       }
     } else {
       console.warn("[GeM Bill Auto-Submit] #INVOICE_ITEMS_FORM-SuppliedQty not found for the final re-assert.");
+    }
+
+    if (data.billType === "TAX_INVOICE" && firstItem?.hsnSac) {
+      const hsnField = document.getElementById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE");
+      if (hsnField) {
+        setNativeValue(hsnField, firstItem.hsnSac);
+        fireEvents(hsnField);
+        if (hsnField.value !== firstItem.hsnSac) {
+          console.warn(
+            "[GeM Bill Auto-Submit] HSN Code field still doesn't hold the expected value right before Preview:",
+            { expected: firstItem.hsnSac, actual: hsnField.value }
+          );
+        }
+      } else {
+        console.warn("[GeM Bill Auto-Submit] #INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE not found for the final re-assert.");
+      }
     }
 
     await sleep(300);

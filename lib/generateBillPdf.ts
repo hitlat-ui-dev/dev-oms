@@ -272,11 +272,6 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     colX.push(cursorX);
     cursorX += c.w;
   }
-  // HSN/SAC is essentially never filled in for this seller's items, so its
-  // left divider is dropped - it reads as part of the Product Name cell
-  // instead of a separately boxed (and always-empty) column.
-  const hsnColIndex = cols.findIndex((c) => c.key === "hsn");
-
   const drawTableHeader = () => {
     const headerH = 18;
     page.drawRectangle({ x: sheetLeft, y: y - headerH, width: CW, height: headerH, color: rgb(0.94, 0.94, 0.94) });
@@ -286,7 +281,7 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     y -= headerH;
     line(sheetLeft, y, sheetRight);
     cols.forEach((_, i) => {
-      if (i > 0 && i !== hsnColIndex) vline(colX[i], y + headerH, y);
+      if (i > 0) vline(colX[i], y + headerH, y);
     });
   };
 
@@ -343,7 +338,7 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     // above the ruled gap instead of a real row boundary.
     if (!isLastItem) line(sheetLeft, y, sheetRight);
     cols.forEach((_, i) => {
-      if (i > 0 && i !== hsnColIndex) vline(colX[i], rowTop, y);
+      if (i > 0) vline(colX[i], rowTop, y);
     });
   }
 
@@ -427,7 +422,7 @@ export async function generateBillPdf(billData: BillPdfData): Promise<Uint8Array
     // this is the SAME ruled space the skipped last-row closing line above
     // now flows straight into, instead of being cut off by a stray bar.
     cols.forEach((_, i) => {
-      if (i > 0 && i !== hsnColIndex) vline(colX[i], itemsEndY, y);
+      if (i > 0) vline(colX[i], itemsEndY, y);
     });
   }
   line(sheetLeft, y, sheetRight);
