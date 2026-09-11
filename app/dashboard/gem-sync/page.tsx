@@ -214,6 +214,12 @@ interface UploadedRow {
 // downloaded Excel's item-name fill, so what the sheet looks like on screen is
 // what lands in the file. Deliberately light - these sit behind black text and
 // are printed by the client.
+//
+// Kept only as the fallback for legacy rows already saved with one of these
+// 8 named keys (old sheets) - new groups no longer pick from this fixed list
+// at all (see generateGroupColor below), since 8 colours ran out on sheets
+// with more than 8 variant groups, at which point two unrelated groups
+// necessarily got the exact same colour with no way to tell them apart.
 const VARIANT_GROUP_PALETTE = [
   { key: "yellow", ui: "#FFF2CC", excel: "FFF2CC" },
   { key: "blue", ui: "#DDEBF7", excel: "DDEBF7" },
@@ -224,8 +230,33 @@ const VARIANT_GROUP_PALETTE = [
   { key: "teal", ui: "#D9F2F0", excel: "D9F2F0" },
   { key: "grey", ui: "#EDEDED", excel: "EDEDED" },
 ];
-const variantColor = (key?: string) =>
-  VARIANT_GROUP_PALETTE.find(c => c.key === key) || VARIANT_GROUP_PALETTE[0];
+// A row's variantGroupColor is either one of the 8 legacy names above, or
+// (since generateGroupColor) a raw "RRGGBB" hex - resolved to the same
+// {ui, excel} shape either way so every caller stays unchanged.
+const variantColor = (key?: string) => {
+  if (!key) return { ui: `#${VARIANT_GROUP_PALETTE[0].excel}`, excel: VARIANT_GROUP_PALETTE[0].excel };
+  const named = VARIANT_GROUP_PALETTE.find(c => c.key === key);
+  if (named) return { ui: named.ui, excel: named.excel };
+  const hex = key.replace("#", "").toUpperCase();
+  return { ui: `#${hex}`, excel: hex };
+};
+
+// Generates a light, printable "RRGGBB" hex for the Nth variant group -
+// golden-angle hue rotation spreads colours evenly around the wheel and
+// never visibly clusters/repeats even across dozens of groups on one sheet,
+// unlike picking from a small fixed list. Fixed saturation/lightness keeps
+// every generated colour pale enough to sit behind black text, matching the
+// legacy palette's own look.
+function generateGroupColor(index: number): string {
+  const GOLDEN_ANGLE = 137.508;
+  const hue = ((index * GOLDEN_ANGLE) % 360 + 360) % 360;
+  const s = 0.55, l = 0.87;
+  const k = (n: number) => (n + hue / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const toHex = (x: number) => Math.round(255 * x).toString(16).padStart(2, "0").toUpperCase();
+  return `${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+}
 
 // Master Rate Sheet: one row per stock item, carrying up to 4 rate "types" so
 // a rate only has to be typed once instead of re-typed on every sheet that
@@ -2895,15 +2926,21 @@ export default function GeMSyncPage() {
       return;
     }
 
-    // Take the first colour no OTHER group is already using, so two groups
-    // never look alike until there are more groups than colours.
+    // Generate a colour no OTHER group on this sheet is already using (see
+    // generateGroupColor) - unlike picking from the old fixed 8-name
+    // palette, this never runs out, so two groups never look alike no
+    // matter how many groups the sheet ends up with.
     const usedColors = new Set(
       uploadedRows
         .filter(r => r.variantGroupColor && !selectedRowIndices.has(r.index))
-        .map(r => r.variantGroupColor)
+        .map(r => variantColor(r.variantGroupColor).excel)
     );
-    const color = (VARIANT_GROUP_PALETTE.find(c => !usedColors.has(c.key)) ||
-      VARIANT_GROUP_PALETTE[variantGroups.size % VARIANT_GROUP_PALETTE.length]).key;
+    let colorIdx = variantGroups.size;
+    let color = generateGroupColor(colorIdx);
+    while (usedColors.has(color)) {
+      colorIdx++;
+      color = generateGroupColor(colorIdx);
+    }
 
     // Seed each shared field from whichever selected row actually has it -
     // the row carrying the link is often not the one carrying the rate.
