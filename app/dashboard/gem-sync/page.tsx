@@ -371,6 +371,11 @@ export default function GeMSyncPage() {
   const [newAvailGemStockValue, setNewAvailGemStockValue] = useState<string>("");
   const [revisionReason, setRevisionReason] = useState<string>("negotiated revision");
 
+  // "Delete Listing" (Sync Checklist) now asks why before reverting the row
+  // to Uncompleted - see handleDeleteListing's reason param.
+  const [deleteReasonTarget, setDeleteReasonTarget] = useState<FirmItemListing | null>(null);
+  const [deleteReasonText, setDeleteReasonText] = useState<string>("");
+
   // Unmatched Resolution states
   const [unmatchedIndex, setUnmatchedIndex] = useState<number | null>(null);
   const [newUnmatchedItem, setNewUnmatchedItem] = useState({
@@ -2706,15 +2711,15 @@ export default function GeMSyncPage() {
   // with a dead link. A row on a different sheet self-heals the next time
   // that sheet is opened (the redo marker picks up the now-missing/reverted
   // link automatically).
-  const handleDeleteListing = (listingId: string) => {
+  // reason (from the "Reason for Delete" modal - see deleteReasonTarget
+  // below) lands as the reverted row's own Comment, so whoever picks the
+  // row back up in Uncompleted sees straight away why the last attempt got
+  // cancelled instead of having to go ask.
+  const handleDeleteListing = (listingId: string, reason?: string) => {
     const lst = listings.find(l => l.id === listingId);
     if (!lst) return;
 
     const isRevisionOnly = !!lst.pendingRevision && lst.everSynced === true;
-    const confirmMsg = isRevisionOnly
-      ? "Yeh pending revision cancel ho jaayegi - Master List ki last-confirmed values waisi hi rahengi. Continue?"
-      : "Are you sure you want to delete this listing from the sync checklist?";
-    if (!confirm(confirmMsg)) return;
 
     if (isRevisionOnly) {
       const reverted: FirmItemListing = { ...lst, pendingRevision: undefined, status: "Synced" as const };
@@ -2748,7 +2753,13 @@ export default function GeMSyncPage() {
       // that no longer resolves, so this is what keeps it visible even after
       // the row moves to Uncompleted, instead of looking indistinguishable
       // from a row that was never touched.
-      return { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined };
+      return {
+        ...r,
+        isCompleted: false,
+        completedBy: undefined,
+        completedAt: undefined,
+        ...(reason?.trim() ? { comment: reason.trim() } : {}),
+      };
     }));
   };
 
@@ -4179,7 +4190,7 @@ export default function GeMSyncPage() {
                                       {syncingListingId === lst.id ? "Syncing..." : "Sync to GeM"}
                                     </button>
                                     <button
-                                      onClick={() => handleDeleteListing(lst.id)}
+                                      onClick={() => { setDeleteReasonTarget(lst); setDeleteReasonText(""); }}
                                       className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center"
                                       title="Delete Listing"
                                     >
@@ -4820,7 +4831,7 @@ export default function GeMSyncPage() {
                             </td>
                             <td className="py-4 px-6 text-center">
                               <button
-                                onClick={() => handleDeleteListing(lst.id)}
+                                onClick={() => { setDeleteReasonTarget(lst); setDeleteReasonText(""); }}
                                 className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center mx-auto"
                                 title="Unlink / Delete Listing"
                               >
@@ -5447,6 +5458,60 @@ export default function GeMSyncPage() {
                     className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-lg text-xs uppercase font-black"
                   >
                     Confirm Revision
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ========= DELETE LISTING: REASON MODAL =========
+              Asks why before handleDeleteListing runs - the reason lands
+              directly on the reverted-to-Uncompleted row's own Comment field
+              (see handleDeleteListing's reason param), so whoever picks the
+              row back up sees straight away why the last attempt was
+              cancelled. */}
+          {deleteReasonTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card">
+
+                <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)]">
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
+                    <FiTrash2 className="text-red-500" /> Reason for Delete
+                  </h3>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
+                    {deleteReasonTarget.itemName} - this row goes back to Uncompleted with your reason as its Comment.
+                  </p>
+                </div>
+
+                <div className="p-6">
+                  <label className="text-[10px] font-black text-[var(--gem-text-secondary)] uppercase tracking-widest block mb-2">Reason</label>
+                  <textarea
+                    rows={3}
+                    autoFocus
+                    className="w-full p-3 bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl text-sm text-[var(--gem-text-primary)] focus:outline-none"
+                    value={deleteReasonText}
+                    onChange={(e) => setDeleteReasonText(e.target.value)}
+                    placeholder="e.g. GeM ne rate reject kar diya, dobara sahi rate se karna hai..."
+                  />
+                </div>
+
+                <div className="p-6 border-t border-[var(--gem-border)] bg-[var(--gem-table-header)]/20 flex justify-end gap-3">
+                  <button
+                    onClick={() => { setDeleteReasonTarget(null); setDeleteReasonText(""); }}
+                    className="px-5 py-2.5 rounded-lg border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] text-xs uppercase font-bold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleDeleteListing(deleteReasonTarget.id, deleteReasonText);
+                      setDeleteReasonTarget(null);
+                      setDeleteReasonText("");
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-lg text-xs uppercase font-black"
+                  >
+                    Delete
                   </button>
                 </div>
 
