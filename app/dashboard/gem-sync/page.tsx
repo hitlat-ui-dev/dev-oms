@@ -762,8 +762,11 @@ export default function GeMSyncPage() {
   };
 
   // Updates local (React + localStorage) listings state, keeping the same
-  // dedup-by-(item+firm+buyer) safety net the old full-collection saveListings
-  // used to apply. Persistence is now a SEPARATE, scoped call per mutation
+  // dedup-by-(item+firm) safety net the old full-collection saveListings used
+  // to apply - buyerId plays no part in a listing's identity (Master List is
+  // a firm's item->GeM-link mapping, reusable for any buyer's quote), so two
+  // listings differing only by which buyer's sheet first created them ARE
+  // duplicates. Persistence is now a SEPARATE, scoped call per mutation
   // (persistListingUpsert/persistListingDelete below) instead of resending
   // this whole array - resending the full array let one tab's stale copy of
   // OTHER teammates'/the browser extension's changes silently wipe them out
@@ -775,8 +778,7 @@ export default function GeMSyncPage() {
       if (!lst) continue;
       const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
       const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-      const buyerKey = (lst.buyerId || "").toString().trim().toLowerCase();
-      const key = `${itemKey}::${firmKey}::${buyerKey}`;
+      const key = `${itemKey}::${firmKey}`;
 
       if (!seen.has(key)) {
         seen.set(key, lst);
@@ -1052,23 +1054,25 @@ export default function GeMSyncPage() {
   // The real status lives on the Sync Checklist entry this row's action
   // created (gem_listings for OK Link/Update Stock, gem_new_link_checklist
   // for New Link) - keyed the same way findMatchingListing/
-  // proposeListingRevision match an existing listing (buyer+item+firm,
-  // falling back to buyer+firm+gemLink).
-  const listingByBuyerItemFirm = useMemo(() => {
+  // proposeListingRevision match an existing listing (item+firm, falling
+  // back to firm+gemLink). Master List is buyer-agnostic by design - it's
+  // just a firm's item->GeM-link mapping, reusable for any buyer's quote -
+  // so buyerId plays no part in this identity at all.
+  const listingByItemFirm = useMemo(() => {
     const map = new Map<string, FirmItemListing>();
     listings.forEach(lst => {
-      if (lst.buyerId && lst.itemId && lst.firmCode) {
-        map.set(`${lst.buyerId}::${lst.itemId}::${lst.firmCode}`, lst);
+      if (lst.itemId && lst.firmCode) {
+        map.set(`${lst.itemId}::${lst.firmCode}`, lst);
       }
     });
     return map;
   }, [listings]);
 
-  const listingByBuyerFirmGemLink = useMemo(() => {
+  const listingByFirmGemLink = useMemo(() => {
     const map = new Map<string, FirmItemListing>();
     listings.forEach(lst => {
-      if (lst.buyerId && lst.firmCode && lst.gemLink) {
-        map.set(`${lst.buyerId}::${lst.firmCode}::${lst.gemLink.trim()}`, lst);
+      if (lst.firmCode && lst.gemLink) {
+        map.set(`${lst.firmCode}::${lst.gemLink.trim()}`, lst);
       }
     });
     return map;
@@ -1097,25 +1101,6 @@ export default function GeMSyncPage() {
     return map;
   }, [newLinkChecklist]);
 
-  // Resolves any buyerId to a stable, comparable name. allBuyerOptions merges
-  // two id sources for "the same" buyer - the Sellers Directory (_id) and the
-  // older gem-sync Buyers list ("buyer_"+timestamp) - preferring whichever one
-  // already has that name first. If a buyer gets (re-)selected from a Sheet
-  // Library dropdown built at a different moment (e.g. the buyer only existed
-  // in gem-sync Buyers when a sheet's rows were first OK'd, and was added to
-  // the Sellers Directory only afterwards), handleChangeSheetBuyer can end up
-  // storing a DIFFERENT id for the exact same real buyer. That silently
-  // orphans every listing already created under the old id - every row that
-  // was properly OK'd/Update Stock'd shows the "link broken, redo it" marker
-  // at once, even though nothing about the actual GeM listing changed.
-  // Comparing by name is the fallback, the same way item matching already
-  // falls back from itemId to gemLink elsewhere in this file.
-  const buyerNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    allBuyerOptions.forEach(b => map.set(b.id, b.name.trim().toLowerCase()));
-    return map;
-  }, [allBuyerOptions]);
-
   // Resolves the exact Master List entry backing a row. row.linkedListingId
   // (stamped by OK Link/Update Stock - see UploadedRow) is authoritative
   // when present - checked strictly against that one document, not
@@ -1126,47 +1111,22 @@ export default function GeMSyncPage() {
   // Update should. If linkedListingId points at nothing, that's a genuine
   // miss - no falling through to a coincidental derived match. Rows from
   // before this tracking existed have no linkedListingId and fall through to
-  // the derived match (with a buyer-NAME fallback for drifted buyer ids -
-  // see buyerNameById above).
+  // the derived match below - buyer-agnostic (see listingByItemFirm above),
+  // same as every other Master List lookup in this file.
   const resolveRowListing = (row: UploadedRow): FirmItemListing | undefined => {
     if (row.linkedListingId) {
       return listings.find(l => l.id === row.linkedListingId);
     }
     if (!row.firmCode) return undefined;
     if (row.mappedItemId) {
-      const listing = listingByBuyerItemFirm.get(`${selectedBuyerId}::${row.mappedItemId}::${row.firmCode}`);
+      const listing = listingByItemFirm.get(`${row.mappedItemId}::${row.firmCode}`);
       if (listing) return listing;
     }
     if (row.gemLink) {
-      const listing = listingByBuyerFirmGemLink.get(`${selectedBuyerId}::${row.firmCode}::${row.gemLink.trim()}`);
+      const listing = listingByFirmGemLink.get(`${row.firmCode}::${row.gemLink.trim()}`);
       if (listing) return listing;
     }
-    const selectedBuyerName = buyerNameById.get(selectedBuyerId);
-    if (selectedBuyerName) {
-      const nameMatched = listings.find(lst =>
-        lst.firmCode === row.firmCode &&
-        buyerNameById.get(lst.buyerId) === selectedBuyerName &&
-        (
-          (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
-          (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
-        )
-      );
-      if (nameMatched) return nameMatched;
-    }
-    // Buyer-agnostic listing (buyerId left blank) - created by pairing
-    // straight from the GeM Catalogue page via "Add to Master List", which
-    // links a firm's real GeM offering to inventory independent of any one
-    // buyer (see add_to_master_list in the API route). That's the whole
-    // point of that pairing - it has to match ANY buyer's row for the same
-    // firm+item, not just one specific buyer.
-    return listings.find(lst =>
-      !lst.buyerId &&
-      lst.firmCode === row.firmCode &&
-      (
-        (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
-        (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
-      )
-    );
+    return undefined;
   };
 
   // Master List (gem_listings) only - a row backed by one of these has a real
@@ -1564,14 +1524,14 @@ export default function GeMSyncPage() {
 
   // Filtered Listings for Master List (Sorted by item name to group duplicates consecutively)
   const filteredMasterListings = useMemo(() => {
-    // Ensure array is deduplicated by (itemId/itemName + firmCode + buyerId)
+    // Ensure array is deduplicated by (itemId/itemName + firmCode) - buyer-agnostic,
+    // same as everywhere else Master List identity is computed in this file.
     const seen = new Map<string, FirmItemListing>();
     for (const lst of listings) {
       if (!lst) continue;
       const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
       const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-      const buyerKey = (lst.buyerId || "").toString().trim().toLowerCase();
-      const key = `${itemKey}::${firmKey}::${buyerKey}`;
+      const key = `${itemKey}::${firmKey}`;
 
       if (!seen.has(key)) {
         seen.set(key, lst);
@@ -1750,12 +1710,12 @@ export default function GeMSyncPage() {
 
     if (newUnmatchedItem.gemLink && newUnmatchedItem.gemLink.trim() !== "") {
       const trimmedLink = newUnmatchedItem.gemLink.trim();
-      // Scoped to this same buyer - the same real GeM product page is
-      // legitimately reused across different buyers' own Master List entries
-      // (each buyer gets its own listing row), so that alone isn't a duplicate.
+      // Master List is buyer-agnostic (one entry per firm+item, reusable for
+      // any buyer's quote - see findMatchingListing) - the same GeM link
+      // under the same firm is a real duplicate regardless of which buyer's
+      // sheet this happens to be.
       const duplicateLink = listings.find(lst =>
         lst.firmCode === newUnmatchedItem.firmCode &&
-        lst.buyerId === selectedBuyerId &&
         lst.gemLink &&
         lst.gemLink.trim() === trimmedLink
       );
@@ -1853,52 +1813,21 @@ export default function GeMSyncPage() {
   };
 
   // Finds the Master List entry a row's current Firm/Item (falling back to
-  // GeM Link, then to a buyer-name match) already identifies - shared by OK
-  // Link (link to it, no write) and proposeListingRevision (revise it) below.
-  // Same identity rule as resolveRowListing, but ignores row.linkedListingId
-  // - callers here are specifically looking for what the row's CURRENT
-  // fields point at, not what it was previously linked to.
+  // GeM Link) already identifies - shared by OK Link (link to it, no write)
+  // and proposeListingRevision (revise it) below. Same identity rule as
+  // resolveRowListing, but ignores row.linkedListingId - callers here are
+  // specifically looking for what the row's CURRENT fields point at, not
+  // what it was previously linked to. Buyer-agnostic, same as everywhere
+  // else - Master List is a firm's item->GeM-link mapping, not tied to any
+  // one buyer.
   const findMatchingListing = (row: UploadedRow): FirmItemListing | undefined => {
     if (!row.firmCode) return undefined;
     const trimmedLink = row.gemLink ? row.gemLink.trim() : "";
-    const exact =
-      listings.find(lst =>
-        lst.buyerId === selectedBuyerId &&
-        lst.itemId === row.mappedItemId &&
-        lst.firmCode === row.firmCode &&
-        !!row.mappedItemId
-      ) ||
+    return (
+      listings.find(lst => lst.itemId === row.mappedItemId && lst.firmCode === row.firmCode && !!row.mappedItemId) ||
       (trimmedLink
-        ? listings.find(lst =>
-            lst.buyerId === selectedBuyerId &&
-            lst.firmCode === row.firmCode &&
-            lst.gemLink &&
-            lst.gemLink.trim() === trimmedLink
-          )
-        : undefined);
-    if (exact) return exact;
-
-    const selectedBuyerName = buyerNameById.get(selectedBuyerId);
-    if (selectedBuyerName) {
-      const nameMatched = listings.find(lst =>
-        lst.firmCode === row.firmCode &&
-        buyerNameById.get(lst.buyerId) === selectedBuyerName &&
-        (
-          (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
-          (!!trimmedLink && !!lst.gemLink && lst.gemLink.trim() === trimmedLink)
-        )
-      );
-      if (nameMatched) return nameMatched;
-    }
-
-    // Buyer-agnostic listing (see resolveRowListing above) - matches any buyer.
-    return listings.find(lst =>
-      !lst.buyerId &&
-      lst.firmCode === row.firmCode &&
-      (
-        (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
-        (!!trimmedLink && !!lst.gemLink && lst.gemLink.trim() === trimmedLink)
-      )
+        ? listings.find(lst => lst.firmCode === row.firmCode && lst.gemLink && lst.gemLink.trim() === trimmedLink)
+        : undefined)
     );
   };
 
@@ -2202,11 +2131,10 @@ export default function GeMSyncPage() {
     const linkVal = newLinkGemLinkValue.trim();
 
     // Same duplicate rule handleSaveRevision applies to the Master List: one
-    // product page per buyer+firm, across both checklists.
+    // product page per firm (buyer-agnostic), across both checklists.
     if (linkVal) {
       const dupListing = listings.find(lst =>
         lst.firmCode === newLinkRevisionEntry.firmCode &&
-        lst.buyerId === newLinkRevisionEntry.buyerId &&
         lst.gemLink &&
         lst.gemLink.trim() === linkVal
       );
@@ -2256,9 +2184,10 @@ export default function GeMSyncPage() {
       return;
     }
 
+    // Buyer-agnostic (see findMatchingListing) - the same link under the
+    // same firm is a duplicate regardless of which buyer this entry is for.
     const dupListing = listings.find(lst =>
       lst.firmCode === entry.firmCode &&
-      lst.buyerId === entry.buyerId &&
       lst.gemLink &&
       lst.gemLink.trim() === link
     );
@@ -2523,12 +2452,11 @@ export default function GeMSyncPage() {
 
     if (newGemLinkValue && newGemLinkValue.trim() !== "") {
       const trimmedLink = newGemLinkValue.trim();
-      // Scoped to this same buyer - the same real GeM product page is
-      // legitimately reused across different buyers' own Master List entries
-      // (each buyer gets its own listing row), so that alone isn't a duplicate.
+      // Master List is buyer-agnostic (see findMatchingListing) - the same
+      // GeM link under the same firm is a real duplicate regardless of which
+      // buyer's sheet either entry happens to belong to.
       const duplicateLink = listings.find(lst =>
         lst.firmCode === selectedListingForRevision.firmCode &&
-        lst.buyerId === selectedListingForRevision.buyerId &&
         lst.gemLink &&
         lst.gemLink.trim() === trimmedLink &&
         lst.id !== selectedListingForRevision.id

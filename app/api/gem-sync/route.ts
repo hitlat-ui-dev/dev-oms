@@ -4,7 +4,11 @@ import { uploadFileToR2, getFileFromR2, deleteFileFromR2 } from "@/lib/cloudflar
 
 const sheetR2Key = (id: string) => `gem-sync/sheets/${id}.json`;
 
-// Helper: Deduplicate listings array by (itemId/itemName + firmCode + buyerId)
+// Helper: Deduplicate listings array by (itemId/itemName + firmCode) - a
+// Master List entry is a firm's item->GeM-link mapping, reusable for any
+// buyer's quote, so buyerId plays no part in a listing's identity. Two
+// listings differing only by which buyer's sheet first created them ARE
+// duplicates.
 function deduplicateListings(items: any[]) {
   if (!Array.isArray(items)) return [];
   const seen = new Map<string, any>();
@@ -13,8 +17,7 @@ function deduplicateListings(items: any[]) {
     if (!lst) continue;
     const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
     const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-    const buyerKey = (lst.buyerId || "").toString().trim().toLowerCase();
-    const key = `${itemKey}::${firmKey}::${buyerKey}`;
+    const key = `${itemKey}::${firmKey}`;
 
     if (!seen.has(key)) {
       seen.set(key, lst);
@@ -346,9 +349,11 @@ export async function POST(req: Request) {
 
       const gemLink = (entry.gemLink || "").toString().trim();
       // A re-run of the automation must not create a second listing for the
-      // same product under the same buyer+firm.
+      // same product under the same firm - Master List is buyer-agnostic (a
+      // firm's item->GeM-link mapping, reusable for any buyer's quote), so
+      // this deliberately doesn't filter by entry.buyerId.
       const existing = gemLink
-        ? await db.collection("gem_listings").findOne({ firmCode: entry.firmCode, buyerId: entry.buyerId, gemLink })
+        ? await db.collection("gem_listings").findOne({ firmCode: entry.firmCode, gemLink })
         : null;
 
       let listingId = existing?.id as string | undefined;
