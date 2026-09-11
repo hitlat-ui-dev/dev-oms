@@ -2773,9 +2773,22 @@ export default function GeMSyncPage() {
       persistListingDelete(listingId);
     }
 
+    const trimmedLstLink = (lst.gemLink || "").trim();
     setUploadedRows(prev => prev.map(r => {
       if (!r.isCompleted) return r;
-      if (resolveRowListing(r)?.id !== listingId) return r;
+      // Matched directly against lst (the actual listing being deleted, already
+      // in hand) rather than only via resolveRowListing/linkedListingId - a row
+      // whose linkedListingId drifted stale (e.g. re-linked to a since-replaced
+      // listing across earlier manual fix-ups) would otherwise never match here
+      // and silently stay stuck marked Completed with a dead link.
+      const matchesById = r.linkedListingId === listingId;
+      const matchesByFields =
+        r.firmCode === lst.firmCode &&
+        (
+          (!!r.mappedItemId && r.mappedItemId === lst.itemId) ||
+          (!!trimmedLstLink && !!r.gemLink && r.gemLink.trim() === trimmedLstLink)
+        );
+      if (!matchesById && !matchesByFields) return r;
       // linkedListingId deliberately kept (not cleared) - the redo marker in
       // the Requirement Mapping Console shows for a row with a linkedListingId
       // that no longer resolves, so this is what keeps it visible even after
