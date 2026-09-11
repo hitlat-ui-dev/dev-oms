@@ -2776,7 +2776,12 @@ export default function GeMSyncPage() {
     setUploadedRows(prev => prev.map(r => {
       if (!r.isCompleted) return r;
       if (resolveRowListing(r)?.id !== listingId) return r;
-      return { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined, linkedListingId: undefined };
+      // linkedListingId deliberately kept (not cleared) - the redo marker in
+      // the Requirement Mapping Console shows for a row with a linkedListingId
+      // that no longer resolves, so this is what keeps it visible even after
+      // the row moves to Uncompleted, instead of looking indistinguishable
+      // from a row that was never touched.
+      return { ...r, isCompleted: false, completedBy: undefined, completedAt: undefined };
     }));
   };
 
@@ -3939,31 +3944,35 @@ export default function GeMSyncPage() {
                                       to it. And if the checklist entry the action created has
                                       since been deleted, neither is true any more - the row flips
                                       to a redo marker saying it must be set again. */}
-                                  {row.isCompleted && gemSyncStatus !== "synced" && (
-                                    gemSyncStatus === "none" ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleRowCompleted(row.index)}
-                                        title="Is row ki Sync Checklist entry ab maujood nahi hai (delete ho chuki hai) - ise dobara set karna padega. Click karke wapas Uncompleted me bhejo."
-                                        className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-400 hover:bg-amber-200 transition-colors"
-                                      >
-                                        <FiRotateCcw size={12} />
-                                      </button>
-                                    ) : (
-                                      // Linked to a real Sync Checklist entry, but that entry
-                                      // itself isn't Synced yet (pendingRevision still awaiting
-                                      // "Sync to GeM"/checkbox confirmation) - an amber clock,
-                                      // not a green tick, so this never reads as "done" before
-                                      // it's actually live on GeM. Click still undoes to Uncompleted.
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleRowCompleted(row.index)}
-                                        title="Linked, but not yet Synced to GeM - pending. Click to undo (back to Uncompleted)."
-                                        className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-300 transition-colors"
-                                      >
-                                        <FiClock size={12} />
-                                      </button>
-                                    )
+                                  {/* Shown regardless of isCompleted - a deleted/reverted
+                                      listing (see handleDeleteListing) sends the row back to
+                                      Uncompleted but deliberately keeps linkedListingId, so this
+                                      "needs redoing" warning stays visible there too instead of
+                                      the row looking indistinguishable from one never touched. */}
+                                  {gemSyncStatus === "none" && (row.isCompleted || !!row.linkedListingId) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRowCompleted(row.index)}
+                                      title="Is row ki Sync Checklist entry maujood nahi hai (delete ho chuki hai ya kabhi bani hi nahi) - ise dobara set karna padega."
+                                      className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-400 hover:bg-amber-200 transition-colors"
+                                    >
+                                      <FiRotateCcw size={12} />
+                                    </button>
+                                  )}
+                                  {row.isCompleted && gemSyncStatus === "pending" && (
+                                    // Linked to a real Sync Checklist entry, but that entry
+                                    // itself isn't Synced yet (pendingRevision still awaiting
+                                    // "Sync to GeM"/checkbox confirmation) - an amber clock,
+                                    // not a green tick, so this never reads as "done" before
+                                    // it's actually live on GeM. Click still undoes to Uncompleted.
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRowCompleted(row.index)}
+                                      title="Linked, but not yet Synced to GeM - pending. Click to undo (back to Uncompleted)."
+                                      className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-300 transition-colors"
+                                    >
+                                      <FiClock size={12} />
+                                    </button>
                                   )}
                                   {gemSyncStatus === "synced" && (
                                     <span
