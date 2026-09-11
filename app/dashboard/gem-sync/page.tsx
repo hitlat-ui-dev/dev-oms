@@ -1143,7 +1143,7 @@ export default function GeMSyncPage() {
     }
     const selectedBuyerName = buyerNameById.get(selectedBuyerId);
     if (selectedBuyerName) {
-      return listings.find(lst =>
+      const nameMatched = listings.find(lst =>
         lst.firmCode === row.firmCode &&
         buyerNameById.get(lst.buyerId) === selectedBuyerName &&
         (
@@ -1151,8 +1151,22 @@ export default function GeMSyncPage() {
           (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
         )
       );
+      if (nameMatched) return nameMatched;
     }
-    return undefined;
+    // Buyer-agnostic listing (buyerId left blank) - created by pairing
+    // straight from the GeM Catalogue page via "Add to Master List", which
+    // links a firm's real GeM offering to inventory independent of any one
+    // buyer (see add_to_master_list in the API route). That's the whole
+    // point of that pairing - it has to match ANY buyer's row for the same
+    // firm+item, not just one specific buyer.
+    return listings.find(lst =>
+      !lst.buyerId &&
+      lst.firmCode === row.firmCode &&
+      (
+        (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
+        (!!row.gemLink && !!lst.gemLink && lst.gemLink.trim() === row.gemLink.trim())
+      )
+    );
   };
 
   // Master List (gem_listings) only - a row backed by one of these has a real
@@ -1865,10 +1879,22 @@ export default function GeMSyncPage() {
     if (exact) return exact;
 
     const selectedBuyerName = buyerNameById.get(selectedBuyerId);
-    if (!selectedBuyerName) return undefined;
+    if (selectedBuyerName) {
+      const nameMatched = listings.find(lst =>
+        lst.firmCode === row.firmCode &&
+        buyerNameById.get(lst.buyerId) === selectedBuyerName &&
+        (
+          (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
+          (!!trimmedLink && !!lst.gemLink && lst.gemLink.trim() === trimmedLink)
+        )
+      );
+      if (nameMatched) return nameMatched;
+    }
+
+    // Buyer-agnostic listing (see resolveRowListing above) - matches any buyer.
     return listings.find(lst =>
+      !lst.buyerId &&
       lst.firmCode === row.firmCode &&
-      buyerNameById.get(lst.buyerId) === selectedBuyerName &&
       (
         (!!row.mappedItemId && lst.itemId === row.mappedItemId) ||
         (!!trimmedLink && !!lst.gemLink && lst.gemLink.trim() === trimmedLink)
