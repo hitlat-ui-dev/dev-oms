@@ -872,13 +872,31 @@ export default function GeMSyncPage() {
     }).catch(err => console.error("Failed to sync custom items to MongoDB", err));
   };
 
-  const saveNewLinkChecklist = (updated: NewLinkChecklistEntry[]) => {
+  // Updates local React state only - persistence is a SEPARATE, scoped call
+  // per mutation (persistNewLinkEntryUpsert/persistNewLinkEntryDelete below),
+  // same reasoning as applyListingsLocally: resending the whole array let
+  // one tab's stale copy silently resurrect an entry another tab (or this
+  // same tab, moments later) had just deleted, since the delete only ever
+  // removed it from whichever array got sent, and any OTHER still-open tab's
+  // next unrelated save would wholesale re-insert it.
+  const applyNewLinkChecklistLocally = (updated: NewLinkChecklistEntry[]) => {
     setNewLinkChecklist(updated);
-    fetch("/api/gem-sync?action=save_new_link_checklist", {
+  };
+
+  const persistNewLinkEntryUpsert = (entry: NewLinkChecklistEntry) => {
+    fetch("/api/gem-sync?action=upsert_new_link_entry", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated)
-    }).catch(err => console.error("Failed to sync new-link checklist to MongoDB", err));
+      body: JSON.stringify(entry)
+    }).catch(err => console.error("Failed to sync new-link entry to MongoDB", err));
+  };
+
+  const persistNewLinkEntryDelete = (id: string) => {
+    fetch("/api/gem-sync?action=delete_new_link_entry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    }).catch(err => console.error("Failed to delete new-link entry from MongoDB", err));
   };
 
   const saveMasterRates = (updated: MasterRateEntry[]) => {
@@ -1175,6 +1193,28 @@ export default function GeMSyncPage() {
     return listing ? (listing.status === "Synced" ? "synced" : "pending") : "none";
   };
 
+  // Resolves the New Upload Link checklist entry backing a row when there's
+  // no Master List entry - same linkedNewLinkEntryId-first, derived-fallback
+  // shape as resolveRowListing, just for gem_new_link_checklist.
+  const resolveRowNewLinkEntry = (row: UploadedRow): NewLinkChecklistEntry | undefined => {
+    if (row.linkedNewLinkEntryId) {
+      return newLinkChecklist.find(e => e.id === row.linkedNewLinkEntryId);
+    }
+    if (!row.firmCode) return undefined;
+    if (row.mappedItemId) {
+      const entry = newLinkEntryByBuyerFirmItem.get(`${selectedBuyerId}::${row.firmCode}::${row.mappedItemId}`);
+      if (entry) return entry;
+    }
+    const names = [row.originalName, itemsById.get(row.mappedItemId)?.itemName]
+      .map(n => (n || "").trim().toLowerCase())
+      .filter(Boolean);
+    for (const name of names) {
+      const entry = newLinkEntryByBuyerFirmName.get(`${selectedBuyerId}::${row.firmCode}::${name}`);
+      if (entry) return entry;
+    }
+    return undefined;
+  };
+
   const getRowGemSyncStatus = (row: UploadedRow): "synced" | "pending" | "none" => {
     const listingStatus = getRowMasterListingStatus(row);
     if (listingStatus !== "none") return listingStatus;
@@ -1184,25 +1224,13 @@ export default function GeMSyncPage() {
     // Upload Link entry that just happens to derive-match the same
     // item/firm/buyer.
     if (row.linkedListingId) return "none";
-    if (row.linkedNewLinkEntryId) {
-      const entry = newLinkChecklist.find(e => e.id === row.linkedNewLinkEntryId);
-      return entry ? (entry.status === "Synced" ? "synced" : "pending") : "none";
-    }
-    if (!row.firmCode) return "none";
-    if (row.mappedItemId) {
-      const entry = newLinkEntryByBuyerFirmItem.get(`${selectedBuyerId}::${row.firmCode}::${row.mappedItemId}`);
-      if (entry) return entry.status === "Synced" ? "synced" : "pending";
-    }
-    // Entry names come from the mapped item when there is one, else the
-    // sheet's own text - try both before calling it gone.
-    const names = [row.originalName, itemsById.get(row.mappedItemId)?.itemName]
-      .map(n => (n || "").trim().toLowerCase())
-      .filter(Boolean);
-    for (const name of names) {
-      const entry = newLinkEntryByBuyerFirmName.get(`${selectedBuyerId}::${row.firmCode}::${name}`);
-      if (entry) return entry.status === "Synced" ? "synced" : "pending";
-    }
-    return "none";
+    // A New Upload Link entry's own "Synced" checkbox counts on its own -
+    // whether it got there by someone ticking it by hand or by "Push to
+    // Stock"/the extension's publish automation graduating it, both count
+    // the same (see handleDownloadFilledExcel's isQuotable, which now reads
+    // this same status for its values too).
+    const entry = resolveRowNewLinkEntry(row);
+    return entry ? (entry.status === "Synced" ? "synced" : "pending") : "none";
   };
 
   // Fuzzy Match logic
@@ -2127,7 +2155,8 @@ export default function GeMSyncPage() {
       date: new Date().toISOString()
     };
 
-    saveNewLinkChecklist([...newLinkChecklist, newEntry]);
+    applyNewLinkChecklistLocally([...newLinkChecklist, newEntry]);
+    persistNewLinkEntryUpsert(newEntry);
     stampLinkedNewLinkEntry(row.index, newEntry.id);
     setRowCompleted(row.index, true);
     logGemAction("new_link", row, newEntry.itemName);
@@ -2135,12 +2164,20 @@ export default function GeMSyncPage() {
   };
 
   const toggleNewLinkStatus = (id: string) => {
-    saveNewLinkChecklist(newLinkChecklist.map(e => e.id === id ? { ...e, status: (e.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending" } : e));
+    let toggled: NewLinkChecklistEntry | null = null;
+    const updated = newLinkChecklist.map(e => {
+      if (e.id !== id) return e;
+      toggled = { ...e, status: (e.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending" };
+      return toggled;
+    });
+    applyNewLinkChecklistLocally(updated);
+    if (toggled) persistNewLinkEntryUpsert(toggled);
   };
 
   const handleDeleteNewLinkEntry = (id: string) => {
     if (!confirm("Delete this entry from the New Upload Link checklist?")) return;
-    saveNewLinkChecklist(newLinkChecklist.filter(e => e.id !== id));
+    applyNewLinkChecklistLocally(newLinkChecklist.filter(e => e.id !== id));
+    persistNewLinkEntryDelete(id);
   };
 
   // Same Revise dialog Stock Update rows get, against a checklist entry
@@ -2191,11 +2228,9 @@ export default function GeMSyncPage() {
       }
     }
 
-    saveNewLinkChecklist(newLinkChecklist.map(e =>
-      e.id === newLinkRevisionEntry.id
-        ? { ...e, rate: rateVal, minQty: minQtyVal, availGemStock: stockVal, gemLink: linkVal }
-        : e
-    ));
+    const revisedEntry: NewLinkChecklistEntry = { ...newLinkRevisionEntry, rate: rateVal, minQty: minQtyVal, availGemStock: stockVal, gemLink: linkVal };
+    applyNewLinkChecklistLocally(newLinkChecklist.map(e => e.id === newLinkRevisionEntry.id ? revisedEntry : e));
+    persistNewLinkEntryUpsert(revisedEntry);
     setNewLinkRevisionEntry(null);
   };
 
@@ -2283,11 +2318,9 @@ export default function GeMSyncPage() {
     };
     saveRateHistory([...rateHistory, newHistory]);
 
-    saveNewLinkChecklist(newLinkChecklist.map(e =>
-      e.id === entry.id
-        ? { ...e, status: "Synced" as const, pushedListingId: newListing.id }
-        : e
-    ));
+    const graduatedEntry: NewLinkChecklistEntry = { ...entry, status: "Synced" as const, pushedListingId: newListing.id };
+    applyNewLinkChecklistLocally(newLinkChecklist.map(e => e.id === entry.id ? graduatedEntry : e));
+    persistNewLinkEntryUpsert(graduatedEntry);
 
     alert("✓ Stock Update checklist me add ho gaya - Revise Rate / Sync to GeM ab wahan se chalega.");
   };
@@ -2299,16 +2332,21 @@ export default function GeMSyncPage() {
     return originalExcelData.map((row, index) => {
       const mappedRow = uploadedRows.find(r => r.index === index);
 
-      // Only rows that actually stand behind a CONFIRMED-live quote get
-      // their numbers written out - the Master List entry this row resolves
-      // to has to have been synced at least once (see rowHasConfirmedListing/
-      // everSynced on FirmItemListing). A row still awaiting its very first
-      // sync, a cancelled (Not Available) row, an untouched one, one whose
-      // checklist entry has since been deleted, and an "Add New Link" row
-      // never pushed across to Stock Update, are all blanked - quoting a
-      // client a rate that isn't actually live on GeM yet is exactly what
-      // this (and the pendingRevision mechanism generally) prevents.
+      // A row's numbers only go out once one of two things is true:
+      // 1. Its sync status shows "synced" - a Master List entry confirmed
+      //    Synced, OR a New Upload Link checklist entry ticked Synced (by
+      //    hand or via "Push to Stock"/the extension's publish automation -
+      //    both count the same, see getRowGemSyncStatus).
+      // 2. The row was OK Link'd - matched to an EXISTING Master List entry
+      //    with nothing to change, even if that entry's own status happens
+      //    to be Pending (e.g. an unrelated revision is mid-flight on it) -
+      //    OK Link itself means someone already confirmed this mapping is
+      //    correct, so its last-known values are trusted regardless.
+      // Everything else - a cancelled (Not Available) row, an untouched one,
+      // one whose checklist entry has since been deleted, and an "Add New
+      // Link" row nobody has marked Synced yet - stays blanked.
       const matchedListing = mappedRow ? resolveRowListing(mappedRow) : undefined;
+      const gemSyncStatus = mappedRow ? getRowGemSyncStatus(mappedRow) : "none";
       // isCompleted and notAvailable are meant to be mutually exclusive -
       // toggleRowNotAvailable clears isCompleted when cancelling a row, and
       // setRowCompleted clears notAvailable when OK Link/Update Stock is
@@ -2319,8 +2357,7 @@ export default function GeMSyncPage() {
       const isQuotable =
         !!mappedRow &&
         (mappedRow.isCompleted || !mappedRow.notAvailable) &&
-        !!matchedListing &&
-        matchedListing.everSynced !== false;
+        (gemSyncStatus === "synced" || (!!mappedRow.isCompleted && !!matchedListing));
 
       if (!isQuotable) {
         // The client's own columns stay exactly as they came in - only the
@@ -2339,10 +2376,13 @@ export default function GeMSyncPage() {
         };
       }
 
-      // matchedListing's own firmCode/rate/gemLink (never the row's own
-      // possibly-still-pending fields) - these are the CONFIRMED values,
-      // guaranteed present since isQuotable already checked everSynced.
-      const firmCode = matchedListing!.firmCode;
+      // Values come from whichever source actually backs this row's
+      // quotability - the Master List entry when there is one (condition 2
+      // can only be true via a listing, and condition 1 prefers it too when
+      // both exist), else the New Upload Link entry that makes gemSyncStatus
+      // "synced" on its own.
+      const source = matchedListing || resolveRowNewLinkEntry(mappedRow!);
+      const firmCode = source?.firmCode || mappedRow!.firmCode;
       const company = companies.find(c => c.firmCode?.toUpperCase() === firmCode.toUpperCase());
       const sellerRegisterAddress = company?.sellerRegisterAddress || "";
       const mappedFirmName = company?.firmName || firmCode;
@@ -2350,10 +2390,10 @@ export default function GeMSyncPage() {
       return {
         ...row,
         "Comment": mappedRow?.comment || "",
-        "Quoted Rate (₹)": matchedListing!.rate,
+        "Quoted Rate (₹)": source?.rate ?? mappedRow!.rate,
         "Seller Register Address": sellerRegisterAddress,
         "Mapped Firm": mappedFirmName,
-        "GeM Link": matchedListing!.gemLink || ""
+        "GeM Link": source?.gemLink || mappedRow!.gemLink || ""
       };
     });
   };

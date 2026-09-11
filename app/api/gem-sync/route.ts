@@ -398,12 +398,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, listingId });
     }
 
-    if (action === "save_new_link_checklist") {
-      await db.collection("gem_new_link_checklist").deleteMany({});
-      const sanitized = sanitizeBody(body);
-      if (sanitized.length > 0) {
-        await db.collection("gem_new_link_checklist").insertMany(sanitized);
+    // Scoped upsert-by-id for a single New Upload Link entry (add or edit) -
+    // replaces the old whole-collection "save_new_link_checklist" (deleteMany
+    // + insertMany of every entry the calling tab knew about). That pattern
+    // had the exact same bug already fixed for gem_listings (see
+    // upsert_listing above): one tab's stale in-memory snapshot could
+    // silently resurrect an entry another tab (or this same tab, moments
+    // later) had just deleted, since deleting it here only ever removed it
+    // from THAT tab's local array before resending the whole thing - any
+    // other still-open tab's next unrelated save would re-insert it wholesale.
+    if (action === "upsert_new_link_entry") {
+      const entry = sanitizeBody([body])[0];
+      if (!entry?.id) {
+        return NextResponse.json({ error: "entry.id is required" }, { status: 400 });
       }
+      await db.collection("gem_new_link_checklist").updateOne({ id: entry.id }, { $set: entry }, { upsert: true });
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delete_new_link_entry") {
+      const id = (body.id || "").toString().trim();
+      if (!id) {
+        return NextResponse.json({ error: "id is required" }, { status: 400 });
+      }
+      await db.collection("gem_new_link_checklist").deleteOne({ id });
       return NextResponse.json({ success: true });
     }
 
