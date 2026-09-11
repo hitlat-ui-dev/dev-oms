@@ -3924,19 +3924,21 @@ export default function GeMSyncPage() {
                                       <FiSlash size={12} />
                                     </button>
                                   )}
-                                  {/* A row goes green only while the Sync Checklist entry its
-                                      action created still exists. Delete that entry from Stock
-                                      Update (or from the New Upload Link checklist) and the tick
-                                      would otherwise keep claiming the row is done, with nothing
-                                      behind it - so it flips to a redo marker instead, saying the
-                                      row has to be set again. */}
+                                  {/* An amber clock only while the Sync Checklist entry its
+                                      action created still exists but isn't Synced yet. Delete
+                                      that entry from Stock Update (or the New Upload Link
+                                      checklist) and the clock would otherwise keep claiming
+                                      "linked" with nothing behind it - so it flips to a redo
+                                      marker instead, saying the row has to be set again. */}
                                   {/* One marker per row, not two. "Completed" only ever means
-                                      an action was taken here; once the Sync Checklist confirms
-                                      the listing is actually Synced on GeM, that is the stronger
-                                      fact, so the violet link replaces the green tick rather than
-                                      sitting next to it. And if the checklist entry the action
-                                      created has since been deleted, neither is true any more -
-                                      the row flips to a redo marker saying it must be set again. */}
+                                      an action was taken here, never that it's actually live on
+                                      GeM - shown as an amber clock (pending), never a green tick,
+                                      so it can't be misread as "done". Once the Sync Checklist
+                                      confirms the listing is actually Synced, that stronger fact
+                                      replaces the clock with a violet link instead of sitting next
+                                      to it. And if the checklist entry the action created has
+                                      since been deleted, neither is true any more - the row flips
+                                      to a redo marker saying it must be set again. */}
                                   {row.isCompleted && gemSyncStatus !== "synced" && (
                                     gemSyncStatus === "none" ? (
                                       <button
@@ -3948,13 +3950,18 @@ export default function GeMSyncPage() {
                                         <FiRotateCcw size={12} />
                                       </button>
                                     ) : (
+                                      // Linked to a real Sync Checklist entry, but that entry
+                                      // itself isn't Synced yet (pendingRevision still awaiting
+                                      // "Sync to GeM"/checkbox confirmation) - an amber clock,
+                                      // not a green tick, so this never reads as "done" before
+                                      // it's actually live on GeM. Click still undoes to Uncompleted.
                                       <button
                                         type="button"
                                         onClick={() => toggleRowCompleted(row.index)}
-                                        title="Marked Completed - click to undo"
-                                        className="w-7 h-7 flex items-center justify-center rounded bg-emerald-100 text-emerald-700 border border-emerald-300 transition-colors"
+                                        title="Linked, but not yet Synced to GeM - pending. Click to undo (back to Uncompleted)."
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-amber-100 text-amber-700 border border-amber-300 transition-colors"
                                       >
-                                        <FiCheck size={12} />
+                                        <FiClock size={12} />
                                       </button>
                                     )
                                   )}
