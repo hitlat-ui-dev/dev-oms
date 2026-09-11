@@ -722,8 +722,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
             {formData.isAdvance ? (
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Material Sent Date *</label>
-                <input type="date" required className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.deliveryDate} onChange={(e) => setFormData({ ...formData, deliveryDate: e.target.value })} />
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Material Sent Date</label>
+                <input type="date" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" value={formData.deliveryDate} onChange={(e) => setFormData({ ...formData, deliveryDate: e.target.value })} />
               </div>
             ) : (
               <div className="space-y-2">
