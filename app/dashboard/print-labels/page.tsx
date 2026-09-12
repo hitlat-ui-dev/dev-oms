@@ -15,6 +15,16 @@ const FALLBACK_CONTACT = {
     mobile: "MOBILE NOT SET"
 };
 
+// Every extra character here adds a module to the printed QR, and the QR is
+// already sized to the edge of what a phone camera can reliably read off a
+// small sticker (see the addImage calls below). An unusually long institute
+// name or address must not be free to grow the QR past that point - clamp it
+// instead, same trade-off as the sender-address clamp on the FROM block.
+function clampForQr(value: string, maxLen: number): string {
+    const v = (value || "").trim();
+    return v.length > maxLen ? v.slice(0, maxLen - 1).trimEnd() + "…" : v;
+}
+
 // A row of the Dispatch History table - these are SCANNED parcels, not
 // printed labels. A label that was printed but never scanned has no record
 // at all (see handlePrint below).
@@ -97,10 +107,10 @@ export default function PrintLabelsPage() {
             const payload: DispatchLabelPayload = {
                 id: newLabelId(),
                 fromFirmCode: selectedFrom.firmCode || "",
-                fromFirmName: selectedFrom.firmName,
-                toInstituteName: selectedTo.instituteName || "",
-                toBuyerName: selectedTo.buyerName || "",
-                toAddress: selectedTo.address || "",
+                fromFirmName: clampForQr(selectedFrom.firmName, 35),
+                toInstituteName: clampForQr(selectedTo.instituteName || "", 45),
+                toBuyerName: clampForQr(selectedTo.buyerName || "", 30),
+                toAddress: clampForQr(selectedTo.address || "", 50),
                 toMobile: selectedTo.mobile || "",
                 toPlace: selectedTo.place || "",
                 printedAt: new Date().toISOString(),
@@ -110,7 +120,11 @@ export default function PrintLabelsPage() {
             // public receipt page too - the OMS scanner reads the same string
             // and pulls the payload back out of it.
             const scanUrl = dispatchScanUrl(window.location.origin, payload);
-            const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 1 });
+            // margin here is the QR's own "quiet zone" - the blank border a
+            // scanner uses to first LOCATE the code before it can even try to
+            // read it. margin:1 was too tight for a real camera at printed
+            // size/distance; 4 is the spec-recommended minimum.
+            const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 4, errorCorrectionLevel: "M" });
 
             printLabelPdf(qrDataUrl);
         } catch (err: any) {
@@ -266,12 +280,15 @@ export default function PrintLabelsPage() {
             // x=1.4 divider), below the sender block, which the narrower
             // address wrap above keeps clear from y=4.4 down.
             //
-            // 1.1in, NOT the token-sized square a label usually gets: at this
-            // payload the QR is 77x77 modules, so anything smaller prints
-            // modules thinner than a thermal printer dot. Left unrotated -
-            // a QR scans from any angle, so matching the -90 text orientation
-            // would buy nothing and only complicate the placement maths.
-            doc.addImage(qrDataUrl, "PNG", 0.15, 4.6, 1.1, 1.1);
+            // 1.05in, NOT the token-sized square a label usually gets: at this
+            // payload the QR runs 77-85 modules, so anything smaller prints
+            // modules thinner than a thermal printer dot. Kept 0.2in off the
+            // left page edge and the x=1.4 divider - most printers refuse to
+            // mark right up to a page edge, and anything actually clipped
+            // there breaks the QR outright, not just makes it small. Left
+            // unrotated - a QR scans from any angle, so matching the -90 text
+            // orientation would buy nothing and only complicate the placement.
+            doc.addImage(qrDataUrl, "PNG", 0.2, 4.6, 1.05, 1.05);
 
         } else {
             // --- 4x4 STANDARD DESIGN ---
@@ -403,12 +420,17 @@ export default function PrintLabelsPage() {
             doc.text(`MOB: ${fromExtra.mobile}`, 0.3, fromTextY);
 
             // 7. DISPATCH QR - scan this on the Dispatch Scanner page to
-            // record the parcel going out. Bottom-right of the footer, beside
+            // record the parcel going out. Right side of the footer, beside
             // the sender block, which the narrower address wrap above keeps
-            // out of this corner. 1.1in for the same printability reason as
-            // the 3.5x6 branch: at 77x77 modules a smaller square prints
-            // modules thinner than a thermal printer dot.
-            doc.addImage(qrDataUrl, "PNG", 2.5, 2.85, 1.1, 1.1);
+            // out of this corner.
+            //
+            // Was 1.1in square starting at y=2.85 - its bottom edge landed at
+            // 3.95, just 0.05in from the page's own 4.0in bottom edge. Most
+            // printers won't mark that close to an edge, so that bottom strip
+            // of the QR was likely being clipped outright - not shrunk, GONE -
+            // which breaks a QR far worse than a slightly smaller code would.
+            // Shrunk to 0.95in so a 0.2in bottom margin survives.
+            doc.addImage(qrDataUrl, "PNG", 2.75, 2.85, 0.95, 0.95);
         }
         // Open the label straight into the browser's print dialog instead of
         // downloading a file the user then has to find and open themselves.

@@ -147,11 +147,26 @@ export default function DispatchScanPage() {
 
     try {
       const { Html5Qrcode } = await import("html5-qrcode");
-      const scanner = new Html5Qrcode("dispatch-qr-reader");
+      const scanner = new Html5Qrcode("dispatch-qr-reader", {
+        // Delegates to the browser's native BarcodeDetector where supported
+        // (Chrome on Android) instead of html5-qrcode's own JS decoder -
+        // meaningfully faster and more tolerant of a dense/small printed QR
+        // than the pure-JS fallback used everywhere else.
+        useBarCodeDetectorIfSupported: true,
+      } as any);
       scannerRef.current = scanner;
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
+        {
+          fps: 15,
+          // A fixed 250px box is tiny against a modern phone's 1080p+ feed,
+          // forcing the QR to be held very close and dead-center. Scale the
+          // box to the actual preview instead, so more of the frame counts.
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.8);
+            return { width: edge, height: edge };
+          },
+        },
         (decodedText: string) => {
           handleScanned(decodedText);
         },
