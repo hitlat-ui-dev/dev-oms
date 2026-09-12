@@ -12,6 +12,11 @@ import { decodeDispatchPayload, DispatchLabelPayload } from "@/lib/dispatchLabel
 // transporter it is actually going out with.
 type Stage = "idle" | "scanning" | "review" | "saved";
 
+// Most parcels here go out with this one transporter, so it's pinned to the
+// top of the picker instead of sitting wherever it falls in a 25+ entry list
+// - one tap instead of a search on the common case.
+const PINNED_TRANSPORTER = "MAHAVEER COURIER";
+
 export default function DispatchScanPage() {
   const [stage, setStage] = useState<Stage>("idle");
   const [payload, setPayload] = useState<DispatchLabelPayload | null>(null);
@@ -19,11 +24,13 @@ export default function DispatchScanPage() {
   const [transporters, setTransporters] = useState<any[]>([]);
   const [transporterSearch, setTransporterSearch] = useState("");
   const [selectedTransporter, setSelectedTransporter] = useState<any>(null);
+  const [showTransporterList, setShowTransporterList] = useState(false);
   const [savedRecord, setSavedRecord] = useState<any>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const scannerRef = useRef<any>(null);
+  const transporterBoxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch("/api/transporters")
@@ -31,6 +38,42 @@ export default function DispatchScanPage() {
       .then((data) => setTransporters(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load transporters", err));
   }, []);
+
+  // Tap outside the search box or its dropdown closes it, same as any
+  // standard combobox - otherwise it stays open over the rest of the form.
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (transporterBoxRef.current && !transporterBoxRef.current.contains(e.target as Node)) {
+        setShowTransporterList(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Search-filtered transporter list for the dropdown below the input, with
+  // the pinned transporter always floated to the top (even while filtering,
+  // as long as it still matches) instead of a plain native <datalist> - which
+  // renders inconsistently (or not at all) as a scrollable list on mobile
+  // browsers, exactly where this page is actually used.
+  const filteredTransporters = (() => {
+    const q = transporterSearch.trim().toLowerCase();
+    const list = q ? transporters.filter((t: any) => (t.name || "").toLowerCase().includes(q)) : transporters;
+    const pinnedIndex = list.findIndex((t: any) => (t.name || "").trim().toUpperCase() === PINNED_TRANSPORTER);
+    if (pinnedIndex > 0) {
+      const reordered = [...list];
+      const [pinned] = reordered.splice(pinnedIndex, 1);
+      reordered.unshift(pinned);
+      return reordered;
+    }
+    return list;
+  })();
+
+  const selectTransporter = (t: any) => {
+    setSelectedTransporter(t);
+    setTransporterSearch(t.name);
+    setShowTransporterList(false);
+  };
 
   const stopCamera = async () => {
     const scanner = scannerRef.current;
@@ -263,25 +306,58 @@ export default function DispatchScanPage() {
                 </div>
               </div>
 
-              <div>
+              <div ref={transporterBoxRef} className="relative">
                 <label className="block text-sm font-semibold text-gray-600 mb-2">Transport Detail *</label>
                 <input
                   type="text"
-                  list="scan-transporter-options"
                   placeholder="Search transporter..."
                   value={transporterSearch}
+                  onFocus={() => setShowTransporterList(true)}
                   onChange={(e) => {
                     const val = e.target.value;
                     setTransporterSearch(val);
-                    setSelectedTransporter(transporters.find((t: any) => t.name === val) || null);
+                    setSelectedTransporter(null);
+                    setShowTransporterList(true);
                   }}
                   className="w-full border-2 border-gray-100 p-3 rounded-lg focus:border-blue-500 outline-none transition"
                 />
-                <datalist id="scan-transporter-options">
-                  {transporters.map((t: any) => (
-                    <option key={t._id} value={t.name} />
-                  ))}
-                </datalist>
+
+                {/* Scrollable tap-to-select list - opens on focus, filters as
+                    you type, closes on pick or tap-outside. */}
+                {showTransporterList && (
+                  <div className="absolute z-20 mt-1 w-full max-h-60 overflow-y-auto bg-white border-2 border-gray-100 rounded-lg shadow-xl">
+                    {filteredTransporters.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-400 text-center">
+                        No match - "{transporterSearch}" will be saved as typed.
+                      </div>
+                    ) : (
+                      filteredTransporters.map((t: any) => {
+                        const isPinned = (t.name || "").trim().toUpperCase() === PINNED_TRANSPORTER;
+                        return (
+                          <button
+                            type="button"
+                            key={t._id}
+                            onClick={() => selectTransporter(t)}
+                            className={`w-full text-left px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-blue-50 active:bg-blue-100 transition ${isPinned ? "bg-amber-50" : ""}`}
+                          >
+                            <div className="font-bold text-sm text-gray-800 flex items-center gap-2">
+                              {t.name}
+                              {isPinned && (
+                                <span className="text-[9px] font-black uppercase tracking-wider text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">
+                                  Most Used
+                                </span>
+                              )}
+                            </div>
+                            {(t.deliveryArea || t.address) && (
+                              <div className="text-xs text-gray-500 mt-0.5">{t.deliveryArea || t.address}</div>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
                 {selectedTransporter?.contacts?.[0]?.mobile && (
                   <p className="text-xs text-gray-500 mt-1">Contact: {selectedTransporter.contacts[0].mobile}</p>
                 )}
