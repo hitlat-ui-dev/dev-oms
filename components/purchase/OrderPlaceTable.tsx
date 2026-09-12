@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -8,7 +8,9 @@ import {
   FiX,
   FiCheck,
   FiCheckCircle,
-  FiXCircle
+  FiXCircle,
+  FiEdit3,
+  FiCopy
 } from "react-icons/fi";
 
 interface PurchaseOrder {
@@ -26,6 +28,10 @@ interface PurchaseOrder {
   rate: number;
   vendor: string;
   remark?: string;
+  // Manual, user-typed note - separate from `remark` (which is auto-filled
+  // from the source Purchase Request and must stay untouched). Shows up in
+  // the exported PDF under the item name.
+  manualRemark?: string;
 }
 
 interface OrderPlaceTableProps {
@@ -42,6 +48,14 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
   const [moveRemainingTo, setMoveRemainingTo] = useState("Order Place");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editRate, setEditRate] = useState<number>(0);
+
+  // Per-row manual note popover (Option 2: an icon that opens a small editor,
+  // rather than a permanently-visible column)
+  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
+  const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
+  const notePopoverRef = useRef<HTMLDivElement | null>(null);
 
   // Filter States
   const [filterDate, setFilterDate] = useState("");
@@ -77,6 +91,56 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     }
   };
 
+  // Closes the note popover on an outside click, since it has its own inputs
+  // inside it (a blur-based close would fire while moving focus between the
+  // textarea and its Save/Copy/Cancel buttons).
+  useEffect(() => {
+    if (!openNoteId) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (notePopoverRef.current && !notePopoverRef.current.contains(e.target as Node)) {
+        setOpenNoteId(null);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [openNoteId]);
+
+  const openNote = (req: PurchaseOrder) => {
+    setOpenNoteId(req._id);
+    setNoteDraft(req.manualRemark || "");
+  };
+
+  const saveNote = async (req: PurchaseOrder) => {
+    setSavingNoteId(req._id);
+    try {
+      const res = await fetch(`/api/orders/${req._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manualRemark: noteDraft }),
+      });
+      if (res.ok) {
+        setOpenNoteId(null);
+        onRefresh();
+      } else {
+        alert("Note save nahi hua, dubara try karo.");
+      }
+    } catch {
+      alert("Network error - note save nahi hua.");
+    } finally {
+      setSavingNoteId(null);
+    }
+  };
+
+  const copyNote = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedNoteId(id);
+      setTimeout(() => setCopiedNoteId(null), 1500);
+    } catch {
+      alert("Copy nahi ho paya.");
+    }
+  };
+
   const downloadPDF = () => {
     const doc = new jsPDF('landscape');
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -107,7 +171,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     const tableRows = dataToExport.map(item => [
       item.orderNumber || "N/A",
       new Date(item.orderedAt || item.createdAt).toLocaleDateString('en-GB'),
-      item.itemName,
+      item.manualRemark ? `${item.itemName}\nNote: ${item.manualRemark}` : item.itemName,
       `${item.orderQty} ${item.unit}`
     ]);
 
@@ -257,6 +321,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Rate</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Vendor</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Remarks</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Note</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
               </tr>
             </thead>
@@ -287,6 +352,64 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                   <td className="py-3 px-4 font-bold text-blue-600 text-xs">₹{req.rate}</td>
                   <td className="py-3 px-4 text-[10px] font-black text-slate-600 uppercase">{req.vendor}</td>
                   <td className="py-3 px-4 text-[10px] text-slate-600">{req.remark}</td>
+                  <td className="py-3 px-4 text-center relative">
+                    <button
+                      type="button"
+                      onClick={() => (openNoteId === req._id ? setOpenNoteId(null) : openNote(req))}
+                      title={req.manualRemark ? "Note edit karo" : "Note add karo"}
+                      className={`p-2 rounded-lg transition-all ${
+                        req.manualRemark
+                          ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                          : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                      }`}
+                    >
+                      <FiEdit3 size={14} />
+                    </button>
+
+                    {openNoteId === req._id && (
+                      <div
+                        ref={notePopoverRef}
+                        className="absolute z-20 right-4 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-2xl p-3 text-left"
+                      >
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-1.5">Manual Note</p>
+                        <textarea
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          rows={3}
+                          autoFocus
+                          placeholder="Yaha manual note likho..."
+                          className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 resize-none"
+                        />
+                        <div className="flex items-center justify-between mt-2">
+                          <button
+                            type="button"
+                            onClick={() => copyNote(noteDraft, req._id)}
+                            disabled={!noteDraft}
+                            className="text-[10px] font-bold text-slate-500 hover:text-slate-800 disabled:opacity-40 flex items-center gap-1"
+                          >
+                            <FiCopy size={12} /> {copiedNoteId === req._id ? "Copied!" : "Copy"}
+                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setOpenNoteId(null)}
+                              className="text-[10px] font-bold text-slate-400 hover:text-slate-600"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => saveNote(req)}
+                              disabled={savingNoteId === req._id}
+                              className="text-[10px] font-black text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg disabled:bg-slate-300"
+                            >
+                              {savingNoteId === req._id ? "Saving..." : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </td>
                   <td className="py-3 px-4">
                     <div className="flex justify-end gap-2">
                       <button
