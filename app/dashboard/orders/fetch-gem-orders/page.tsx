@@ -133,6 +133,23 @@ export default function FetchGeMOrdersPage() {
     fetchStockItems();
   }, []);
 
+  // Esc closes the Item Name suggestion dropdown first (if open), otherwise
+  // closes the Verify modal itself - mirrors the Cancel button, so it's a
+  // no-op while a submit is in flight.
+  useEffect(() => {
+    if (!selectedOrder) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showItemSuggestions) {
+        setShowItemSuggestions(false);
+      } else if (!verifying) {
+        setSelectedOrder(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedOrder, showItemSuggestions, verifying]);
+
   // Resolve the Sheet Library file(s) tied to a given buyer (matches by
   // buyer id or name, same dual-check the GeM Sync Console uses since
   // selectedBuyerId sometimes holds a name instead of an id).
@@ -421,7 +438,7 @@ export default function FetchGeMOrdersPage() {
   const itemSuggestions = useMemo(() => {
     const q = itemQuery.toLowerCase().trim();
     const pool = q ? stockItems.filter(s => s.itemName.toLowerCase().includes(q)) : stockItems;
-    return pool.slice(0, 8);
+    return pool.slice(0, 50);
   }, [itemQuery, stockItems]);
 
   const handleVerifySubmit = async () => {
@@ -764,7 +781,7 @@ export default function FetchGeMOrdersPage() {
                   <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ {autoFillHint}</p>
                 )}
                 {showItemSuggestions && itemSuggestions.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                  <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
                     {itemSuggestions.map((item) => (
                       <button
                         type="button"
