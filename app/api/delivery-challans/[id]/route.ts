@@ -95,10 +95,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // Firm and date are only movable while the challan is still a draft -
     // both feed the number it will be issued under.
     if (existing.status === "draft") {
+      // An empty firmCode is a deliberate "no firm on this challan", not a
+      // missing value - it clears the snapshot so the PDF drops the header.
       if (body.firmCode !== undefined) {
         const firmCode = (body.firmCode || "").toString().trim().toUpperCase();
-        const company = await db.collection("companies").findOne({ firmCode });
-        if (!company) {
+        const company = firmCode ? await db.collection("companies").findOne({ firmCode }) : null;
+        if (firmCode && !company) {
           return NextResponse.json({ error: "Firm not found." }, { status: 404 });
         }
         update.firmCode = firmCode;

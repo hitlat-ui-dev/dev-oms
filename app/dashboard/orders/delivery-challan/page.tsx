@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   FiArrowLeft, FiPlus, FiTrash2, FiSearch, FiX, FiFileText, FiSave,
-  FiDownload, FiEdit2, FiCheck, FiRefreshCw, FiChevronDown,
+  FiDownload, FiEdit2, FiCheck, FiRefreshCw, FiChevronDown, FiCopy,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -164,10 +164,12 @@ export default function DeliveryChallanPage() {
         const list = Array.isArray(data) ? data : [];
         setCompanies(list);
         // Firms rarely change between challans, so the last one used is
-        // remembered rather than forcing a re-pick on every visit.
-        const remembered = localStorage.getItem("dc_last_firm") || "";
-        const initial = list.find((c) => c.firmCode === remembered)?.firmCode || list[0]?.firmCode || "";
-        setFirmCode(initial);
+        // remembered rather than forcing a re-pick on every visit. A firm is
+        // optional though, so the fallback is NO firm - not whichever company
+        // happens to sort first, which would silently stamp a header onto a
+        // challan that was never meant to carry one.
+        const remembered = localStorage.getItem("dc_last_firm");
+        setFirmCode(list.some((c) => c.firmCode === remembered) ? (remembered as string) : "");
       })
       .catch(() => setError("Couldn't load firms."));
 
@@ -220,13 +222,13 @@ export default function DeliveryChallanPage() {
   // ---- DC number preview. Re-read whenever the firm or date changes, since
   // the date decides which financial year's series the number comes from. ----
   useEffect(() => {
-    if (!firmCode) {
-      setPreview(null);
-      return;
-    }
     localStorage.setItem("dc_last_firm", firmCode);
     let cancelled = false;
-    fetch(`/api/delivery-challans/next-number?firmCode=${encodeURIComponent(firmCode)}&date=${date}`)
+    // No firmCode is a valid request - the number then comes from the shared
+    // no-firm series rather than a firm's own.
+    const params = new URLSearchParams({ date });
+    if (firmCode) params.set("firmCode", firmCode);
+    fetch(`/api/delivery-challans/next-number?${params.toString()}`)
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
@@ -411,10 +413,6 @@ export default function DeliveryChallanPage() {
   /** Persists the current form. Returns the challan id, so the callers that
    * need one (Generate PDF) can save first and act on the result. */
   const persist = async (): Promise<string | null> => {
-    if (!firmCode) {
-      setError("Pick a firm first - the DC number comes from that firm's series.");
-      return null;
-    }
     if (lines.length === 0) {
       setError("Add at least one item.");
       return null;
@@ -559,6 +557,55 @@ export default function DeliveryChallanPage() {
     }
   };
 
+  // "Make a replica": pull an existing challan's item list into a BRAND NEW
+  // draft, so a repeat dispatch doesn't have to be typed out line by line.
+  //
+  // Ship To is deliberately NOT carried over. A challan travels with the
+  // goods, and silently inheriting the previous party is exactly how a
+  // delivery gets booked to the wrong one - the copy exists to save retyping
+  // the items, and the party is the field that is meant to change. The date
+  // resets to today for the same reason.
+  const copyChallan = async (id: string) => {
+    setBusyRowId(id);
+    try {
+      const res = await fetch(`/api/delivery-challans/${id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't copy that challan.");
+      const dc = data.challan;
+
+      setChallanId(null); // a fresh record - never an edit of the one copied from
+      setStatus("draft");
+      setIssuedNumber("");
+      setNumberMode("auto");
+      setManualNumber("");
+      setFirmCode(dc.firmCode || "");
+      setDate(todayISO());
+      setRemarks(dc.remarks || "");
+      setConsignee({ ...BLANK_CONSIGNEE });
+      setConsigneeOpen(true); // opened, since it's the one thing that must be filled in
+      setLines(
+        (dc.items || []).map((it: any) => ({
+          key: nextLineKey(),
+          itemMasterId: it.itemMasterId ? String(it.itemMasterId) : null,
+          itemName: it.itemName,
+          qty: String(it.qty),
+          unit: it.unit || "",
+        }))
+      );
+      setError("");
+      const count = dc.items?.length || 0;
+      setNotice(
+        `Copied ${count} item${count === 1 ? "" : "s"} from ${dc.dcNumberFormatted || "a draft"} into a new challan. ` +
+          `Set Ship To, change the qty, add any extra items — then Save Draft or Generate PDF.`
+      );
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyRowId(null);
+    }
+  };
+
   const deleteChallan = async (dc: ChallanSummary) => {
     if (!confirm(`Delete this ${dc.status === "draft" ? "draft" : "challan"}? This can't be undone.`)) return;
     setBusyRowId(dc._id);
@@ -603,21 +650,29 @@ export default function DeliveryChallanPage() {
               Dispatch document · no rate or amount
             </p>
             <div className="mt-4">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Firm</label>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                Firm <span className="text-slate-300 normal-case tracking-normal font-bold">(optional)</span>
+              </label>
               <select
                 value={firmCode}
                 onChange={(e) => setFirmCode(e.target.value)}
                 disabled={isIssued}
                 className={`${inputClass} md:w-72 disabled:bg-slate-100 disabled:text-slate-500`}
               >
-                <option value="">Select firm…</option>
+                <option value="">— No firm —</option>
                 {companies.map((c) => (
                   <option key={c._id} value={c.firmCode}>
                     {c.firmName} ({c.firmCode})
                   </option>
                 ))}
               </select>
-              {isIssued && <p className="text-[10px] text-slate-400 mt-1">Locked — this challan is already issued.</p>}
+              {isIssued ? (
+                <p className="text-[10px] text-slate-400 mt-1">Locked — this challan is already issued.</p>
+              ) : !firmCode ? (
+                <p className="text-[10px] text-slate-400 mt-1">
+                  No firm header will be printed on the challan.
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -1042,11 +1097,9 @@ export default function DeliveryChallanPage() {
               <FiRefreshCw size={14} /> New Challan
             </button>
           )}
-          {selectedFirm && (
-            <span className="text-[11px] text-slate-400 ml-auto">
-              {selectedFirm.firmName} · FY {preview?.financialYear || "--"}
-            </span>
-          )}
+          <span className="text-[11px] text-slate-400 ml-auto">
+            {selectedFirm ? selectedFirm.firmName : "No firm"} · FY {preview?.financialYear || "--"}
+          </span>
         </div>
 
         {/* ---- History ---- */}
@@ -1104,7 +1157,7 @@ export default function DeliveryChallanPage() {
                         {dc.dcNumberFormatted || <span className="text-amber-600 font-bold text-xs">DRAFT</span>}
                       </td>
                       <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{formatDateDDMMYYYY(dc.date)}</td>
-                      <td className="px-3 py-2 text-slate-600">{dc.firmCode}</td>
+                      <td className="px-3 py-2 text-slate-600">{dc.firmCode || <span className="text-slate-300">—</span>}</td>
                       <td className="px-3 py-2 text-slate-600 max-w-[220px] truncate">
                         {dc.consignee?.buyerName || dc.consignee?.instituteName || "—"}
                       </td>
@@ -1118,6 +1171,14 @@ export default function DeliveryChallanPage() {
                             className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 px-2 py-1 disabled:text-slate-300"
                           >
                             Open
+                          </button>
+                          <button
+                            onClick={() => copyChallan(dc._id)}
+                            disabled={busyRowId === dc._id}
+                            className="text-[11px] font-bold text-teal-600 hover:text-teal-800 px-2 py-1 disabled:text-slate-300 flex items-center gap-1"
+                            title="Start a new challan with these same items"
+                          >
+                            <FiCopy size={12} /> Copy
                           </button>
                           {dc.status === "finalized" && (
                             <a

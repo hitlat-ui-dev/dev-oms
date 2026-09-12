@@ -87,7 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Store the PDF alongside the bills in R2 so it can be re-served instantly
     // later. Best-effort: the challan is issued either way, and [id]/pdf
     // re-renders from the stored document when there's no object to fetch.
-    const r2Key = `delivery-challans/${challan.firmCode}/${dcNumberFormatted.replace(/\//g, "-")}.pdf`;
+    const r2Key = `delivery-challans/${challan.firmCode || "no-firm"}/${dcNumberFormatted.replace(/\//g, "-")}.pdf`;
     try {
       await uploadFileToR2Bills(Buffer.from(pdfBytes), r2Key, "application/pdf");
       await db.collection(COLLECTION).updateOne({ _id: new ObjectId(id) }, { $set: { r2Key } });

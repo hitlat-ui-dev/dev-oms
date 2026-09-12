@@ -3,7 +3,7 @@ import clientPromise from "@/lib/mongodb";
 import {
   formatDcNumber,
   getFinancialYear,
-  peekNextDcNumber,
+  readLastDcNumber,
   shortFinancialYear,
 } from "@/lib/dcNumbering";
 import { parseFormDate } from "@/lib/deliveryChallan";
@@ -20,10 +20,6 @@ export async function GET(req: Request) {
     const firmCode = (searchParams.get("firmCode") || "").trim().toUpperCase();
     const dateParam = (searchParams.get("date") || "").trim();
 
-    if (!firmCode) {
-      return NextResponse.json({ error: "firmCode is required." }, { status: 400 });
-    }
-
     const date = dateParam ? parseFormDate(dateParam) : new Date();
     if (!date) {
       return NextResponse.json({ error: "Invalid date." }, { status: 400 });
@@ -31,8 +27,10 @@ export async function GET(req: Request) {
 
     const client = await clientPromise;
     const db = client.db();
-    const company = await db.collection("companies").findOne({ firmCode });
-    if (!company) {
+
+    // No firmCode is legitimate - the challan just draws from the shared
+    // no-firm series rather than a firm's own.
+    if (firmCode && !(await db.collection("companies").findOne({ firmCode }))) {
       return NextResponse.json({ error: "Firm not found." }, { status: 404 });
     }
 
@@ -40,7 +38,7 @@ export async function GET(req: Request) {
     // the previous year's series rather than today's.
     const fy = getFinancialYear(date);
     const shortFy = shortFinancialYear(fy);
-    const nextSequence = peekNextDcNumber(company, fy);
+    const nextSequence = (await readLastDcNumber(db, firmCode, fy)) + 1;
 
     return NextResponse.json({
       success: true,

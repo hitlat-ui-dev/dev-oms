@@ -83,15 +83,14 @@ export async function POST(req: Request) {
     const body = await req.json();
     const firmCode = (body.firmCode || "").toString().trim().toUpperCase();
 
-    if (!firmCode) {
-      return NextResponse.json({ error: "firmCode is required." }, { status: 400 });
-    }
-
     const client = await clientPromise;
     const db = client.db();
 
-    const company = await db.collection("companies").findOne({ firmCode });
-    if (!company) {
+    // Picking a firm is OPTIONAL. Without one the challan prints no firm
+    // header and its number comes from the shared no-firm series instead of
+    // any firm's own (see lib/dcNumbering.ts).
+    const company = firmCode ? await db.collection("companies").findOne({ firmCode }) : null;
+    if (firmCode && !company) {
       return NextResponse.json({ error: "Firm not found." }, { status: 404 });
     }
 

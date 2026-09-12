@@ -28,7 +28,10 @@ const DcItemSchema = new Schema(
 
 const DeliveryChallanSchema = new Schema(
   {
-    firmCode: { type: String, required: true, uppercase: true },
+    // Optional: a challan may be raised with no firm at all, in which case
+    // the PDF omits the firm header entirely and the number comes from the
+    // shared no-firm series rather than any firm's own.
+    firmCode: { type: String, default: "", uppercase: true },
 
     // Numbering. dcNumber stays null while status is "draft" - a number is
     // only allocated at finalize, so abandoned drafts never burn one and the

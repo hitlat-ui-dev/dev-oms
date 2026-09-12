@@ -95,8 +95,14 @@ export function totalQtyOf(items: DcLine[]): number {
 
 /** Snapshots the firm exactly as the Billing module does, so later edits to
  * the Company record never change an already-issued challan. dispatchAddress
- * is preferred because sellerRegisterAddress is often just a city name. */
+ * is preferred because sellerRegisterAddress is often just a city name.
+ *
+ * Picking a firm is optional, so a null company yields an EMPTY snapshot -
+ * the renderer reads the blank name as "no firm block on this challan" and
+ * omits the whole header rather than printing an empty box. */
 export function firmSnapshotOf(company: any) {
+  if (!company) return { name: "", address: "", state: "", gstin: null, pan: null, mobile: "", contactEmail: "" };
+
   const address = company.dispatchAddress
     ? company.dispatchAddress
     : [company.sellerRegisterAddress, company.state].filter(Boolean).join(", ");
@@ -142,14 +148,19 @@ export function toPdfData(dc: any): DcPdfData {
       dc.dcNumberFormatted ||
       (dc.status === "draft" ? `DRAFT/${shortFinancialYear(dc.financialYear || "")}` : ""),
     date: formatDateDDMMYYYY(new Date(dc.date)),
-    firm: {
-      name: dc.firmSnapshot?.name || "",
-      address: dc.firmSnapshot?.address || "",
-      mobile: dc.firmSnapshot?.mobile || "",
-      email: dc.firmSnapshot?.contactEmail || "",
-      gstin: dc.firmSnapshot?.gstin || null,
-      pan: dc.firmSnapshot?.pan || null,
-    },
+    // No firm name means no firm was picked - the renderer skips the entire
+    // header block (and the "For <firm>" signature line) rather than drawing
+    // an empty one.
+    firm: dc.firmSnapshot?.name
+      ? {
+          name: dc.firmSnapshot.name,
+          address: dc.firmSnapshot.address || "",
+          mobile: dc.firmSnapshot.mobile || "",
+          email: dc.firmSnapshot.contactEmail || "",
+          gstin: dc.firmSnapshot.gstin || null,
+          pan: dc.firmSnapshot.pan || null,
+        }
+      : null,
     consignee: {
       instituteName: dc.consignee?.instituteName || "",
       buyerName: dc.consignee?.buyerName || "",

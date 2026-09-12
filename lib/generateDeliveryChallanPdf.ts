@@ -1,15 +1,28 @@
 // lib/generateDeliveryChallanPdf.ts
 //
-// Renders a standalone Delivery Challan to PDF with pdf-lib - the same engine
-// as lib/generateBillPdf.ts and lib/documentMaker/pdfEngine.ts. Deliberately
-// NOT Puppeteer: this runs on Vercel serverless, where there is no headless
-// Chrome binary to drive (the same reason the Billing module moved off its
-// original Puppeteer design draft).
+// Renders a Delivery Challan to PDF with pdf-lib - the same engine as
+// lib/generateBillPdf.ts and lib/documentMaker/pdfEngine.ts. Deliberately NOT
+// Puppeteer: this runs on Vercel serverless, where there is no headless Chrome
+// binary to drive (the same reason the Billing module moved off its original
+// Puppeteer design draft).
 //
-// Layout mirrors the on-screen challan: firm header, DELIVERY CHALLAN title
-// bar, optional consignee block beside the DC No./Date strip, then a
-// Sr/Item/Qty/Unit table closed by a Total Qty row. A DC is a non-commercial
-// dispatch document, so no rate, amount, tax or total value appears anywhere.
+// LAYOUT: one A4 portrait sheet carries TWO A5 copies of the same challan,
+// stacked - ORIGINAL COPY on the top half, DUPLICATE COPY on the bottom, with
+// a dashed cut line between them. Both halves are identical apart from the
+// label, so the sheet is printed once and torn in two.
+//
+// Because both copies must show the same rows, items are paginated ONCE up
+// front (measureLayout -> chunkItems) and each chunk is then drawn twice onto
+// its own A4 sheet. Drawing first and paginating as you go - the approach the
+// single-copy bill renderer uses - can't work here: the bottom copy would run
+// out of room at a different row than the top one.
+//
+// The firm block is optional. A challan raised without a firm simply omits the
+// whole header (name banner, address, contact, GSTIN) and the "For <firm>"
+// line above the signature - it does not print an empty box.
+//
+// A DC is a non-commercial dispatch document, so no rate, amount, tax or value
+// appears anywhere on it.
 
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
 
@@ -20,19 +33,22 @@ export interface DcPdfItem {
   unit?: string;
 }
 
+export interface DcPdfFirm {
+  name: string;
+  address: string;
+  mobile?: string;
+  email?: string;
+  gstin?: string | null;
+  pan?: string | null;
+}
+
 export interface DcPdfData {
   dcNumberFormatted: string; // "01/26-27"
   date: string; // "dd/mm/yyyy"
-  firm: {
-    name: string;
-    address: string;
-    mobile?: string;
-    email?: string;
-    gstin?: string | null;
-    pan?: string | null;
-  };
-  // Every field optional - a challan may go out with no consignee filled in
-  // at all, in which case the whole block is skipped rather than printed empty.
+  /** Omitted entirely when the challan was raised without picking a firm. */
+  firm?: DcPdfFirm | null;
+  // Every consignee field optional - a challan may go out with none filled in,
+  // in which case the whole block is skipped rather than printed empty.
   consignee?: {
     instituteName?: string;
     buyerName?: string;
@@ -43,16 +59,42 @@ export interface DcPdfData {
   items: DcPdfItem[];
   totalQty: number;
   remarks?: string;
-  // Stamps a DRAFT watermark across every page. Set for a not-yet-finalized
-  // challan, so a printed draft can never be mistaken for an issued document.
+  /** Stamps a DRAFT watermark on each copy, so a printed draft can never be
+   * mistaken for an issued document. */
   isDraft?: boolean;
 }
 
+// ---- Sheet geometry ----
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
-const MARGIN = 36;
-const CW = PAGE_W - MARGIN * 2;
-const BOTTOM_LIMIT = MARGIN + 170; // room for the total/terms/signature stack when paginating rows
+const HALF_H = PAGE_H / 2;
+const SIDE_MARGIN = 18;
+const COPY_PAD = 12; // clearance above each copy and below it, around the cut line
+
+// ---- Type scale. Small by necessity: a full challan has to fit an A5 half. ----
+const FS = {
+  firmName: 11,
+  firmMeta: 6.5,
+  title: 9.5,
+  copyLabel: 6.5,
+  info: 7,
+  consigneeName: 8,
+  tableHead: 7,
+  row: 7,
+  total: 7.5,
+  terms: 6,
+  sign: 6.5,
+  footer: 5.8,
+};
+
+const LH = { firmMeta: 8, info: 9, row: 8, terms: 7.5 }; // line heights
+
+interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
 
 /** Trims trailing zeros so a whole qty prints as "5", not "5.000", while a
  * fractional one still shows its decimals ("2.5"). */
@@ -84,342 +126,389 @@ function wrapText(font: PDFFont, text: string, size: number, maxWidth: number): 
   return lines.length ? lines : [""];
 }
 
+/** Wraps, then drops any line past `max` and ellipsises the last kept one.
+ * The consignee block is capped this way so a long pasted address can't push
+ * the item table off an A5 half. */
+function wrapClamped(font: PDFFont, text: string, size: number, maxWidth: number, max: number): string[] {
+  const lines = wrapText(font, text, size, maxWidth);
+  if (lines.length <= max) return lines;
+  const kept = lines.slice(0, max);
+  kept[max - 1] = `${kept[max - 1].replace(/[\s,]+$/, "")}…`;
+  return kept;
+}
+
 export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const italic = await doc.embedFont(StandardFonts.HelveticaOblique);
 
-  let page = doc.addPage([PAGE_W, PAGE_H]);
-  let y = PAGE_H - MARGIN;
-  // Each page's top-of-sheet Y, so the outer border can be drawn per-page at
-  // the end - one rectangle cannot span pages, since every PDFPage has its own
-  // coordinate space.
-  const pageSpans: { page: PDFPage; topY: number }[] = [{ page, topY: y }];
+  const CONTENT_W = PAGE_W - SIDE_MARGIN * 2;
+  const firm = dc.firm && dc.firm.name ? dc.firm : null;
 
-  const line = (x1: number, yy: number, x2: number, width = 1) => {
-    page.drawLine({ start: { x: x1, y: yy }, end: { x: x2, y: yy }, thickness: width, color: rgb(0, 0, 0) });
-  };
-  const vline = (x: number, y1: number, y2: number, width = 1) => {
-    page.drawLine({ start: { x, y: y1 }, end: { x, y: y2 }, thickness: width, color: rgb(0, 0, 0) });
-  };
-  const text = (
-    str: string,
-    x: number,
-    yy: number,
-    opts: { size?: number; f?: PDFFont; align?: "right" | "center"; maxWidth?: number } = {}
-  ) => {
-    const size = opts.size || 9.5;
-    const f = opts.f || font;
-    let drawX = x;
-    if (opts.align === "right" && opts.maxWidth !== undefined) {
-      drawX = x + opts.maxWidth - f.widthOfTextAtSize(str, size);
-    } else if (opts.align === "center" && opts.maxWidth !== undefined) {
-      drawX = x + (opts.maxWidth - f.widthOfTextAtSize(str, size)) / 2;
+  // ---- Column geometry (shared by every copy) ----
+  const cols = [
+    { key: "sr", label: "Sr.", w: 30, align: "center" as const },
+    { key: "name", label: "Item Name", w: 0, align: undefined },
+    { key: "qty", label: "Qty", w: 58, align: "right" as const },
+    { key: "unit", label: "Unit", w: 58, align: "center" as const },
+  ];
+  const nameCol = cols[1];
+  nameCol.w = CONTENT_W - (cols[0].w + cols[2].w + cols[3].w);
+  const colX: number[] = [];
+  {
+    let x = SIDE_MARGIN;
+    for (const c of cols) {
+      colX.push(x);
+      x += c.w;
     }
-    page.drawText(str, { x: drawX, y: yy, size, font: f, color: rgb(0, 0, 0) });
-  };
-  const labelValue = (label: string, value: string, x: number, yy: number, size = 9.5) => {
-    text(`${label} : `, x, yy, { size, f: bold });
-    text(value, x + bold.widthOfTextAtSize(`${label} : `, size), yy, { size });
-  };
-
-  const sheetLeft = MARGIN;
-  const sheetRight = PAGE_W - MARGIN;
-
-  // ---- Firm header: shaded name banner, address, contact ----
-  const bannerH = 22;
-  page.drawRectangle({ x: sheetLeft, y: y - bannerH, width: CW, height: bannerH, color: rgb(0.85, 0.85, 0.85) });
-  text(dc.firm.name, sheetLeft, y - bannerH / 2 - 6, { size: 16, f: bold, align: "center", maxWidth: CW });
-
-  let ty = y - bannerH - 14;
-  for (const l of wrapText(font, dc.firm.address, 9.5, CW - 20)) {
-    text(l, sheetLeft, ty, { size: 9.5, align: "center", maxWidth: CW });
-    ty -= 12;
   }
-  ty -= 6;
-  if (dc.firm.mobile) text(`Mobile No : ${dc.firm.mobile}`, sheetLeft + 6, ty, { size: 9.5 });
-  if (dc.firm.email) text(`Email Id : ${dc.firm.email}`, sheetLeft, ty, { size: 9.5, align: "right", maxWidth: CW - 6 });
-  if (dc.firm.mobile || dc.firm.email) ty -= 12;
-  // GSTIN/PAN goes in the header here rather than in a bottom block: a challan
-  // has no bank-details/totals section for it to sit beside.
-  const taxId = dc.firm.gstin ? `GSTIN No : ${dc.firm.gstin}` : dc.firm.pan ? `PAN : ${dc.firm.pan}` : "";
-  if (taxId) {
-    text(taxId, sheetLeft + 6, ty, { size: 9.5 });
-    ty -= 12;
-  }
-  y = ty - 6;
-  line(sheetLeft, y, sheetRight);
+  const qtyIdx = 2;
 
-  // ---- Title bar ----
-  const topBarH = 20;
-  text("DELIVERY CHALLAN", sheetLeft, y - 14, { size: 12, f: bold, align: "center", maxWidth: CW });
-  if (dc.isDraft) text("DRAFT", sheetRight - 66, y - 14, { size: 9, f: bold, align: "right", maxWidth: 60 });
-  y -= topBarH;
-  line(sheetLeft, y, sheetRight);
+  // ---- Pre-measure everything whose height is fixed for the whole document ----
+  const firmAddrLines = firm ? wrapClamped(font, firm.address, FS.firmMeta, CONTENT_W - 16, 2) : [];
+  const firmHasContact = Boolean(firm && (firm.mobile || firm.email));
+  const firmTaxId = firm ? (firm.gstin ? `GSTIN No : ${firm.gstin}` : firm.pan ? `PAN : ${firm.pan}` : "") : "";
 
-  // ---- Consignee block (left, optional) + DC No./Date strip (right) ----
-  const colSplit = sheetLeft + CW * 0.58;
-  const leftPad = sheetLeft + 8;
-  const rightPad = colSplit + 8;
-  const leftColW = colSplit - sheetLeft - 16;
+  const firmHeaderH = firm
+    ? 15 /* name banner */ +
+      4 +
+      firmAddrLines.length * LH.firmMeta +
+      (firmHasContact ? LH.firmMeta : 0) +
+      (firmTaxId ? LH.firmMeta : 0) +
+      4
+    : 0;
+
+  const TITLE_H = 14;
+
+  const infoSplit = SIDE_MARGIN + CONTENT_W * 0.56;
+  const infoLeftW = infoSplit - SIDE_MARGIN - 10;
 
   const consignee = dc.consignee || {};
   const consigneeName = (consignee.buyerName || consignee.instituteName || "").trim();
   const hasConsignee = Boolean(consigneeName || consignee.address || consignee.place || consignee.mobile);
 
-  const leftLines: { str: string; f: PDFFont; size: number }[] = [];
+  // Each entry is one printed line of the left-hand consignee column.
+  const consigneeLines: { str: string; f: PDFFont; size: number }[] = [];
   if (hasConsignee) {
-    leftLines.push({ str: "To,", f: font, size: 9.5 });
-    for (const l of wrapText(bold, consigneeName, 10.5, leftColW)) {
-      if (consigneeName) leftLines.push({ str: l, f: bold, size: 10.5 });
+    consigneeLines.push({ str: "To,", f: font, size: FS.info });
+    for (const l of wrapClamped(bold, consigneeName, FS.consigneeName, infoLeftW, 2)) {
+      if (consigneeName) consigneeLines.push({ str: l, f: bold, size: FS.consigneeName });
     }
-    // Institute gets its own line only when a contact person's name is
-    // already occupying the bold name line above it.
+    // The institute earns its own line only when a contact person's name is
+    // already occupying the bold line above it.
     if (consignee.buyerName && consignee.instituteName) {
-      for (const l of wrapText(font, consignee.instituteName, 9.5, leftColW)) {
-        leftLines.push({ str: l, f: font, size: 9.5 });
+      for (const l of wrapClamped(font, consignee.instituteName, FS.info, infoLeftW, 1)) {
+        consigneeLines.push({ str: l, f: font, size: FS.info });
       }
     }
     if (consignee.address) {
-      for (const l of wrapText(font, consignee.address, 9.5, leftColW)) {
-        leftLines.push({ str: l, f: font, size: 9.5 });
+      for (const l of wrapClamped(font, consignee.address, FS.info, infoLeftW, 2)) {
+        consigneeLines.push({ str: l, f: font, size: FS.info });
       }
     }
-    if (consignee.place) leftLines.push({ str: `Place : ${consignee.place}`, f: font, size: 9.5 });
-    if (consignee.mobile) leftLines.push({ str: `Mobile : ${consignee.mobile}`, f: font, size: 9.5 });
+    // Place and Mobile share one line - on an A5 half every line counts.
+    const tail = [consignee.place ? `Place : ${consignee.place}` : "", consignee.mobile ? `Mob : ${consignee.mobile}` : ""]
+      .filter(Boolean)
+      .join("   ");
+    if (tail) consigneeLines.push({ str: tail, f: font, size: FS.info });
   }
 
-  const rightRows: [string, string][] = [
+  const infoRows: [string, string][] = [
     ["DC No.", dc.dcNumberFormatted || "-"],
     ["Date", dc.date],
   ];
+  const infoH = Math.max(consigneeLines.length, infoRows.length) * LH.info + 8;
 
-  const infoGridH = Math.max(leftLines.length, rightRows.length) * 13 + 16;
-  const infoTop = y;
+  const TABLE_HEAD_H = 12;
 
-  let ly = infoTop - 14;
-  for (const l of leftLines) {
-    text(l.str, leftPad, ly, { size: l.size, f: l.f });
-    ly -= 13;
-  }
-  let ry = infoTop - 14;
-  for (const [label, value] of rightRows) {
-    labelValue(label, value, rightPad, ry, 9.5);
-    ry -= 13;
-  }
-
-  y = infoTop - infoGridH;
-  line(sheetLeft, y, sheetRight);
-  vline(colSplit, infoTop, y);
-
-  // ---- Items table ----
-  type Col = { key: string; label: string; w: number; align?: "right" | "center" };
-  const cols: Col[] = [
-    { key: "sr", label: "Sr. No.", w: 48, align: "center" },
-    { key: "name", label: "Item Name", w: 0 }, // flexible, filled below
-    { key: "qty", label: "Qty", w: 80, align: "right" },
-    { key: "unit", label: "Unit", w: 80, align: "center" },
+  const terms = [
+    "1. Goods must be checked within 2 days of receipt; any defect or complaint reported within this period.",
+    "2. Damage or defects must be reported immediately. Communication for replacement must be immediate.",
+    "3. This challan is not a bill - no amount is payable against it.",
   ];
-  const nameCol = cols.find((col) => col.key === "name")!;
-  nameCol.w = CW - cols.reduce((sum, col) => sum + col.w, 0);
+  const remarkLines = dc.remarks && dc.remarks.trim() ? wrapClamped(font, `Remarks : ${dc.remarks.trim()}`, FS.terms, CONTENT_W - 12, 2) : [];
 
-  const colX: number[] = [];
-  let cursorX = sheetLeft;
-  for (const col of cols) {
-    colX.push(cursorX);
-    cursorX += col.w;
-  }
-  const qtyIdx = cols.findIndex((col) => col.key === "qty");
+  const TOTAL_H = 13;
+  const REMARKS_H = remarkLines.length ? remarkLines.length * LH.terms + 5 : 0;
+  const TERMS_H = terms.length * LH.terms + 5;
+  const SIGN_H = 34;
+  const FOOTER_H = 10;
+  const bottomStackH = TOTAL_H + REMARKS_H + TERMS_H + SIGN_H + FOOTER_H;
 
-  const drawTableHeader = () => {
-    const headerH = 18;
-    page.drawRectangle({ x: sheetLeft, y: y - headerH, width: CW, height: headerH, color: rgb(0.94, 0.94, 0.94) });
-    cols.forEach((col, i) => {
-      text(col.label, colX[i] + 4, y - 13, {
-        size: 9,
-        f: bold,
-        align: col.align,
-        maxWidth: col.align ? col.w - 8 : undefined,
-      });
-    });
-    y -= headerH;
-    line(sheetLeft, y, sheetRight);
-    cols.forEach((_, i) => {
-      if (i > 0) vline(colX[i], y + headerH, y);
-    });
-  };
+  const copyH = PAGE_H - COPY_PAD - (HALF_H + COPY_PAD); // identical for both halves
+  const rowsAreaH = copyH - firmHeaderH - TITLE_H - infoH - TABLE_HEAD_H - bottomStackH;
 
-  line(sheetLeft, y, sheetRight);
-  drawTableHeader();
+  // ---- Measure each item row, then split into per-sheet chunks ----
+  const measured = dc.items.map((it) => {
+    const nameLines = wrapText(font, it.itemName, FS.row, nameCol.w - 6);
+    return { it, nameLines, h: Math.max(11, nameLines.length * LH.row + 3) };
+  });
 
-  for (let i = 0; i < dc.items.length; i++) {
-    const it = dc.items[i];
-    const isLast = i === dc.items.length - 1;
-    const nameLines = wrapText(font, it.itemName, 9, nameCol.w - 8);
-    const rowH = Math.max(16, nameLines.length * 11 + 6);
-
-    if (y - rowH < BOTTOM_LIMIT) {
-      line(sheetLeft, y, sheetRight);
-      page = doc.addPage([PAGE_W, PAGE_H]);
-      y = PAGE_H - MARGIN;
-      pageSpans.push({ page, topY: y });
-      line(sheetLeft, y, sheetRight);
-      drawTableHeader();
+  const chunks: (typeof measured)[] = [];
+  {
+    let current: typeof measured = [];
+    let used = 0;
+    for (const row of measured) {
+      // A single row taller than the whole area can't be split - it gets its
+      // own sheet and is allowed to overflow rather than loop forever.
+      if (current.length > 0 && used + row.h > rowsAreaH) {
+        chunks.push(current);
+        current = [];
+        used = 0;
+      }
+      current.push(row);
+      used += row.h;
     }
+    chunks.push(current); // always at least one, so an item-less challan still prints
+  }
 
-    const rowTop = y;
-    const values: Record<string, string> = {
-      sr: String(it.srNo),
-      qty: fmtQty(it.qty),
-      unit: it.unit || "",
+  // ---- Draw ----
+  // Identical on every sheet: the top half is the original, the bottom the
+  // duplicate, each an A5-landscape area either side of the cut line.
+  const topBox: Box = { left: SIDE_MARGIN, right: PAGE_W - SIDE_MARGIN, top: PAGE_H - COPY_PAD, bottom: HALF_H + COPY_PAD };
+  const bottomBox: Box = { left: SIDE_MARGIN, right: PAGE_W - SIDE_MARGIN, top: HALF_H - COPY_PAD, bottom: COPY_PAD };
+
+  chunks.forEach((chunk, chunkIdx) => {
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+
+    drawCopy(page, topBox, "ORIGINAL COPY", chunk, chunkIdx);
+    drawCopy(page, bottomBox, "DUPLICATE COPY", chunk, chunkIdx);
+
+    // Cut line down the middle of the sheet.
+    page.drawLine({
+      start: { x: SIDE_MARGIN - 6, y: HALF_H },
+      end: { x: PAGE_W - SIDE_MARGIN + 6, y: HALF_H },
+      thickness: 0.5,
+      color: rgb(0.6, 0.6, 0.6),
+      dashArray: [3, 3],
+    });
+  });
+
+  function drawCopy(
+    page: PDFPage,
+    box: Box,
+    label: string,
+    chunk: typeof measured,
+    chunkIdx: number
+  ) {
+    const isLastChunk = chunkIdx === chunks.length - 1;
+
+    const line = (x1: number, y: number, x2: number, width = 0.7) => {
+      page.drawLine({ start: { x: x1, y }, end: { x: x2, y }, thickness: width, color: rgb(0, 0, 0) });
+    };
+    const vline = (x: number, y1: number, y2: number, width = 0.7) => {
+      page.drawLine({ start: { x, y: y1 }, end: { x, y: y2 }, thickness: width, color: rgb(0, 0, 0) });
+    };
+    const text = (
+      str: string,
+      x: number,
+      y: number,
+      opts: { size?: number; f?: PDFFont; align?: "right" | "center"; maxWidth?: number } = {}
+    ) => {
+      const size = opts.size || FS.info;
+      const f = opts.f || font;
+      let drawX = x;
+      if (opts.align === "right" && opts.maxWidth !== undefined) {
+        drawX = x + opts.maxWidth - f.widthOfTextAtSize(str, size);
+      } else if (opts.align === "center" && opts.maxWidth !== undefined) {
+        drawX = x + (opts.maxWidth - f.widthOfTextAtSize(str, size)) / 2;
+      }
+      page.drawText(str, { x: drawX, y, size, font: f, color: rgb(0, 0, 0) });
+    };
+    const labelValue = (lbl: string, value: string, x: number, y: number, size = FS.info) => {
+      text(`${lbl} : `, x, y, { size, f: bold });
+      text(value, x + bold.widthOfTextAtSize(`${lbl} : `, size), y, { size });
     };
 
-    cols.forEach((col, ci) => {
-      if (col.key === "name") {
-        let nty = rowTop - 11;
-        for (const nl of nameLines) {
-          text(nl, colX[ci] + 4, nty, { size: 9 });
-          nty -= 11;
-        }
-        return;
+    let y = box.top;
+
+    // ---- Firm header (skipped entirely when no firm was picked) ----
+    if (firm) {
+      const bannerH = 15;
+      page.drawRectangle({ x: box.left, y: y - bannerH, width: CONTENT_W, height: bannerH, color: rgb(0.85, 0.85, 0.85) });
+      text(firm.name, box.left, y - bannerH + 4.5, { size: FS.firmName, f: bold, align: "center", maxWidth: CONTENT_W });
+      y -= bannerH + 4;
+
+      for (const l of firmAddrLines) {
+        text(l, box.left, y - FS.firmMeta, { size: FS.firmMeta, align: "center", maxWidth: CONTENT_W });
+        y -= LH.firmMeta;
       }
-      text(values[col.key] ?? "", colX[ci] + 4, rowTop - 11, {
-        size: 9,
-        align: col.align,
-        maxWidth: col.align ? col.w - 8 : undefined,
+      if (firmHasContact) {
+        if (firm.mobile) text(`Mobile No : ${firm.mobile}`, box.left + 5, y - FS.firmMeta, { size: FS.firmMeta });
+        if (firm.email) text(`Email Id : ${firm.email}`, box.left, y - FS.firmMeta, { size: FS.firmMeta, align: "right", maxWidth: CONTENT_W - 5 });
+        y -= LH.firmMeta;
+      }
+      if (firmTaxId) {
+        text(firmTaxId, box.left + 5, y - FS.firmMeta, { size: FS.firmMeta });
+        y -= LH.firmMeta;
+      }
+      y -= 4;
+      line(box.left, y, box.right);
+    }
+
+    // ---- Title bar: DELIVERY CHALLAN centred, copy label right ----
+    text("DELIVERY CHALLAN", box.left, y - 10, { size: FS.title, f: bold, align: "center", maxWidth: CONTENT_W });
+    text(label, box.left, y - 9.5, { size: FS.copyLabel, f: bold, align: "right", maxWidth: CONTENT_W - 5 });
+    if (chunks.length > 1) {
+      text(`Sheet ${chunkIdx + 1} of ${chunks.length}`, box.left + 5, y - 9.5, { size: FS.copyLabel });
+    }
+    y -= TITLE_H;
+    line(box.left, y, box.right);
+
+    // ---- Consignee (left) + DC No./Date (right) ----
+    const infoTop = y;
+    let ly = infoTop - 4;
+    for (const l of consigneeLines) {
+      text(l.str, box.left + 5, ly - l.size, { size: l.size, f: l.f });
+      ly -= LH.info;
+    }
+    let ry = infoTop - 4;
+    for (const [lbl, value] of infoRows) {
+      labelValue(lbl, value, infoSplit + 5, ry - FS.info, FS.info);
+      ry -= LH.info;
+    }
+    y = infoTop - infoH;
+    line(box.left, y, box.right);
+    vline(infoSplit, infoTop, y);
+
+    // ---- Table header ----
+    page.drawRectangle({ x: box.left, y: y - TABLE_HEAD_H, width: CONTENT_W, height: TABLE_HEAD_H, color: rgb(0.94, 0.94, 0.94) });
+    cols.forEach((c, i) => {
+      text(c.label, colX[i] + 3, y - TABLE_HEAD_H + 3.5, {
+        size: FS.tableHead,
+        f: bold,
+        align: c.align,
+        maxWidth: c.align ? c.w - 6 : undefined,
       });
     });
-
-    y -= rowH;
-    // The last row's closing line is skipped: it flows straight into the ruled
-    // blank space below (see the divider extension further down), so a line
-    // there would read as a stray bar floating above that gap.
-    if (!isLast) line(sheetLeft, y, sheetRight);
-    cols.forEach((_, ci) => {
-      if (ci > 0) vline(colX[ci], rowTop, y);
+    y -= TABLE_HEAD_H;
+    line(box.left, y, box.right);
+    cols.forEach((_, i) => {
+      if (i > 0) vline(colX[i], y + TABLE_HEAD_H, y);
     });
-  }
 
-  // ---- Bottom stack: Total Qty row, remarks, terms, signatures ----
-  const terms = [
-    "Terms & Condition :",
-    "1. The goods must be checked within 2 days of receipt. Any defect or complaint must be reported within this period.",
-    "2. Damage or defects must be reported immediately.",
-    "3. Communication for replacement must be immediate.",
-    "4. This challan is not a bill - no amount is payable against it.",
-  ];
-  const remarkLines = dc.remarks && dc.remarks.trim() ? wrapText(font, `Remarks : ${dc.remarks.trim()}`, 9, CW - 16) : [];
+    // ---- Item rows ----
+    const rowsTop = y;
+    for (let i = 0; i < chunk.length; i++) {
+      const { it, nameLines, h } = chunk[i];
+      const rowTop = y;
+      const values: Record<string, string> = { sr: String(it.srNo), qty: fmtQty(it.qty), unit: it.unit || "" };
 
-  const TOTAL_ROW_H = 20;
-  const REMARKS_H = remarkLines.length ? remarkLines.length * 11 + 12 : 0;
-  const TERMS_H = 12 + terms.length * 11 + 4;
-  const SIGN_H = 58;
-  const FOOT_H = 18;
-  const stackH = TOTAL_ROW_H + REMARKS_H + TERMS_H + SIGN_H + FOOT_H;
+      cols.forEach((c, ci) => {
+        if (c.key === "name") {
+          let ny = rowTop - LH.row;
+          for (const nl of nameLines) {
+            text(nl, colX[ci] + 3, ny, { size: FS.row });
+            ny -= LH.row;
+          }
+          return;
+        }
+        text(values[c.key] ?? "", colX[ci] + 3, rowTop - LH.row, {
+          size: FS.row,
+          align: c.align,
+          maxWidth: c.align ? c.w - 6 : undefined,
+        });
+      });
 
-  // Pin the stack to the page bottom, so that when the item table leaves the
-  // sheet mostly empty the blank space stays ABOVE it - ruled room to add more
-  // rows by hand - instead of the totals riding up under a single short row.
-  const itemsEndY = y;
-  let addedNewPage = false;
-  if (y - stackH < MARGIN) {
-    addedNewPage = true;
-    page = doc.addPage([PAGE_W, PAGE_H]);
-    y = PAGE_H - MARGIN;
-    pageSpans.push({ page, topY: y });
-  } else {
-    const pinnedTop = MARGIN + stackH;
-    if (y > pinnedTop) y = pinnedTop;
-  }
-  if (!addedNewPage && y < itemsEndY) {
-    cols.forEach((_, ci) => {
-      if (ci > 0) vline(colX[ci], itemsEndY, y);
-    });
-  }
-  line(sheetLeft, y, sheetRight);
-
-  // ---- Total Qty: the challan's only footer figure, sat in the Qty column so
-  // it lines up under the values it adds up ----
-  const totalTop = y;
-  const totalLabelRight = colX[qtyIdx] - 8;
-  text("Total Qty", totalLabelRight, totalTop - 14, { size: 9.5, f: bold, align: "right", maxWidth: 0 });
-  text(fmtQty(dc.totalQty), colX[qtyIdx] + 4, totalTop - 14, {
-    size: 9.5,
-    f: bold,
-    align: "right",
-    maxWidth: cols[qtyIdx].w - 8,
-  });
-  text(`${dc.items.length} item${dc.items.length === 1 ? "" : "s"}`, sheetLeft + 8, totalTop - 14, { size: 9 });
-  y -= TOTAL_ROW_H;
-  line(sheetLeft, y, sheetRight);
-  vline(colX[qtyIdx], totalTop, y);
-  vline(colX[qtyIdx] + cols[qtyIdx].w, totalTop, y);
-
-  // ---- Remarks ----
-  if (remarkLines.length) {
-    let rly = y - 12;
-    for (const l of remarkLines) {
-      text(l, sheetLeft + 8, rly, { size: 9 });
-      rly -= 11;
+      y -= h;
+      if (i < chunk.length - 1) line(box.left, y, box.right, 0.4);
     }
-    y -= REMARKS_H;
-    line(sheetLeft, y, sheetRight);
-  }
 
-  // ---- Terms ----
-  let tty = y - 12;
-  for (const l of terms) {
-    text(l, sheetLeft + 8, tty, { size: 8.5 });
-    tty -= 11;
-  }
-  y = tty - 4;
-  line(sheetLeft, y, sheetRight);
+    // ---- Ruled blank space down to the pinned bottom stack ----
+    const rowsBottom = box.bottom + bottomStackH;
+    cols.forEach((_, ci) => {
+      if (ci > 0) vline(colX[ci], rowsTop, rowsBottom);
+    });
+    y = rowsBottom;
+    line(box.left, y, box.right);
 
-  // ---- Signatures: receiver (left) / firm (right) ----
-  const signTop = y;
-  const halfW = CW / 2;
-  text("Received the above goods in good condition.", sheetLeft + 8, signTop - 14, { size: 8.5, f: italic });
-  line(sheetLeft + 12, signTop - 40, sheetLeft + halfW - 20);
-  text("Receiver's Signature", sheetLeft + 12, signTop - 50, { size: 8.5, f: bold });
+    // ---- Total (last sheet) / continuation notice (earlier sheets) ----
+    const totalTop = y;
+    if (isLastChunk) {
+      text(`${dc.items.length} item${dc.items.length === 1 ? "" : "s"}`, box.left + 5, totalTop - 9, { size: FS.row });
+      text("Total Qty", colX[qtyIdx] - 8, totalTop - 9, { size: FS.total, f: bold, align: "right", maxWidth: 0 });
+      text(fmtQty(dc.totalQty), colX[qtyIdx] + 3, totalTop - 9, {
+        size: FS.total,
+        f: bold,
+        align: "right",
+        maxWidth: cols[qtyIdx].w - 6,
+      });
+    } else {
+      text("… continued on the next sheet", box.left + 5, totalTop - 9, { size: FS.row, f: italic });
+    }
+    y -= TOTAL_H;
+    line(box.left, y, box.right);
+    vline(colX[qtyIdx], totalTop, y);
+    vline(colX[qtyIdx] + cols[qtyIdx].w, totalTop, y);
 
-  text(`For ${dc.firm.name}`, sheetLeft + halfW, signTop - 14, { size: 8.5, f: bold, align: "center", maxWidth: halfW - 8 });
-  line(sheetLeft + halfW + 20, signTop - 40, sheetRight - 12);
-  text("Authorised Signatory", sheetLeft + halfW, signTop - 50, { size: 8.5, f: bold, align: "center", maxWidth: halfW - 8 });
+    // ---- Remarks ----
+    if (remarkLines.length) {
+      let rly = y - 3;
+      for (const l of remarkLines) {
+        text(l, box.left + 5, rly - FS.terms, { size: FS.terms });
+        rly -= LH.terms;
+      }
+      y -= REMARKS_H;
+      line(box.left, y, box.right);
+    }
 
-  y = signTop - SIGN_H;
-  line(sheetLeft, y, sheetRight);
-  vline(sheetLeft + halfW, signTop, y);
+    // ---- Terms ----
+    let tty = y - 3;
+    for (const l of terms) {
+      text(l, box.left + 5, tty - FS.terms, { size: FS.terms });
+      tty -= LH.terms;
+    }
+    y -= TERMS_H;
+    line(box.left, y, box.right);
 
-  // ---- Footer note ----
-  text("This is a computer generated Delivery Challan. Not a tax invoice - no amount is payable against it.", sheetLeft, y - 13, {
-    size: 8,
-    f: italic,
-    align: "center",
-    maxWidth: CW,
-  });
-  y -= FOOT_H;
-  line(sheetLeft, y, sheetRight, 1.3);
+    // ---- Signatures ----
+    const signTop = y;
+    const halfW = CONTENT_W / 2;
+    text("Received the above goods in good condition.", box.left + 5, signTop - 9, { size: FS.sign, f: italic });
+    line(box.left + 8, signTop - 24, box.left + halfW - 14, 0.5);
+    text("Receiver's Signature", box.left + 8, signTop - 31, { size: FS.sign, f: bold });
 
-  // ---- Outer border, per page ----
-  pageSpans.forEach((span, i) => {
-    const bottomY = i === pageSpans.length - 1 ? y : MARGIN;
-    span.page.drawLine({ start: { x: sheetLeft, y: span.topY }, end: { x: sheetLeft, y: bottomY }, thickness: 1.3, color: rgb(0, 0, 0) });
-    span.page.drawLine({ start: { x: sheetRight, y: span.topY }, end: { x: sheetRight, y: bottomY }, thickness: 1.3, color: rgb(0, 0, 0) });
-    span.page.drawLine({ start: { x: sheetLeft, y: span.topY }, end: { x: sheetRight, y: span.topY }, thickness: 1.3, color: rgb(0, 0, 0) });
-  });
+    // With no firm on the challan there is no name to sign "For" - only the
+    // rule and the Authorised Signatory caption are drawn.
+    if (firm) {
+      text(`For ${firm.name}`, box.left + halfW, signTop - 9, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 6 });
+    }
+    line(box.left + halfW + 14, signTop - 24, box.right - 8, 0.5);
+    text("Authorised Signatory", box.left + halfW, signTop - 31, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 6 });
 
-  // ---- DRAFT watermark, drawn last so it sits over the content ----
-  if (dc.isDraft) {
-    for (const span of pageSpans) {
-      span.page.drawText("DRAFT", {
-        x: 130,
-        y: PAGE_H / 2 - 80,
-        size: 96,
+    y -= SIGN_H;
+    line(box.left, y, box.right);
+    vline(box.left + halfW, signTop, y);
+
+    // ---- Footer note ----
+    text("Computer generated Delivery Challan. Not a tax invoice - no amount is payable against it.", box.left, y - 7, {
+      size: FS.footer,
+      f: italic,
+      align: "center",
+      maxWidth: CONTENT_W,
+    });
+
+    // ---- Outer border of this copy ----
+    page.drawRectangle({
+      x: box.left,
+      y: box.bottom,
+      width: CONTENT_W,
+      height: box.top - box.bottom,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1,
+    });
+
+    // ---- DRAFT watermark, last so it sits over the content ----
+    if (dc.isDraft) {
+      page.drawText("DRAFT", {
+        x: box.left + CONTENT_W / 2 - 95,
+        y: box.bottom + (box.top - box.bottom) / 2 - 24,
+        size: 56,
         font: bold,
         color: rgb(0.75, 0.75, 0.75),
-        rotate: degrees(30),
-        opacity: 0.45,
+        rotate: degrees(20),
+        opacity: 0.4,
       });
     }
   }
