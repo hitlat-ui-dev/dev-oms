@@ -95,23 +95,26 @@ const FS = {
   toLabel: 7.5,
   info: 10, // 13px - To / DC No. / Date
   consigneeName: 11,
-  tableHead: 10, // 13px
-  row: 10.5, // 14px - the line that matters most on a dispatch sheet
-  total: 11, // 15px
+  tableHead: 9.5, // 12.7px
+  row: 9.5, // 12.7px - the line that matters most on a dispatch sheet
+  total: 10.5, // 14px
   terms: 8.5, // 11.3px
   sign: 9, // 12px
   footer: 7, // 9px
 };
 
 // Line heights. `info` is 1.5x its font size, as asked.
-const LH = { firmMeta: 10, to: 9.5, info: 15, row: 12, terms: 11 };
+const LH = { firmMeta: 10, to: 9.5, info: 15, row: 10.5, terms: 11 };
 
-const ROW_MIN_H = 20; // ~27px per row, so a single-line item never looks squeezed
+// Row band. With the per-row rules gone (see the item loop) the rows are
+// separated by whitespace alone, so this is the leading that keeps them
+// legible - drop it much below 15 and consecutive items start to merge.
+const ROW_MIN_H = 15;
 const BANNER_H = 19;
 const TITLE_H = 24;
-const TABLE_HEAD_H = 17;
-const TOTAL_H = 19;
-const SIGN_H = 42;
+const TABLE_HEAD_H = 15;
+const TOTAL_H = 17;
+const SIGN_H = 36;
 const FOOTER_H = 13;
 
 interface Box {
@@ -267,7 +270,7 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
   // ---- Measure each item row, then split into per-sheet chunks ----
   const measured = dc.items.map((it) => {
     const nameLines = wrapText(font, it.itemName, FS.row, nameCol.w - 8);
-    return { it, nameLines, h: Math.max(ROW_MIN_H, nameLines.length * LH.row + 8) };
+    return { it, nameLines, h: ROW_MIN_H + (nameLines.length - 1) * LH.row };
   });
 
   const chunks: (typeof measured)[] = [];
@@ -389,7 +392,7 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
     // ---- Table header ----
     page.drawRectangle({ x: box.left, y: y - TABLE_HEAD_H, width: CONTENT_W, height: TABLE_HEAD_H, color: rgb(0.92, 0.92, 0.92) });
     cols.forEach((c, i) => {
-      text(c.label, colX[i] + 4, y - TABLE_HEAD_H + 5, {
+      text(c.label, colX[i] + 4, y - TABLE_HEAD_H + 4.5, {
         size: FS.tableHead,
         f: bold,
         align: c.align,
@@ -408,9 +411,9 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
       const { it, nameLines, h } = chunk[i];
       const rowTop = y;
       const values: Record<string, string> = { sr: String(it.srNo), qty: fmtQty(it.qty), unit: it.unit || "" };
-      // Baseline sits ~3.5pt under the row's top padding, leaving matching
-      // space beneath - so a single-line row reads centred in its 20pt band.
-      const firstBaseline = rowTop - (FS.row + 3.5);
+      // Baseline centred in the row band: a 9.5pt cap is ~6.8pt tall, so it
+      // sits ~4pt below the band top and leaves the same beneath.
+      const firstBaseline = rowTop - (FS.row + 1.5);
 
       cols.forEach((c, ci) => {
         if (c.key === "name") {
@@ -429,7 +432,10 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
       });
 
       y -= h;
-      if (i < chunk.length - 1) line(box.left, y, box.right, 0.4);
+      // No rule between rows: the column dividers plus the row leading are
+      // enough structure, and a line under every item made a full sheet read
+      // as a dense grid. Fewer points of furniture per row is also what buys
+      // the extra items per sheet.
     }
 
     // ---- Ruled blank space down to the pinned bottom stack ----
@@ -443,16 +449,16 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
     // ---- Total (last sheet) / continuation notice (earlier sheets) ----
     const totalTop = y;
     if (isLastChunk) {
-      text(`${dc.items.length} item${dc.items.length === 1 ? "" : "s"}`, box.left + 7, totalTop - 13.5, { size: FS.terms });
-      text("Total Qty", colX[qtyIdx] - 10, totalTop - 13.5, { size: FS.total, f: bold, align: "right", maxWidth: 0 });
-      text(fmtQty(dc.totalQty), colX[qtyIdx] + 4, totalTop - 13.5, {
+      text(`${dc.items.length} item${dc.items.length === 1 ? "" : "s"}`, box.left + 7, totalTop - 12, { size: FS.terms });
+      text("Total Qty", colX[qtyIdx] - 10, totalTop - 12, { size: FS.total, f: bold, align: "right", maxWidth: 0 });
+      text(fmtQty(dc.totalQty), colX[qtyIdx] + 4, totalTop - 12, {
         size: FS.total,
         f: bold,
         align: "right",
         maxWidth: cols[qtyIdx].w - 8,
       });
     } else {
-      text("… continued on the next sheet", box.left + 7, totalTop - 13.5, { size: FS.terms, f: italic });
+      text("… continued on the next sheet", box.left + 7, totalTop - 12, { size: FS.terms, f: italic });
     }
     y -= TOTAL_H;
     line(box.left, y, box.right);
@@ -485,15 +491,15 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
     // on, so the whole cell is free space for a signature or stamp.
     const signTop = y;
     const halfW = CONTENT_W / 2;
-    text("Receiver's Signature", box.left + 10, signTop - 38, { size: FS.sign, f: bold });
+    text("Receiver's Signature", box.left + 10, signTop - 32, { size: FS.sign, f: bold });
 
     // With no firm on the challan there is no name to sign "For" - only the
     // rule and the Authorised Signatory caption are drawn.
     if (firm) {
-      text(`For ${firm.name}`, box.left + halfW, signTop - 12, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 8 });
+      text(`For ${firm.name}`, box.left + halfW, signTop - 11, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 8 });
     }
-    line(box.left + halfW + 16, signTop - 28, box.right - 10, 0.5);
-    text("Authorised Signatory", box.left + halfW, signTop - 38, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 8 });
+    line(box.left + halfW + 16, signTop - 24, box.right - 10, 0.5);
+    text("Authorised Signatory", box.left + halfW, signTop - 32, { size: FS.sign, f: bold, align: "center", maxWidth: halfW - 8 });
 
     y -= SIGN_H;
     line(box.left, y, box.right);
