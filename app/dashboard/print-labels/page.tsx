@@ -25,6 +25,37 @@ function clampForQr(value: string, maxLen: number): string {
     return v.length > maxLen ? v.slice(0, maxLen - 1).trimEnd() + "…" : v;
 }
 
+// Standard "quiet zone" width in modules around a QR - the blank border a
+// scanner needs just to LOCATE the code before it can even try to read it.
+const QR_QUIET_ZONE_MODULES = 4;
+
+// Draws a QR as actual vector rectangles instead of embedding a raster PNG
+// via doc.addImage(). This is the fix for labels that scanned fine on
+// screen but not once printed: a thermal label printer's driver rasterizes
+// an embedded image through its own pipeline, which resamples/anti-aliases
+// it - turning the QR's crisp black/white module edges into blurred gray
+// ones, exactly the kind of noise a scanner can't decode through. A path of
+// filled squares has no pixels to resample; every printer reproduces a
+// vector rectangle at its native resolution, sharp edges intact.
+function drawQrCode(doc: jsPDF, qr: ReturnType<typeof QRCode.create>, x: number, y: number, size: number) {
+    const totalModules = qr.modules.size + QR_QUIET_ZONE_MODULES * 2;
+    const moduleSize = size / totalModules;
+    doc.setFillColor(0, 0, 0);
+    for (let row = 0; row < qr.modules.size; row++) {
+        for (let col = 0; col < qr.modules.size; col++) {
+            if (qr.modules.get(row, col)) {
+                const mx = x + (QR_QUIET_ZONE_MODULES + col) * moduleSize;
+                const my = y + (QR_QUIET_ZONE_MODULES + row) * moduleSize;
+                // Overlap adjacent modules by a hair so the PDF renderer/
+                // printer driver doesn't leave a 1px white hairline seam
+                // between two same-color squares that are meant to be one
+                // continuous block.
+                doc.rect(mx, my, moduleSize + 0.001, moduleSize + 0.001, "F");
+            }
+        }
+    }
+}
+
 // A row of the Dispatch History table - these are SCANNED parcels, not
 // printed labels. A label that was printed but never scanned has no record
 // at all (see handlePrint below).
@@ -120,13 +151,13 @@ export default function PrintLabelsPage() {
             // public receipt page too - the OMS scanner reads the same string
             // and pulls the payload back out of it.
             const scanUrl = dispatchScanUrl(window.location.origin, payload);
-            // margin here is the QR's own "quiet zone" - the blank border a
-            // scanner uses to first LOCATE the code before it can even try to
-            // read it. margin:1 was too tight for a real camera at printed
-            // size/distance; 4 is the spec-recommended minimum.
-            const qrDataUrl = await QRCode.toDataURL(scanUrl, { margin: 4, errorCorrectionLevel: "M" });
+            // The raw module matrix, not a rendered PNG - drawQrCode() below
+            // paints it as vector rectangles onto the PDF instead (see that
+            // function for why: a raster QR scanned fine on screen but not
+            // once printed on a thermal label printer).
+            const qrMatrix = QRCode.create(scanUrl, { errorCorrectionLevel: "M" });
 
-            printLabelPdf(qrDataUrl);
+            printLabelPdf(qrMatrix);
         } catch (err: any) {
             alert("QR code generate nahi hua: " + (err.message || "unknown error"));
         } finally {
@@ -137,7 +168,7 @@ export default function PrintLabelsPage() {
     // Builds and opens the actual label PDF - split out from handlePrint so
     // the dispatch-record save (which must complete first, see above) stays
     // clearly separate from pure PDF-drawing logic.
-    const printLabelPdf = (qrDataUrl: string) => {
+    const printLabelPdf = (qrMatrix: ReturnType<typeof QRCode.create>) => {
         const is35x6 = labelSize === "3.5x6";
         const doc = new jsPDF({
             orientation: "portrait",
@@ -275,10 +306,11 @@ export default function PrintLabelsPage() {
             doc.setFontSize(chosen.mob);
             doc.text(`MOB: ${fromExtra.mobile}`, colFromX, yStartFooter, options);
 
-            // 4. DISPATCH QR - scan this on the Dispatch Scanner page to
-            // record the parcel going out. Sits on the FROM side (left of the
-            // x=1.4 divider), below the sender block, which the narrower
-            // address wrap above keeps clear from y=4.4 down.
+            // 4. DISPATCH QR (drawn as vector rects - see drawQrCode) - scan
+            // this on the Dispatch Scanner page to record the parcel going
+            // out. Sits on the FROM side (left of the x=1.4 divider), below
+            // the sender block, which the narrower address wrap above keeps
+            // clear from y=4.4 down.
             //
             // 1.05in, NOT the token-sized square a label usually gets: at this
             // payload the QR runs 77-85 modules, so anything smaller prints
@@ -288,7 +320,7 @@ export default function PrintLabelsPage() {
             // there breaks the QR outright, not just makes it small. Left
             // unrotated - a QR scans from any angle, so matching the -90 text
             // orientation would buy nothing and only complicate the placement.
-            doc.addImage(qrDataUrl, "PNG", 0.2, 4.6, 1.05, 1.05);
+            drawQrCode(doc, qrMatrix, 0.2, 4.6, 1.05);
 
         } else {
             // --- 4x4 STANDARD DESIGN ---
@@ -419,10 +451,10 @@ export default function PrintLabelsPage() {
             doc.setFontSize(chosen.mob); // Slightly larger for sender mobile too
             doc.text(`MOB: ${fromExtra.mobile}`, 0.3, fromTextY);
 
-            // 7. DISPATCH QR - scan this on the Dispatch Scanner page to
-            // record the parcel going out. Right side of the footer, beside
-            // the sender block, which the narrower address wrap above keeps
-            // out of this corner.
+            // 7. DISPATCH QR (drawn as vector rects - see drawQrCode) - scan
+            // this on the Dispatch Scanner page to record the parcel going
+            // out. Right side of the footer, beside the sender block, which
+            // the narrower address wrap above keeps out of this corner.
             //
             // Was 1.1in square starting at y=2.85 - its bottom edge landed at
             // 3.95, just 0.05in from the page's own 4.0in bottom edge. Most
@@ -430,7 +462,7 @@ export default function PrintLabelsPage() {
             // of the QR was likely being clipped outright - not shrunk, GONE -
             // which breaks a QR far worse than a slightly smaller code would.
             // Shrunk to 0.95in so a 0.2in bottom margin survives.
-            doc.addImage(qrDataUrl, "PNG", 2.75, 2.85, 0.95, 0.95);
+            drawQrCode(doc, qrMatrix, 2.75, 2.85, 0.95);
         }
         // Open the label straight into the browser's print dialog instead of
         // downloading a file the user then has to find and open themselves.
