@@ -796,6 +796,26 @@ const shippingLock = useRef(false);
     place?: string;
   }
 
+  // Resolves the Seller/Institute record for a challan group. Many orders
+  // (GeM auto-imports especially - see SellerOrder.ts's sellerId comment)
+  // never get a linked sellerId even though the institute was matched by
+  // name, which used to leave the consignee's name (Seller.buyerName) off
+  // the challan for those orders while linked ones showed it fine. Falling
+  // back to a name match here means the contact name still shows as long as
+  // *some* Seller record for that institute has it filled in.
+  const findSellerInfo = (order: any, sellersList: any[]) => {
+    if (order?.sellerId) {
+      const bySellerId = sellersList.find(s => s._id === order.sellerId);
+      if (bySellerId) return bySellerId;
+    }
+    const instituteQ = (order?.instituteName || "").trim().toLowerCase();
+    if (instituteQ) {
+      const byName = sellersList.find(s => (s.instituteName || "").trim().toLowerCase() === instituteQ);
+      if (byName) return byName;
+    }
+    return {};
+  };
+
   // Draws one buyer's challan (header, items table, transporter contact,
   // footer/terms) onto a given jsPDF doc at its current page. autoTable is
   // passed in rather than imported here since it's loaded on demand by the
@@ -948,7 +968,7 @@ const shippingLock = useRef(false);
     const formattedDate = `${dd}-${mm}-${yy}`;
 
     const groupedBySeller = activeOrders.reduce((acc: any, order) => {
-      const key = order.sellerId || "unknown_seller";
+      const key = order.sellerId || order.instituteName || "unknown_seller";
       if (!acc[key]) acc[key] = [];
       acc[key].push(order);
       return acc;
@@ -956,14 +976,14 @@ const shippingLock = useRef(false);
 
     let fileNameBase = "Delivery_Challan";
 
-    Object.keys(groupedBySeller).forEach((sellerId, index) => {
-      const items = groupedBySeller[sellerId];
+    Object.keys(groupedBySeller).forEach((groupKey, index) => {
+      const items = groupedBySeller[groupKey];
 
       if (!items || items.length === 0) return;
 
       if (index > 0) doc.addPage();
 
-      const sellerInfo = sellers.find(s => s._id === sellerId) || {};
+      const sellerInfo = findSellerInfo(items[0], sellers);
 
       if (index === 0) {
         fileNameBase = sellerInfo.instituteName || sellerInfo.buyerName || items[0].buyerName || "Challan";
@@ -1007,7 +1027,7 @@ const shippingLock = useRef(false);
       const formattedDate = `${dd}-${mm}-${yy}`;
 
       const groupedBySeller = activeOrders.reduce((acc: any, order) => {
-        const key = order.sellerId || "unknown_seller";
+        const key = order.sellerId || order.instituteName || "unknown_seller";
         if (!acc[key]) acc[key] = [];
         acc[key].push(order);
         return acc;
@@ -1018,11 +1038,11 @@ const shippingLock = useRef(false);
       let queuedCount = 0;
       const skipped: string[] = [];
 
-      for (const sellerId of Object.keys(groupedBySeller)) {
-        const items = groupedBySeller[sellerId];
+      for (const groupKey of Object.keys(groupedBySeller)) {
+        const items = groupedBySeller[groupKey];
         if (!items || items.length === 0) continue;
 
-        const sellerInfo = sellers.find(s => s._id === sellerId) || {};
+        const sellerInfo = findSellerInfo(items[0], sellers);
         const instituteName = sellerInfo.instituteName || items[0].instituteName || items[0].buyerName || "Unknown Institute";
         const whatsappNumber = (sellerInfo.whatsappNumber || "").trim();
 
@@ -1045,7 +1065,7 @@ const shippingLock = useRef(false);
           body: JSON.stringify({
             instituteName,
             whatsappNumber,
-            sellerId,
+            sellerId: sellerInfo._id || items[0].sellerId || null,
             orderNos: items.map((o: any) => o.orderNo),
             fileName,
             pdfBase64,
