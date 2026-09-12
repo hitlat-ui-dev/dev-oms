@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   FiArrowLeft, FiPlus, FiTrash2, FiSearch, FiX, FiFileText, FiSave,
-  FiDownload, FiEdit2, FiCheck, FiRefreshCw, FiChevronDown, FiCopy,
+  FiDownload, FiEdit2, FiCheck, FiRefreshCw, FiCopy,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -111,7 +111,6 @@ export default function DeliveryChallanPage() {
   const [sellers, setSellers] = useState<SellerOption[]>([]);
 
   const [consignee, setConsignee] = useState({ ...BLANK_CONSIGNEE });
-  const [consigneeOpen, setConsigneeOpen] = useState(false);
 
   const [lines, setLines] = useState<Line[]>([]);
   const [remarks, setRemarks] = useState("");
@@ -504,7 +503,6 @@ export default function DeliveryChallanPage() {
     setLines([]);
     setRemarks("");
     setConsignee({ ...BLANK_CONSIGNEE });
-    setConsigneeOpen(false);
     setNumberMode("auto");
     setManualNumber("");
     setDate(todayISO());
@@ -537,7 +535,6 @@ export default function DeliveryChallanPage() {
         state: dc.consignee?.state || "",
         mobile: dc.consignee?.mobile || "",
       });
-      setConsigneeOpen(Boolean(dc.consignee?.instituteName || dc.consignee?.buyerName || dc.consignee?.address));
       setLines(
         (dc.items || []).map((it: any) => ({
           key: nextLineKey(),
@@ -582,7 +579,6 @@ export default function DeliveryChallanPage() {
       setDate(todayISO());
       setRemarks(dc.remarks || "");
       setConsignee({ ...BLANK_CONSIGNEE });
-      setConsigneeOpen(true); // opened, since it's the one thing that must be filled in
       setLines(
         (dc.items || []).map((it: any) => ({
           key: nextLineKey(),
@@ -725,72 +721,64 @@ export default function DeliveryChallanPage() {
 
         {/* ---- Consignee (optional) ---- */}
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm mt-5">
-          <button
-            onClick={() => setConsigneeOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-5 py-3.5 text-left"
-          >
+          {/* Always expanded - this is the field most likely to need changing
+              on any given challan (and the one a copied challan leaves blank),
+              so it is never hidden behind a collapse. */}
+          <div className="px-5 py-3.5">
             <span className="text-xs font-black uppercase tracking-widest text-slate-500">
               Ship To / Consignee <span className="text-slate-300 font-bold normal-case tracking-normal">(optional)</span>
             </span>
-            <span className="flex items-center gap-2 text-xs text-slate-400">
-              {!consigneeOpen && (consignee.buyerName || consignee.instituteName) && (
-                <span className="font-bold text-slate-600">{consignee.buyerName || consignee.instituteName}</span>
-              )}
-              <FiChevronDown className={`transition-transform ${consigneeOpen ? "rotate-180" : ""}`} />
-            </span>
-          </button>
+          </div>
 
-          {consigneeOpen && (
-            <div className="px-5 pb-5 border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                  Pick from Sellers
-                </label>
-                <select value={consignee.sellerId} onChange={(e) => pickSeller(e.target.value)} className={inputClass}>
-                  <option value="">— None / type manually below —</option>
-                  {sellers.map((s) => (
-                    <option key={s._id} value={s._id}>
-                      {s.instituteName || s.buyerName || "(unnamed)"}
-                      {s.place ? ` · ${s.place}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Picking one fills the fields below — you can still edit any of them for a one-off delivery address.
-                </p>
-              </div>
-              <input
-                value={consignee.instituteName}
-                onChange={(e) => setConsignee({ ...consignee, instituteName: e.target.value })}
-                placeholder="Institute / Company name"
-                className={inputClass}
-              />
-              <input
-                value={consignee.buyerName}
-                onChange={(e) => setConsignee({ ...consignee, buyerName: e.target.value })}
-                placeholder="Contact person"
-                className={inputClass}
-              />
-              <input
-                value={consignee.address}
-                onChange={(e) => setConsignee({ ...consignee, address: e.target.value })}
-                placeholder="Address"
-                className={`${inputClass} md:col-span-2`}
-              />
-              <input
-                value={consignee.place}
-                onChange={(e) => setConsignee({ ...consignee, place: e.target.value })}
-                placeholder="Place"
-                className={inputClass}
-              />
-              <input
-                value={consignee.mobile}
-                onChange={(e) => setConsignee({ ...consignee, mobile: e.target.value })}
-                placeholder="Mobile"
-                className={inputClass}
-              />
+          <div className="px-5 pb-5 border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                Pick from Sellers
+              </label>
+              <select value={consignee.sellerId} onChange={(e) => pickSeller(e.target.value)} className={inputClass}>
+                <option value="">— None / type manually below —</option>
+                {sellers.map((s) => (
+                  <option key={s._id} value={s._id}>
+                    {s.instituteName || s.buyerName || "(unnamed)"}
+                    {s.place ? ` · ${s.place}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Picking one fills the fields below — you can still edit any of them for a one-off delivery address.
+              </p>
             </div>
-          )}
+            <input
+              value={consignee.instituteName}
+              onChange={(e) => setConsignee({ ...consignee, instituteName: e.target.value })}
+              placeholder="Institute / Company name"
+              className={inputClass}
+            />
+            <input
+              value={consignee.buyerName}
+              onChange={(e) => setConsignee({ ...consignee, buyerName: e.target.value })}
+              placeholder="Contact person"
+              className={inputClass}
+            />
+            <input
+              value={consignee.address}
+              onChange={(e) => setConsignee({ ...consignee, address: e.target.value })}
+              placeholder="Address"
+              className={`${inputClass} md:col-span-2`}
+            />
+            <input
+              value={consignee.place}
+              onChange={(e) => setConsignee({ ...consignee, place: e.target.value })}
+              placeholder="Place"
+              className={inputClass}
+            />
+            <input
+              value={consignee.mobile}
+              onChange={(e) => setConsignee({ ...consignee, mobile: e.target.value })}
+              placeholder="Mobile"
+              className={inputClass}
+            />
+          </div>
         </div>
 
         {/* ---- Item entry ---- */}
