@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiKey } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiKey, FiClipboard } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
@@ -72,6 +72,15 @@ export default function OrdersDashboard() {
       color: "bg-slate-800",
       shadow: "shadow-slate-200",
       permissionKey: "addMyCompanies"
+    },
+    {
+      title: "Delivery Challan",
+      desc: "Manual dispatch challan, FY-wise number",
+      icon: <FiClipboard size={24} />,
+      path: "/dashboard/orders/delivery-challan",
+      color: "bg-teal-600",
+      shadow: "shadow-teal-200",
+      permissionKey: "deliveryChallan"
     },
     {
       title: "GeM Login Setup",

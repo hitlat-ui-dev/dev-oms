@@ -23,5 +23,8 @@ const userSchema = new mongoose.Schema({
         dashboardSummary: { type: Boolean, default: false },
         gemBids: { type: Boolean, default: false },
         advanceOrderTracker: { type: Boolean, default: false },
+        // Standalone Delivery Challan module (Orders hub) - separate from the
+        // order-derived challan download, which rides on order access.
+        deliveryChallan: { type: Boolean, default: false },
     }
 });

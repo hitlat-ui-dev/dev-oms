@@ -11,6 +11,7 @@ const EXACT_TITLES: Record<string, string> = {
   "/dashboard/orders/companies": "Companies",
   "/dashboard/orders/add-seller": "Add Seller",
   "/dashboard/orders/add-transporter": "Add Transporter",
+  "/dashboard/orders/delivery-challan": "Delivery Challan",
   "/dashboard/purchase": "Purchase Hub",
   "/dashboard/purchase/purchase": "Purchase",
   "/dashboard/purchase/purchase-request": "Purchase Request",

@@ -112,7 +112,7 @@ export default function DashboardPage() {
     if (item.name === "Manage Stock") return user?.permissions?.manageStock === true;
     if (item.name === "Orders") {
       const p = user?.permissions || {};
-      return p.addOrder === true || p.addSeller === true || p.addTransporter === true || p.addMyCompanies === true;
+      return p.addOrder === true || p.addSeller === true || p.addTransporter === true || p.addMyCompanies === true || p.deliveryChallan === true;
     }
     if (item.name === "Settings") return user?.permissions?.users === true;
     if (item.name === "Print Label") return user?.permissions?.printLabels === true;

@@ -32,6 +32,7 @@ const initialState = {
         dashboardSummary: false,
         gemBids: false,
         generateBill: false,
+        deliveryChallan: false,
     },
 };
 
@@ -42,7 +43,8 @@ const MODULE_GROUPS = [
             { key: "addOrder", label: "Orders List / Create Order" },
             { key: "addSeller", label: "Register Seller" },
             { key: "addTransporter", label: "Register Transporter" },
-            { key: "addMyCompanies", label: "Company Setup / My Companies" }
+            { key: "addMyCompanies", label: "Company Setup / My Companies" },
+            { key: "deliveryChallan", label: "Delivery Challan Page" }
         ]
     },
     {
@@ -208,6 +210,7 @@ export default function ManageUsers() {
                 dashboardSummary: user.permissions?.dashboardSummary || false,
                 gemBids: user.permissions?.gemBids || false,
                 generateBill: user.permissions?.generateBill || false,
+                deliveryChallan: user.permissions?.deliveryChallan || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });

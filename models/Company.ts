@@ -44,6 +44,19 @@ const CompanySchema = new Schema({
     ],
   },
 
+  // ---- Delivery Challan: per-firm, per-FY challan numbering (AUTO + MANUAL) ----
+  // Kept separate from invoiceNumbering above: a DC is not an invoice, so its
+  // series runs on its own counter and must never advance (or be advanced by)
+  // the bill series.
+  dcNumbering: {
+    history: [
+      {
+        fy: { type: String, required: true },
+        lastNumber: { type: Number, required: true, default: 0 },
+      },
+    ],
+  },
+
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
 
