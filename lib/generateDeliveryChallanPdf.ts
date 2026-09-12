@@ -480,10 +480,11 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
     line(box.left, y, box.right);
 
     // ---- Signatures ----
+    // The receiver's half is left deliberately blank above its caption: no
+    // "Received the above goods in good condition." line and no rule to sign
+    // on, so the whole cell is free space for a signature or stamp.
     const signTop = y;
     const halfW = CONTENT_W / 2;
-    text("Received the above goods in good condition.", box.left + 7, signTop - 12, { size: FS.terms, f: italic });
-    line(box.left + 10, signTop - 28, box.left + halfW - 16, 0.5);
     text("Receiver's Signature", box.left + 10, signTop - 38, { size: FS.sign, f: bold });
 
     // With no firm on the challan there is no name to sign "For" - only the
