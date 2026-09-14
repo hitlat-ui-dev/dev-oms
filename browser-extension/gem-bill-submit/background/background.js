@@ -401,6 +401,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "TRUSTED_TYPE") {
+    // payload: { text } - types into whatever element is currently focused
+    // in the tab. Same isTrusted problem as TRUSTED_CLICK above, but for
+    // keyboard input: confirmed live on the Product Details HSN Code field
+    // (Tax Invoice bills) - element.value + synthetic keydown/input/keyup
+    // events never registered with GeM's own validation no matter how many
+    // times it was retried, but the same value typed by hand worked
+    // instantly. content-gem.js focuses the target field itself first (a
+    // plain .focus() isn't gated the way keystrokes are), then asks for
+    // this to actually "type" the text via CDP.
+    trustedType(sender.tab.id, message.text)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "FETCH_AND_UPLOAD_GEM_DOCUMENT") {
     fetchAndUploadGemDocument(message.gemDocumentUrl, message.billId, message.omsOrigin)
       .then(() => sendResponse({ success: true }))
@@ -982,6 +998,26 @@ async function trustedClick(tabId, x, y) {
     await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
     await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
     await sendDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  } finally {
+    await new Promise((resolve) => chrome.debugger.detach({ tabId }, () => resolve()));
+  }
+}
+
+// Same trusted-input escape hatch as trustedClick above, but for typing.
+// Input.insertText types into whatever element already has focus in the
+// tab - content-gem.js is responsible for focusing the right field first
+// (a plain .focus() call is fine; it's keystrokes specifically that GeM's
+// page seems to gate on isTrusted, not focus).
+async function trustedType(tabId, text) {
+  await new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, "1.3", () => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      resolve();
+    });
+  });
+
+  try {
+    await sendDebuggerCommand(tabId, "Input.insertText", { text: String(text) });
   } finally {
     await new Promise((resolve) => chrome.debugger.detach({ tabId }, () => resolve()));
   }

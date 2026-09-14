@@ -1203,61 +1203,68 @@
         await selectDropdownByIdSubstringWithRetry("INVOICE_ITEMS_FORM-TAX_RATE", `${firstItem.gstPercent}`);
       }
       if (firstItem?.hsnSac) {
-        // Same missing-element race as Supplied Qty below - this field can
-        // still not exist right when this step starts, and setTextValueById
-        // has no retry of its own, so a single immediate attempt was
-        // silently leaving HSN Code empty ("Please Enter HSN Code for
-        // product ...") on Regular/Tax Invoice firms.
-        await setTextValueByIdWithRetry("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
+        // Genuinely trusted typing via chrome.debugger, not a synthetic
+        // event dispatch - see trustedTypeIntoField's own comment for why.
+        await trustedTypeIntoFieldWithRetry("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", firstItem.hsnSac);
       }
     }
 
-    // Re-assert Supplied Qty (and, on Tax Invoice bills, HSN Code) as the
-    // LAST fields touched before Preview - same fix already applied to
-    // Invoice Number on the previous step (see stepInvoiceDetails): GeM's
-    // own form logic can silently clear an earlier-filled field once a later
-    // one (GST UQ Name / Tax Rate here) changes, leaving Supplied Qty/HSN
-    // Code back at empty and Preview stuck disabled - which then times out
-    // the next step's wait for #prevCheckbox in the Preview modal that never
-    // opens.
-    const suppliedQtyField = document.getElementById("INVOICE_ITEMS_FORM-SuppliedQty");
-    if (suppliedQtyField) {
-      setNativeValue(suppliedQtyField, suppliedQtyValue);
-      fireEvents(suppliedQtyField);
-      if (suppliedQtyField.value !== suppliedQtyValue) {
-        console.warn(
-          "[GeM Bill Auto-Submit] Supplied Qty field still doesn't hold the expected value right before Preview:",
-          { expected: suppliedQtyValue, actual: suppliedQtyField.value }
-        );
+    // Confirmed live 14-Sep-2026 via console: a ONE-SHOT re-assert of
+    // Supplied Qty/HSN Code right before Preview still wasn't enough - both
+    // fields logged "still doesn't hold the expected value" here. Turned out
+    // to be two different problems: Supplied Qty can still get reset by GeM's
+    // own async GST/tax recompute after Tax Rate is chosen (though GeM
+    // usually restores its own correct value there anyway), while HSN Code's
+    // real problem was the isTrusted issue fixed above via
+    // trustedTypeIntoField (see its comment) - a 20-second continuous
+    // re-write loop of the old synthetic-event setter confirmed live
+    // 14-Sep-2026 that it never stuck even once, no matter how "real" the
+    // dispatched events looked. This keeps polling and re-writing both
+    // fields anyway as a safety net, right up until Preview is actually
+    // enabled AND both fields still hold what's expected at that exact
+    // moment - a time-based loop, not waitForElementMatching's
+    // MutationObserver, since a framework setting .value as a JS property
+    // (rather than the DOM attribute) may never fire a mutation event for
+    // that observer to catch in the first place.
+    const hsnExpected = data.billType === "TAX_INVOICE" ? (firstItem?.hsnSac || null) : null;
+    const pollStart = Date.now();
+    let previewBtn = null;
+    while (Date.now() - pollStart < MAX_WAIT_MS) {
+      const suppliedQtyField = document.getElementById("INVOICE_ITEMS_FORM-SuppliedQty");
+      if (suppliedQtyField && suppliedQtyField.value !== suppliedQtyValue) {
+        setTextValueById("INVOICE_ITEMS_FORM-SuppliedQty", suppliedQtyValue);
       }
-    } else {
-      console.warn("[GeM Bill Auto-Submit] #INVOICE_ITEMS_FORM-SuppliedQty not found for the final re-assert.");
-    }
 
-    if (data.billType === "TAX_INVOICE" && firstItem?.hsnSac) {
-      const hsnField = document.getElementById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE");
-      if (hsnField) {
-        setNativeValue(hsnField, firstItem.hsnSac);
-        fireEvents(hsnField);
-        if (hsnField.value !== firstItem.hsnSac) {
-          console.warn(
-            "[GeM Bill Auto-Submit] HSN Code field still doesn't hold the expected value right before Preview:",
-            { expected: firstItem.hsnSac, actual: hsnField.value }
-          );
+      let hsnField = null;
+      if (hsnExpected) {
+        hsnField = document.getElementById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE");
+        if (hsnField && hsnField.value !== hsnExpected) {
+          await trustedTypeIntoField("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE", hsnExpected);
+          hsnField = document.getElementById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE");
         }
-      } else {
-        console.warn("[GeM Bill Auto-Submit] #INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE not found for the final re-assert.");
       }
+
+      const qtyOk = !!suppliedQtyField && suppliedQtyField.value === suppliedQtyValue;
+      const hsnOk = !hsnExpected || (!!hsnField && hsnField.value === hsnExpected);
+      const btn = document.getElementById("INVOICE_CREATION_FORM-PROCRESS_BTN"); // sic - GeM's own typo, see file header
+      if (btn && isVisible(btn) && !btn.disabled && qtyOk && hsnOk) {
+        previewBtn = btn;
+        break;
+      }
+      await sleep(300);
     }
 
-    await sleep(300);
-    // Preview stays disabled until Tax Rate/HSN Code (Tax Invoice bills) are
-    // filled in above, so this waits for it to become enabled rather than
-    // just present on the page.
-    const previewBtn = await waitForElementMatching(() => {
-      const el = document.getElementById("INVOICE_CREATION_FORM-PROCRESS_BTN"); // sic - GeM's own typo, see file header
-      return el && isVisible(el) && !el.disabled ? el : null;
-    }, MAX_WAIT_MS);
+    if (!previewBtn) {
+      console.warn(
+        "[GeM Bill Auto-Submit] Preview never became clickable with Supplied Qty/HSN Code both holding their expected values within the timeout - clicking it anyway with whatever's currently in those fields.",
+        {
+          suppliedQty: document.getElementById("INVOICE_ITEMS_FORM-SuppliedQty")?.value,
+          hsnSac: hsnExpected ? document.getElementById("INVOICE_ITEMS_FORM-PRODUCT_HSN_CODE")?.value : "(not required)",
+        }
+      );
+      previewBtn = document.getElementById("INVOICE_CREATION_FORM-PROCRESS_BTN");
+      if (!previewBtn) throw new Error(`Element "#INVOICE_CREATION_FORM-PROCRESS_BTN" ${MAX_WAIT_MS}ms me nahi mila.`);
+    }
     previewBtn.click();
     await sleep(1000);
   }
@@ -1416,11 +1423,22 @@
 
   // ---- ID-based field helpers (confirmed real GeM field IDs) ----
 
+  // Same temporarily-remove-disabled trick already used by setSelectValueById
+  // below, now applied to text inputs too. HSN Code specifically is disabled
+  // by GeM until Tax Rate is chosen just before this runs, and a value
+  // written to a still-disabled Angular-bound input gets silently discarded
+  // the next time Angular re-renders it (its model never picked up our
+  // input/change events while [disabled] was set) - "Please Enter HSN Code
+  // for product ..." even though the field briefly looked filled.
   function setTextValueById(id, value) {
     const el = document.getElementById(id);
     if (!el) return false;
+
+    const wasDisabled = el.disabled;
+    if (wasDisabled) el.removeAttribute("disabled");
     setNativeValue(el, value);
     fireEvents(el);
+    if (wasDisabled) el.setAttribute("disabled", "disabled");
     return true;
   }
 
@@ -1436,6 +1454,99 @@
       await sleep(300);
     }
     console.warn(`[GeM Bill Auto-Submit] #${id} never appeared to fill "${value}" after ${timeoutMs}ms.`);
+    return false;
+  }
+
+  // Genuinely trusted typing (same chrome.debugger escape hatch as
+  // TRUSTED_CLICK/trustedClick below, this time via CDP's Input.insertText).
+  // This is the actual fix for HSN Code: confirmed live 14-Sep-2026 that even
+  // typeCharByCharById's full synthetic keydown/input/keyup sequence never
+  // got GeM's own validation to accept the value - not once, across a
+  // 20-second continuous re-write loop - while the exact same text typed by
+  // hand worked immediately. Every script-dispatched event is isTrusted:false;
+  // GeM's page apparently checks that specifically for this field. Focuses
+  // the field itself first (plain .focus() isn't gated the way keystrokes
+  // are), then asks the background script to actually type via CDP. Falls
+  // back to the synthetic char-by-char approach if chrome.debugger can't
+  // attach (e.g. DevTools already open on this tab blocks debugger attach).
+  async function trustedTypeIntoField(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+
+    const wasDisabled = el.disabled;
+    if (wasDisabled) el.removeAttribute("disabled");
+
+    el.focus();
+    setNativeValue(el, "");
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
+
+    const result = await chrome.runtime
+      .sendMessage({ type: "TRUSTED_TYPE", text: String(value) })
+      .catch((err) => ({ success: false, error: err.message }));
+
+    if (!result?.success) {
+      console.warn("[GeM Bill Auto-Submit] Trusted type nahi hua, synthetic char-by-char pe fallback kar raha hu:", result?.error);
+      if (wasDisabled) el.setAttribute("disabled", "disabled");
+      return await typeCharByCharById(id, value);
+    }
+
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    if (wasDisabled) el.setAttribute("disabled", "disabled");
+    return el.value === String(value);
+  }
+
+  async function trustedTypeIntoFieldWithRetry(id, value, timeoutMs = 6000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (document.getElementById(id)) {
+        return await trustedTypeIntoField(id, value);
+      }
+      await sleep(300);
+    }
+    console.warn(`[GeM Bill Auto-Submit] #${id} never appeared to type "${value}" into after ${timeoutMs}ms.`);
+    return false;
+  }
+
+  // Synthetic char-by-char fallback for when chrome.debugger can't attach.
+  // Kept as-is from the earlier attempt - see trustedTypeIntoField above for
+  // why it alone wasn't enough for HSN Code.
+  async function typeCharByCharById(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+
+    const wasDisabled = el.disabled;
+    if (wasDisabled) el.removeAttribute("disabled");
+
+    el.focus();
+    setNativeValue(el, "");
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
+
+    let current = "";
+    for (const ch of String(value)) {
+      current += ch;
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true, cancelable: true }));
+      setNativeValue(el, current);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: ch, inputType: "insertText" }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true, cancelable: true }));
+      await sleep(60);
+    }
+
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    if (wasDisabled) el.setAttribute("disabled", "disabled");
+    return el.value === String(value);
+  }
+
+  async function typeCharByCharByIdWithRetry(id, value, timeoutMs = 6000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (document.getElementById(id)) {
+        return await typeCharByCharById(id, value);
+      }
+      await sleep(300);
+    }
+    console.warn(`[GeM Bill Auto-Submit] #${id} never appeared to type "${value}" into after ${timeoutMs}ms.`);
     return false;
   }
 
