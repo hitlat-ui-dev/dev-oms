@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { hashPassword } from "@/lib/password";
 
 // PUT: Update user permissions or details
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -18,6 +19,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
     const body = await req.json();
     const { _id, ...updateData } = body;
+
+    // Blank password from the edit form means "keep the current one" - only
+    // overwrite it when a new value was actually typed.
+    if (typeof updateData.password === "string" && updateData.password.trim()) {
+      updateData.password = hashPassword(updateData.password);
+    } else {
+      delete updateData.password;
+    }
 
     const result = await db.collection("users").updateOne(
       { _id: new ObjectId(id) },

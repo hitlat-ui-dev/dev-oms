@@ -11,11 +11,24 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // If already logged in, send them to dashboard immediately
+  // If already logged in, send them to dashboard immediately. Checked
+  // against the real server-verified session, not just localStorage's
+  // "oms_user" flag - that flag has no expiry of its own and would otherwise
+  // go stale once the session cookie expires (12h), bouncing this page
+  // straight back to /dashboard while middleware.ts bounces it right back
+  // here.
   useEffect(() => {
-    if (localStorage.getItem("oms_user")) {
-      router.push("/dashboard");
-    }
+    if (!localStorage.getItem("oms_user")) return;
+    fetch("/api/session")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.loggedIn) {
+          router.push("/dashboard");
+        } else {
+          localStorage.removeItem("oms_user");
+        }
+      })
+      .catch(() => {});
   }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {

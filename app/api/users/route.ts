@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { hashPassword } from "@/lib/password";
 
 // GET: Fetch all users or specific user by username query param
 export async function GET(req: NextRequest) {
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     const db = client.db();
 
     if (username) {
-      const user = await db.collection("users").findOne({ username });
+      const user = await db.collection("users").findOne({ username }, { projection: { password: 0 } });
       if (!user) {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     }
 
     const users = await db.collection("users")
-      .find({})
+      .find({}, { projection: { password: 0 } })
       .toArray();
 
     return NextResponse.json(users);
@@ -78,7 +79,7 @@ export async function POST(req: Request) {
 
     const newUser = {
       username,
-      password, // Plain text as requested
+      password: hashPassword(password),
       permissions: permissions || {}, // Default to empty object if none provided
       createdAt: new Date(),
     };

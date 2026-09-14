@@ -6,14 +6,14 @@ export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const user = localStorage.getItem("oms_user");
-    if (user) {
-      // If session exists, go to dashboard
-      router.push("/dashboard");
-    } else {
-      // Otherwise, go to login
-      router.push("/login");
-    }
+    // Server-verified session, not just localStorage's "oms_user" flag -
+    // see the matching comment in app/login/page.tsx.
+    fetch("/api/session")
+      .then((res) => res.json())
+      .then((data) => {
+        router.push(data.loggedIn ? "/dashboard" : "/login");
+      })
+      .catch(() => router.push("/login"));
   }, [router]);
 
   return (
