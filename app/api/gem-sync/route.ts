@@ -4,11 +4,18 @@ import { uploadFileToR2, getFileFromR2, deleteFileFromR2 } from "@/lib/cloudflar
 
 const sheetR2Key = (id: string) => `gem-sync/sheets/${id}.json`;
 
-// Helper: Deduplicate listings array by (itemId/itemName + firmCode) - a
-// Master List entry is a firm's item->GeM-link mapping, reusable for any
-// buyer's quote, so buyerId plays no part in a listing's identity. Two
-// listings differing only by which buyer's sheet first created them ARE
-// duplicates.
+// Helper: Deduplicate listings array by (itemId/itemName + firmCode + GeM
+// Link) - a Master List entry is a firm's item->GeM-link mapping, reusable
+// for any buyer's quote, so buyerId plays no part in a listing's identity.
+// Two listings differing only by which buyer's sheet first created them ARE
+// duplicates. GeM Link IS part of the key though - a firm can legitimately
+// carry more than one listing for the same item under different Product
+// IDs, so item+firm alone would misidentify those as duplicates and this
+// function (called from the destructive "Clean Duplicates" action, which
+// deletes every gem_listings doc and reinserts only what survives here)
+// would permanently delete the ones it kept out. Listings with no link at
+// all (pre-tracking data) still fall back to item+firm so those old
+// duplicates keep collapsing as before.
 function deduplicateListings(items: any[]) {
   if (!Array.isArray(items)) return [];
   const seen = new Map<string, any>();
@@ -17,7 +24,8 @@ function deduplicateListings(items: any[]) {
     if (!lst) continue;
     const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
     const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-    const key = `${itemKey}::${firmKey}`;
+    const linkKey = (lst.gemLink || "").toString().trim().toLowerCase();
+    const key = `${itemKey}::${firmKey}::${linkKey}`;
 
     if (!seen.has(key)) {
       seen.set(key, lst);

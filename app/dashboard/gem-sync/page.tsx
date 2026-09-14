@@ -1171,6 +1171,16 @@ export default function GeMSyncPage() {
     if (row.linkedListingId) {
       return listings.find(l => l.id === row.linkedListingId);
     }
+    // Explicitly tracking a New Upload Link checklist entry instead (stamped
+    // by handleAddNewLink, mutually exclusive with linkedListingId - see
+    // stampLinkedNewLinkEntry) - this row's Master List identity is
+    // deliberately "none" until that entry graduates. Falling through to the
+    // derived item+firm match below would be wrong here specifically: a firm
+    // can carry more than one listing for the same item under different
+    // Product IDs, so that match could latch onto a DIFFERENT, unrelated
+    // listing for this item+firm and report it as this row's status instead
+    // of the New Upload Link entry actually being tracked.
+    if (row.linkedNewLinkEntryId) return undefined;
     if (!row.firmCode) return undefined;
     if (row.mappedItemId) {
       const listing = listingByItemFirm.get(`${row.mappedItemId}::${row.firmCode}`);
@@ -1588,14 +1598,23 @@ export default function GeMSyncPage() {
 
   // Filtered Listings for Master List (Sorted by item name to group duplicates consecutively)
   const filteredMasterListings = useMemo(() => {
-    // Ensure array is deduplicated by (itemId/itemName + firmCode) - buyer-agnostic,
-    // same as everywhere else Master List identity is computed in this file.
+    // Dedup by (itemId/itemName + firmCode + GeM Link) - a firm can
+    // legitimately carry more than one listing for the same item under
+    // different Product IDs, so item+firm alone is NOT a unique key here;
+    // keying on item+firm only collapsed every such pair down to whichever
+    // one had the latest date, silently hiding the others from Master List
+    // even though their gem_listings documents (and everSynced: true) were
+    // perfectly real. This only collapses genuine duplicates - same item,
+    // same firm, same link - which is what "Clean Duplicates" targets.
+    // Listings with no link at all (pre-tracking data) still fall back to
+    // item+firm so those old duplicates keep collapsing as before.
     const seen = new Map<string, FirmItemListing>();
     for (const lst of listings) {
       if (!lst) continue;
       const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
       const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-      const key = `${itemKey}::${firmKey}`;
+      const linkKey = (lst.gemLink || "").toString().trim().toLowerCase();
+      const key = `${itemKey}::${firmKey}::${linkKey}`;
 
       if (!seen.has(key)) {
         seen.set(key, lst);
@@ -2124,6 +2143,29 @@ export default function GeMSyncPage() {
   const handleAddNewLink = (row: UploadedRow) => {
     if (!row.firmCode) {
       alert("Please select a Firm first.");
+      return;
+    }
+    // A firm can carry more than one GeM listing for the same item under
+    // different Product IDs - itemId+firmCode alone isn't a unique key, so
+    // "this item+firm is already in Master List" is NOT by itself a reason to
+    // block "New Link". Only block when there is truly nothing new being
+    // proposed: the row is already tied to a specific listing (via
+    // resolveRowListing, which checks row.linkedListingId first) AND its GeM
+    // Link still matches that same listing's link untouched - in that exact
+    // case "New Link" would just create a pointless duplicate checklist entry
+    // for a link already fully represented in Master List, and Update Stock
+    // is the right button instead. The moment the row's GeM Link has actually
+    // been changed to a different Product ID, that's a genuinely new listing
+    // for this firm and belongs in the New Upload Link checklist - it only
+    // graduates into Master List once synced (see handlePushNewLinkToStock /
+    // mark_new_link_published), same as any other brand-new item+firm.
+    const existingListing = resolveRowListing(row);
+    const currentLink = row.gemLink ? row.gemLink.trim() : "";
+    if (existingListing && currentLink && currentLink === (existingListing.gemLink || "").trim()) {
+      alert(
+        `❌ Ye link is item ke "${row.firmCode}" ke saath Master List me already save hai.\n\n` +
+        `Rate/Stock/Min Qty jaisi cheez update karni ho to 'Update Stock' (✏️ orange) button use karo - 'New Link' (+) tabhi use karo jab GeM Link genuinely alag/naya ho.`
+      );
       return;
     }
     const matchedItemObj = row.mappedItemId ? allItemsList.find(i => i._id === row.mappedItemId) : null;
