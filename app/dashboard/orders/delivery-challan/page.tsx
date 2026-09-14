@@ -484,10 +484,19 @@ export default function DeliveryChallanPage() {
         return;
       }
 
-      setStatus("finalized");
-      setIssuedNumber(data.dcNumberFormatted);
-      setNotice(`Delivery Challan ${data.dcNumberFormatted} generated.`);
+      const wasIssued = isIssued;
       openPdfFromBase64(data.pdfBase64, `Delivery-Challan-${String(data.dcNumberFormatted).replace(/\//g, "-")}.pdf`);
+
+      // The challan is issued and stored, so the form has done its job: clear
+      // it for the next one and refresh the list below, where the one just
+      // generated now appears. Challans get written in batches, and leaving
+      // the issued one loaded meant hitting "New Challan" between every single
+      // one. The date is kept so a back-dated batch stays on its date.
+      resetForm({ keepDate: true });
+      setNotice(
+        `Delivery Challan ${data.dcNumberFormatted} ${wasIssued ? "regenerated" : "generated"} and saved — ` +
+          `it's in the list below. Form cleared for the next one.`
+      );
       await Promise.all([loadHistory(), loadMasterItems()]);
     } catch (err: any) {
       setError(err.message || "Couldn't generate the challan.");
@@ -496,7 +505,10 @@ export default function DeliveryChallanPage() {
     }
   };
 
-  const resetForm = () => {
+  /** Clears the form for a fresh challan. `keepDate` is used after generating,
+   * so a back-dated batch doesn't jump back to today between each one. The
+   * firm is never cleared either - it is almost always the same across a batch. */
+  const resetForm = (opts: { keepDate?: boolean } = {}) => {
     setChallanId(null);
     setStatus("draft");
     setIssuedNumber("");
@@ -505,7 +517,7 @@ export default function DeliveryChallanPage() {
     setConsignee({ ...BLANK_CONSIGNEE });
     setNumberMode("auto");
     setManualNumber("");
-    setDate(todayISO());
+    if (!opts.keepDate) setDate(todayISO());
     setError("");
     setNotice("");
   };
@@ -1079,7 +1091,7 @@ export default function DeliveryChallanPage() {
           </button>
           {(challanId || lines.length > 0) && (
             <button
-              onClick={resetForm}
+              onClick={() => resetForm()}
               className="flex items-center gap-2 text-slate-500 hover:text-slate-800 text-sm font-bold px-3 py-2.5"
             >
               <FiRefreshCw size={14} /> New Challan
@@ -1146,8 +1158,12 @@ export default function DeliveryChallanPage() {
                       </td>
                       <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{formatDateDDMMYYYY(dc.date)}</td>
                       <td className="px-3 py-2 text-slate-600">{dc.firmCode || <span className="text-slate-300">—</span>}</td>
+                      {/* The institute, never the contact person - goods go to an
+                          institution, and that is what identifies the challan here.
+                          A person-only consignee still falls back to the name so the
+                          cell is never blank. */}
                       <td className="px-3 py-2 text-slate-600 max-w-[220px] truncate">
-                        {dc.consignee?.buyerName || dc.consignee?.instituteName || "—"}
+                        {dc.consignee?.instituteName || dc.consignee?.buyerName || "—"}
                       </td>
                       <td className="px-3 py-2 text-right text-slate-600 tabular-nums">{dc.items?.length || 0}</td>
                       <td className="px-3 py-2 text-right text-slate-600 tabular-nums">{dc.totalQty}</td>
@@ -1156,9 +1172,10 @@ export default function DeliveryChallanPage() {
                           <button
                             onClick={() => openChallan(dc._id)}
                             disabled={busyRowId === dc._id}
-                            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 px-2 py-1 disabled:text-slate-300"
+                            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 px-2 py-1 disabled:text-slate-300 flex items-center gap-1"
+                            title={dc.status === "draft" ? "Edit this draft" : "Edit this issued challan and regenerate its PDF"}
                           >
-                            Open
+                            <FiEdit2 size={12} /> Edit
                           </button>
                           <button
                             onClick={() => copyChallan(dc._id)}

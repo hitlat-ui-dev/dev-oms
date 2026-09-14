@@ -213,8 +213,15 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
   const infoLeftW = infoSplit - SIDE_MARGIN - 12;
 
   const consignee = dc.consignee || {};
-  const consigneeName = (consignee.buyerName || consignee.instituteName || "").trim();
-  const hasConsignee = Boolean(consigneeName || consignee.address || consignee.place || consignee.mobile);
+  // The INSTITUTE is the headline - goods are delivered to an institution, and
+  // the contact person is only who to ask for on arrival, so the person's name
+  // sits beneath it in plain weight. When a challan carries only a person's
+  // name the headline falls back to that, rather than leaving the block empty.
+  const institute = (consignee.instituteName || "").trim();
+  const contactPerson = (consignee.buyerName || "").trim();
+  const headline = institute || contactPerson;
+  const subLine = institute ? contactPerson : "";
+  const hasConsignee = Boolean(headline || consignee.address || consignee.place || consignee.mobile);
 
   // Each entry is one printed line of the left-hand consignee column, with its
   // own line height - "To," is a caption and gets a tight one, so the lines
@@ -222,13 +229,13 @@ export async function generateDeliveryChallanPdf(dc: DcPdfData): Promise<Uint8Ar
   const consigneeLines: { str: string; f: PDFFont; size: number; lh: number }[] = [];
   if (hasConsignee) {
     consigneeLines.push({ str: "To,", f: font, size: FS.toLabel, lh: LH.to });
-    for (const l of wrapClamped(bold, consigneeName, FS.consigneeName, infoLeftW, 2)) {
-      if (consigneeName) consigneeLines.push({ str: l, f: bold, size: FS.consigneeName, lh: LH.info });
+    if (headline) {
+      for (const l of wrapClamped(bold, headline, FS.consigneeName, infoLeftW, 2)) {
+        consigneeLines.push({ str: l, f: bold, size: FS.consigneeName, lh: LH.info });
+      }
     }
-    // The institute earns its own line only when a contact person's name is
-    // already occupying the bold line above it.
-    if (consignee.buyerName && consignee.instituteName) {
-      for (const l of wrapClamped(font, consignee.instituteName, FS.info, infoLeftW, 1)) {
+    if (subLine) {
+      for (const l of wrapClamped(font, subLine, FS.info, infoLeftW, 1)) {
         consigneeLines.push({ str: l, f: font, size: FS.info, lh: LH.info });
       }
     }
