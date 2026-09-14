@@ -22,13 +22,17 @@ const COLUMN_MAP = {
   igstAmount: "IGSTAmount",
   invoiceType: "InvoiceType",
   groupName: "GroupName",
+  regType: "Reg Type",
+  debitCredit: "Debit/Credit",
+  typeOfBill: "Type of bill",
+  gstNonGst: "Gst/non Gst",
 };
 
-// Miracle's sample dates are "M/D/YY" with no leading zeros (e.g. "4/1/26"
-// for 1 April 2026) - matching that exactly rather than the DD/MM/YYYY used
-// on the printed invoice PDF.
+// DD-MM-YYYY with leading zeros (e.g. "20-08-2026").
 function formatMiracleDate(d: Date): string {
-  return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}-${mm}-${d.getFullYear()}`;
 }
 
 // Invoice numbers are "<prefix><number>" (e.g. "SM14") - mirrors the same
@@ -105,12 +109,31 @@ export async function GET(req: Request) {
         .map((s) => [String(s.instituteName || "").trim().toUpperCase(), String(s.sellerBillName || "").trim()])
     );
 
+    // Reg Type needs each firm's current isCompositionDealer flag - not
+    // captured on firmSnapshot at bill-creation time, so (like Seller Bill
+    // Name above) this is looked up live rather than baked in.
+    const firmCodes = [...new Set(bills.map((b) => b.firmCode).filter(Boolean))];
+    const companies = firmCodes.length
+      ? await db.collection("companies").find({ firmCode: { $in: firmCodes } }, { projection: { firmCode: 1, isCompositionDealer: 1 } }).toArray()
+      : [];
+    const isCompositionByFirmCode = new Map(companies.map((c) => [c.firmCode, !!c.isCompositionDealer]));
+
     const rows: Record<string, any>[] = [];
     for (const bill of bills) {
       const billDate = formatMiracleDate(new Date(bill.invoiceDate));
       const instituteKey = String(bill.buyerSnapshot.instituteName || "").trim().toUpperCase();
       const partyName = sellerBillNameByInstitute.get(instituteKey) || bill.buyerSnapshot.sellerBillName || bill.buyerSnapshot.instituteName;
       const stateName = bill.buyerSnapshot.state || bill.placeOfSupply || "";
+
+      const regType = isCompositionByFirmCode.get(bill.firmCode) ? "Composition" : "Regular";
+      const typeOfBill = bill.billType === "TAX_INVOICE" ? "TAX INVOICE" : "BILL OF SUPPLY";
+      // GST vs Non-GST goes by whether the firm actually holds a GSTIN, not
+      // by billType alone - a Composition dealer still has a GSTIN and
+      // counts as "GST" here, only a firm with no GSTIN (PAN-only) is
+      // "NON GST". TAX_INVOICE bills always have a GSTIN (decideBillType in
+      // bills/generate/route.ts falls back to BILL_OF_SUPPLY otherwise), so
+      // this one check alone covers all three cases.
+      const gstNonGst = bill.firmSnapshot?.gstin ? "GST" : "NON GST";
 
       for (const it of bill.items) {
         const gstAmount = Number(it.gstAmount || 0);
@@ -133,6 +156,10 @@ export async function GET(req: Request) {
           [COLUMN_MAP.igstAmount]: isIgst ? Number(gstAmount.toFixed(2)) : 0,
           [COLUMN_MAP.invoiceType]: "GST",
           [COLUMN_MAP.groupName]: "Sundry Debtors",
+          [COLUMN_MAP.regType]: regType,
+          [COLUMN_MAP.debitCredit]: "Debit",
+          [COLUMN_MAP.typeOfBill]: typeOfBill,
+          [COLUMN_MAP.gstNonGst]: gstNonGst,
         });
       }
     }
