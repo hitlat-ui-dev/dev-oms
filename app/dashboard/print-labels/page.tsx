@@ -25,9 +25,13 @@ function clampForQr(value: string, maxLen: number): string {
     return v.length > maxLen ? v.slice(0, maxLen - 1).trimEnd() + "…" : v;
 }
 
-// Standard "quiet zone" width in modules around a QR - the blank border a
-// scanner needs just to LOCATE the code before it can even try to read it.
-const QR_QUIET_ZONE_MODULES = 4;
+// Quiet zone width in modules around a QR - the blank border a scanner needs
+// just to LOCATE the code before it can even try to read it. Spec recommends
+// 4; trimmed to 3 here because on this printer the binding constraint turned
+// out to be per-module PRINT resolution, not detection - every module of
+// quiet zone not spent is a module of physical size added to real data
+// instead, at a fixed sticker size (see drawQrCode and lib/dispatchLabel.ts).
+const QR_QUIET_ZONE_MODULES = 3;
 
 // Draws a QR as actual vector rectangles instead of embedding a raster PNG
 // via doc.addImage(). This is the fix for labels that scanned fine on
@@ -155,7 +159,15 @@ export default function PrintLabelsPage() {
             // paints it as vector rectangles onto the PDF instead (see that
             // function for why: a raster QR scanned fine on screen but not
             // once printed on a thermal label printer).
-            const qrMatrix = QRCode.create(scanUrl, { errorCorrectionLevel: "M" });
+            //
+            // errorCorrectionLevel "L" (not the usual default "M") for the
+            // same reason as QR_QUIET_ZONE_MODULES above: fewer correction
+            // codewords means fewer modules for the same data, which is a
+            // direct win on a printer that struggles to resolve fine modules
+            // at all - worth more here than the extra damage-tolerance "M"
+            // buys, since a clean sticker isn't at real risk of the physical
+            // damage/occlusion that error correction actually protects against.
+            const qrMatrix = QRCode.create(scanUrl, { errorCorrectionLevel: "L" });
 
             printLabelPdf(qrMatrix);
         } catch (err: any) {
@@ -312,15 +324,14 @@ export default function PrintLabelsPage() {
             // the sender block, which the narrower address wrap above keeps
             // clear from y=4.4 down.
             //
-            // 1.05in, NOT the token-sized square a label usually gets: at this
-            // payload the QR runs 77-85 modules, so anything smaller prints
-            // modules thinner than a thermal printer dot. Kept 0.2in off the
-            // left page edge and the x=1.4 divider - most printers refuse to
-            // mark right up to a page edge, and anything actually clipped
-            // there breaks the QR outright, not just makes it small. Left
-            // unrotated - a QR scans from any angle, so matching the -90 text
-            // orientation would buy nothing and only complicate the placement.
-            drawQrCode(doc, qrMatrix, 0.2, 4.6, 1.05);
+            // 1.1in, as big as this side of the label allows: kept 0.2in off
+            // the left page edge and 0.1in off the x=1.4 divider - most
+            // printers refuse to mark right up to a page edge, and anything
+            // actually clipped there breaks the QR outright, not just makes
+            // it small. Left unrotated - a QR scans from any angle, so
+            // matching the -90 text orientation would buy nothing and only
+            // complicate the placement.
+            drawQrCode(doc, qrMatrix, 0.2, 4.6, 1.1);
 
         } else {
             // --- 4x4 STANDARD DESIGN ---
@@ -456,13 +467,13 @@ export default function PrintLabelsPage() {
             // out. Right side of the footer, beside the sender block, which
             // the narrower address wrap above keeps out of this corner.
             //
-            // Was 1.1in square starting at y=2.85 - its bottom edge landed at
-            // 3.95, just 0.05in from the page's own 4.0in bottom edge. Most
-            // printers won't mark that close to an edge, so that bottom strip
-            // of the QR was likely being clipped outright - not shrunk, GONE -
-            // which breaks a QR far worse than a slightly smaller code would.
-            // Shrunk to 0.95in so a 0.2in bottom margin survives.
-            drawQrCode(doc, qrMatrix, 2.75, 2.85, 0.95);
+            // Top edge sits right at the footerY divider (y=2.8) and the
+            // bottom at 3.8, a 0.2in margin from the page's own 4.0in edge -
+            // an earlier version had that margin down to 0.05in, and its
+            // bottom strip was very likely being clipped outright by the
+            // printer, not just shrunk, which breaks a QR far worse than a
+            // smaller code would.
+            drawQrCode(doc, qrMatrix, 2.7, 2.8, 1.0);
         }
         // Open the label straight into the browser's print dialog instead of
         // downloading a file the user then has to find and open themselves.
