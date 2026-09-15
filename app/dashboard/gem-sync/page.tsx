@@ -2927,9 +2927,10 @@ export default function GeMSyncPage() {
   const [rowSearchRequirement, setRowSearchRequirement] = useState("");
   const [rowSearchInventory, setRowSearchInventory] = useState("");
   const [rowSearchFirm, setRowSearchFirm] = useState("");
+  const [rowSearchRate, setRowSearchRate] = useState("");
   const [rowSearchGemLink, setRowSearchGemLink] = useState("");
 
-  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchGemLink);
+  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink);
 
   // ---- Variant Groups ----
   // Selection is transient (never saved with the sheet) and keyed by row index
@@ -3074,6 +3075,7 @@ export default function GeMSyncPage() {
     setRowSearchRequirement("");
     setRowSearchInventory("");
     setRowSearchFirm("");
+    setRowSearchRate("");
     setRowSearchGemLink("");
   };
 
@@ -3088,8 +3090,9 @@ export default function GeMSyncPage() {
     const reqQ = norm(rowSearchRequirement);
     const invQ = norm(rowSearchInventory);
     const firmQ = norm(rowSearchFirm);
+    const rateQ = norm(rowSearchRate);
     const linkQ = norm(rowSearchGemLink);
-    if (!reqQ && !invQ && !firmQ && !linkQ) return byStatus;
+    if (!reqQ && !invQ && !firmQ && !rateQ && !linkQ) return byStatus;
 
     return byStatus.filter(row => {
       if (reqQ && !(row.originalName || "").toLowerCase().includes(reqQ)) return false;
@@ -3101,10 +3104,11 @@ export default function GeMSyncPage() {
         const firmName = companies.find(c => c.firmCode === row.firmCode)?.firmName || "";
         if (!`${row.firmCode || ""} ${firmName}`.toLowerCase().includes(firmQ)) return false;
       }
+      if (rateQ && !String(row.rate ?? "").toLowerCase().includes(rateQ)) return false;
       if (linkQ && !(row.gemLink || "").toLowerCase().includes(linkQ)) return false;
       return true;
     });
-  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchGemLink, itemsById, companies]);
+  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, itemsById, companies]);
 
   // Renders only this many rows at a time - a 200+ row sheet rendering all
   // at once (each with its own inventory-search datalist, Quick Fill chips,
@@ -3113,7 +3117,7 @@ export default function GeMSyncPage() {
   const [visibleRowCount, setVisibleRowCount] = useState(ROWS_PAGE_SIZE);
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
-  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchGemLink]);
+  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink]);
 
   // GeM Link column sort toggle: "blankFirst" groups every row with no GeM
   // Link at the top in one go (so missing links are easy to spot/fill),
@@ -3481,6 +3485,13 @@ export default function GeMSyncPage() {
                         onChange={(e) => setRowSearchFirm(e.target.value)}
                         placeholder="Firm..."
                         className="w-[110px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={rowSearchRate}
+                        onChange={(e) => setRowSearchRate(e.target.value)}
+                        placeholder="Rate..."
+                        className="w-[80px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       />
                       <input
                         type="text"
