@@ -232,7 +232,6 @@ export default function Header() {
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
     setUser(null);
-    fetch("/api/logout", { method: "POST" }).catch(() => {});
     router.push("/login");
   };
 

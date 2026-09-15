@@ -185,7 +185,7 @@ export default function ManageUsers() {
         setEditingId(user._id);
         setFormData({
             username: user.username || "",
-            password: "", // Passwords are hashed server-side now, so there's nothing to prefill - leaving this blank keeps the current password
+            password: user.password || "", // Ensure the existing password fills the box
             permissions: {
                 addSeller: user.permissions?.addSeller || false,
                 purchaseReq: user.permissions?.purchaseReq || false,
@@ -249,12 +249,12 @@ export default function ManageUsers() {
                             />
                             <input
                                 type="text"
-                                placeholder={editingId ? "Leave blank to keep current password" : "Password"}
+                                placeholder="Password"
                                 // The || "" prevents the "controlled/uncontrolled" warning
                                 value={formData.password || ""}
                                 className="p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                required={!editingId}
+                                required
                             />
                         </div>
 
