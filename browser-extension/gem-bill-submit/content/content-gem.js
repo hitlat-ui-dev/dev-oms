@@ -1490,6 +1490,16 @@
       return await typeCharByCharById(id, value);
     }
 
+    // CDP's Input.insertText resolves once Chrome's accepted the command,
+    // not once the page's own renderer has actually applied it to the DOM -
+    // reading el.value immediately after can still see the old (empty)
+    // value for a beat, which was making the Product Details poll loop
+    // think this attempt failed and fire off ANOTHER full debugger
+    // attach/detach round trip (each one has real overhead), sometimes
+    // several times in a row before catching up - the visible "Preview
+    // takes forever" symptom. This gives the DOM a moment to settle first.
+    await sleep(400);
+
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new Event("blur", { bubbles: true }));
     if (wasDisabled) el.setAttribute("disabled", "disabled");
