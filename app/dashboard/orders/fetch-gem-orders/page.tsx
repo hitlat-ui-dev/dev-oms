@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import AddItemModal from "@/components/AddItemModal";
+import AddSellerModal from "@/components/AddSellerModal";
 import {
   FiArrowLeft,
   FiCheckCircle,
@@ -86,6 +87,7 @@ export default function FetchGeMOrdersPage() {
   const [fetchHistory, setFetchHistory] = useState<{ firmCode: string; firmName: string; lastFetchedAt: string | null }[]>([]);
   const [loadingFetchHistory, setLoadingFetchHistory] = useState(false);
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
+  const [isAddSellerModalOpen, setIsAddSellerModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: "firmCode" | "instituteName" | "itemName"; direction: "asc" | "desc" } | null>(null);
 
@@ -96,6 +98,10 @@ export default function FetchGeMOrdersPage() {
   const [customItemName, setCustomItemName] = useState("");
   const [itemQuery, setItemQuery] = useState("");
   const [showItemSuggestions, setShowItemSuggestions] = useState(false);
+  // Keyboard nav (Up/Down/Enter) through the Item Name suggestion list -
+  // -1 means nothing highlighted yet.
+  const [highlightedItemIndex, setHighlightedItemIndex] = useState(-1);
+  const itemSuggestionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [selectedStockItem, setSelectedStockItem] = useState<StockItemOption | null>(null);
   // Populated when the picked item belongs to a variant group (e.g. "White
   // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
@@ -633,7 +639,6 @@ export default function FetchGeMOrdersPage() {
                 <th className="px-3 py-3 text-center">O-Qty</th>
                 <th className="px-3 py-3 text-right">Rate</th>
                 <th className="px-3 py-3 text-right">Total</th>
-                <th className="px-3 py-3 text-center">Status</th>
                 <th className="px-3 py-3 text-center">Actions</th>
               </tr>
             </thead>
@@ -656,6 +661,11 @@ export default function FetchGeMOrdersPage() {
                   <td className="px-3 py-3 text-slate-400">—</td>
                   <td className="px-3 py-3 max-w-72">
                     <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
+                    {matchResults[order._id]?.itemName && (
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchResults[order._id]!.itemName}>
+                        <FiCheck size={11} /> {matchResults[order._id]!.itemName}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3">
                     <a
@@ -672,11 +682,6 @@ export default function FetchGeMOrdersPage() {
                   <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
                   <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
                   <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
-                  <td className="px-3 py-3 text-center">
-                    <span className="bg-amber-100 text-amber-800 text-[10px] font-black tracking-wider px-2.5 py-1 rounded-full uppercase">
-                      UNVERIFIED
-                    </span>
-                  </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center justify-center gap-2">
                       <button
@@ -734,9 +739,19 @@ export default function FetchGeMOrdersPage() {
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                  Buyer / Institute
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-700 font-bold uppercase tracking-wider">
+                    Buyer / Institute
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddSellerModalOpen(true)}
+                    title="Naya institute Seller Directory me add karo"
+                    className="flex items-center gap-1 text-[10px] font-black text-blue-600 hover:text-blue-800 uppercase tracking-wider"
+                  >
+                    <FiPlus size={12} /> Add Seller
+                  </button>
+                </div>
                 <select
                   value={customInstituteName}
                   onChange={(e) => setCustomInstituteName(e.target.value)}
@@ -766,9 +781,33 @@ export default function FetchGeMOrdersPage() {
                     setCustomItemName(e.target.value);
                     setSelectedStockItem(null);
                     setShowItemSuggestions(true);
+                    setHighlightedItemIndex(-1);
                   }}
                   onFocus={() => setShowItemSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowItemSuggestions(false), 150)}
+                  onKeyDown={(e) => {
+                    if (!showItemSuggestions || itemSuggestions.length === 0) return;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setHighlightedItemIndex((prev) => {
+                        const next = prev < itemSuggestions.length - 1 ? prev + 1 : 0;
+                        itemSuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                        return next;
+                      });
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setHighlightedItemIndex((prev) => {
+                        const next = prev > 0 ? prev - 1 : itemSuggestions.length - 1;
+                        itemSuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                        return next;
+                      });
+                    } else if (e.key === "Enter") {
+                      if (highlightedItemIndex >= 0 && itemSuggestions[highlightedItemIndex]) {
+                        e.preventDefault();
+                        handleSelectStockItem(itemSuggestions[highlightedItemIndex]);
+                      }
+                    }
+                  }}
                   placeholder="Search stock item..."
                   className={`w-full p-2.5 bg-slate-50 border rounded-lg text-slate-800 font-semibold focus:outline-none ${selectedStockItem ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
                 />
@@ -782,12 +821,16 @@ export default function FetchGeMOrdersPage() {
                 )}
                 {showItemSuggestions && itemSuggestions.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
-                    {itemSuggestions.map((item) => (
+                    {itemSuggestions.map((item, idx) => (
                       <button
                         type="button"
                         key={item._id}
+                        ref={(el) => { itemSuggestionRefs.current[idx] = el; }}
+                        onMouseEnter={() => setHighlightedItemIndex(idx)}
                         onMouseDown={() => handleSelectStockItem(item)}
-                        className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0"
+                        className={`w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 ${
+                          idx === highlightedItemIndex ? "bg-blue-50" : "hover:bg-blue-50"
+                        }`}
                       >
                         <div className="font-bold text-slate-800">{item.itemName}</div>
                         <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
@@ -928,6 +971,16 @@ export default function FetchGeMOrdersPage() {
         onClose={() => {
           setIsAddItemModalOpen(false);
           fetchStockItems(); // so a newly-added item shows up for matching right away
+        }}
+      />
+
+      <AddSellerModal
+        isOpen={isAddSellerModalOpen}
+        onClose={() => setIsAddSellerModalOpen(false)}
+        prefill={{ instituteName: selectedOrder?.instituteName, gemLocationText: selectedOrder?.location }}
+        onCreated={(seller) => {
+          fetchSheetsAndBuyers(); // so the new institute shows up in the Buyer/Institute dropdown
+          setCustomInstituteName(seller.instituteName);
         }}
       />
     </div>
