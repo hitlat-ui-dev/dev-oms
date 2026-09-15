@@ -142,6 +142,12 @@ export default function DeliveryChallanPage() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
 
+  // Challans ticked for a merged download. Only ever holds ids that are in the
+  // list currently on screen - see the prune in loadHistory - so "merge the
+  // selection" can never quietly include a row the filter has hidden.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [merging, setMerging] = useState(false);
+
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const lineKeySeq = useRef(0);
   const nextLineKey = () => `line-${lineKeySeq.current++}`;
@@ -209,7 +215,19 @@ export default function DeliveryChallanPage() {
     if (debouncedSearch) params.set("q", debouncedSearch);
     return fetch(`/api/delivery-challans?${params.toString()}`)
       .then((r) => r.json())
-      .then((data) => setHistory(Array.isArray(data?.challans) ? data.challans : []))
+      .then((data) => {
+        const rows: ChallanSummary[] = Array.isArray(data?.challans) ? data.challans : [];
+        setHistory(rows);
+        // Drop any tick whose row is no longer listed. Without this a filter
+        // change would leave invisible challans selected, and "Merge 12" would
+        // hand back a file with rows the user can't see.
+        setSelectedIds((prev) => {
+          if (prev.size === 0) return prev;
+          const visible = new Set(rows.map((r) => r._id));
+          const next = new Set([...prev].filter((id) => visible.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
+      })
       .catch(() => {})
       .finally(() => setLoadingHistory(false));
   }, [historyFirm, debouncedSearch]);
@@ -611,6 +629,68 @@ export default function DeliveryChallanPage() {
       setError(err.message);
     } finally {
       setBusyRowId(null);
+    }
+  };
+
+  // ---- Selecting challans for a merged download ----
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = history.length > 0 && history.every((dc) => selectedIds.has(dc._id));
+  const someVisibleSelected = selectedIds.size > 0 && !allVisibleSelected;
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(history.map((dc) => dc._id)));
+  };
+
+  /** Downloads the ticked challans as one PDF. The ids go up in the order the
+   * rows are listed, so the merged file reads the same way the screen does. */
+  const mergeSelected = async () => {
+    const ids = history.filter((dc) => selectedIds.has(dc._id)).map((dc) => dc._id);
+    if (ids.length === 0) return;
+
+    setMerging(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/delivery-challans/merge-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+
+      if (!res.ok) {
+        // A failure comes back as JSON even though the happy path is a PDF.
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Couldn't merge the selected challans.");
+        return;
+      }
+
+      const merged = Number(res.headers.get("X-Merged-Count")) || ids.length;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download =
+        res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] || "Delivery-Challans-merged.pdf";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+      setNotice(
+        merged < ids.length
+          ? `Merged ${merged} of ${ids.length} challans — the rest had no items to print.`
+          : `Merged ${merged} challan${merged === 1 ? "" : "s"} into one PDF.`
+      );
+    } catch (err: any) {
+      setError(err.message || "Couldn't merge the selected challans.");
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -1124,10 +1204,55 @@ export default function DeliveryChallanPage() {
             </div>
           </div>
 
+          {/* Selection bar - only present once something is ticked, so the
+              table reads normally the rest of the time. */}
+          {selectedIds.size > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5">
+              <span className="text-xs font-black text-teal-800">
+                {selectedIds.size} challan{selectedIds.size === 1 ? "" : "s"} selected
+              </span>
+              <button
+                onClick={mergeSelected}
+                disabled={merging}
+                className="flex items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-teal-700 disabled:bg-slate-300"
+              >
+                <FiDownload size={13} /> {merging ? "Merging…" : "Download Merged PDF"}
+              </button>
+              <button
+                onClick={toggleSelectAll}
+                className="text-xs font-bold text-teal-700 hover:text-teal-900"
+              >
+                {allVisibleSelected ? "Deselect all" : `Select all ${history.length}`}
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-auto flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800"
+              >
+                <FiX size={13} /> Clear
+              </button>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-600">
+                  <th className="w-9 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      // Shows the half-ticked state when only some rows are
+                      // selected - `indeterminate` is a DOM property, not an
+                      // attribute, so it can only be set through a ref.
+                      ref={(el) => {
+                        if (el) el.indeterminate = someVisibleSelected;
+                      }}
+                      onChange={toggleSelectAll}
+                      disabled={history.length === 0}
+                      title="Select all listed challans"
+                      className="cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left font-black uppercase text-[10px] tracking-widest px-3 py-2">DC No.</th>
                   <th className="text-left font-black uppercase text-[10px] tracking-widest px-3 py-2">Date</th>
                   <th className="text-left font-black uppercase text-[10px] tracking-widest px-3 py-2">Firm</th>
@@ -1140,19 +1265,32 @@ export default function DeliveryChallanPage() {
               <tbody>
                 {loadingHistory ? (
                   <tr>
-                    <td colSpan={7} className="text-center text-slate-400 text-xs py-8">
+                    <td colSpan={8} className="text-center text-slate-400 text-xs py-8">
                       Loading…
                     </td>
                   </tr>
                 ) : history.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center text-slate-400 text-xs py-8">
+                    <td colSpan={8} className="text-center text-slate-400 text-xs py-8">
                       Nothing saved yet.
                     </td>
                   </tr>
                 ) : (
                   history.map((dc) => (
-                    <tr key={dc._id} className={`border-b border-slate-100 ${challanId === dc._id ? "bg-indigo-50/60" : ""}`}>
+                    <tr
+                      key={dc._id}
+                      className={`border-b border-slate-100 ${
+                        selectedIds.has(dc._id) ? "bg-teal-50/70" : challanId === dc._id ? "bg-indigo-50/60" : ""
+                      }`}
+                    >
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(dc._id)}
+                          onChange={() => toggleSelected(dc._id)}
+                          className="cursor-pointer"
+                        />
+                      </td>
                       <td className="px-3 py-2 font-bold text-slate-800 tabular-nums whitespace-nowrap">
                         {dc.dcNumberFormatted || <span className="text-amber-600 font-bold text-xs">DRAFT</span>}
                       </td>

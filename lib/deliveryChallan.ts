@@ -8,8 +8,9 @@
 // re-render all normalise identically - a challan edited through PATCH must
 // end up shaped exactly like one created through POST.
 
-import { DcPdfData } from "@/lib/generateDeliveryChallanPdf";
+import { DcPdfData, generateDeliveryChallanPdf } from "@/lib/generateDeliveryChallanPdf";
 import { shortFinancialYear } from "@/lib/dcNumbering";
+import { getFileFromR2Bills } from "@/lib/r2Bills";
 
 export interface DcLineInput {
   itemMasterId?: string | null;
@@ -185,4 +186,24 @@ export function toPdfData(dc: any): DcPdfData {
 export function dcFileName(dc: any): string {
   const base = dc.dcNumberFormatted ? dc.dcNumberFormatted.replace(/\//g, "-") : `DRAFT-${String(dc._id).slice(-6)}`;
   return `Delivery-Challan-${base}.pdf`;
+}
+
+/**
+ * One challan's PDF bytes: the copy stored in R2 at finalize when there is
+ * one, otherwise rendered fresh from the challan document.
+ *
+ * Shared by the single download and the merge route so both resolve a challan
+ * to bytes the same way - and so a challan whose stored copy has gone missing
+ * (or was invalidated by an edit, or by scripts/clear_dc_pdf_cache.js) still
+ * downloads, just re-rendered.
+ */
+export async function loadChallanPdf(challan: any): Promise<Uint8Array> {
+  if (challan.r2Key) {
+    try {
+      return new Uint8Array(await getFileFromR2Bills(challan.r2Key));
+    } catch (err: any) {
+      console.error(`R2 fetch failed for DC ${challan.dcNumberFormatted || challan._id}, re-rendering:`, err.message);
+    }
+  }
+  return generateDeliveryChallanPdf(toPdfData(challan));
 }
