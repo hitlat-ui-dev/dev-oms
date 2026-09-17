@@ -56,6 +56,7 @@ export default function OrdersListPage() {
     category: "",
     firm: "",
     buyerName: "",
+    contractNo: "",
     startDate: "", // Change from 'date' to 'startDate'
     endDate: ""
   });
@@ -138,6 +139,9 @@ export default function OrdersListPage() {
       const matchesBuyer = (order.instituteName || "").toLowerCase().trim()
         .includes(filters.buyerName.toLowerCase().trim());
 
+      const matchesContract = (order.contractNo || "").toLowerCase().trim()
+        .includes(filters.contractNo.toLowerCase().trim());
+
       // 3. Date check
       const orderDateStr = order.orderDate || order.createdAt || "";
       const orderTime = orderDateStr ? new Date(orderDateStr).setHours(0, 0, 0, 0) : null;
@@ -160,7 +164,7 @@ export default function OrdersListPage() {
         matchesDate = false;
       }
 
-      return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesDate;
+      return matchesTab && matchesItem && matchesCategory && matchesFirm && matchesBuyer && matchesContract && matchesDate;
     })
       .sort((a, b) => {
         // Check if your key name is 'orderNumber' or 'orderNo' based on your schema
@@ -186,6 +190,7 @@ export default function OrdersListPage() {
       category: "",
       firm: "",
       buyerName: "",
+      contractNo: "",
       startDate: "",
       endDate: ""
     });
@@ -1200,7 +1205,7 @@ const shippingLock = useRef(false);
         </div>
 
         {/* Row 2: The New Filter Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="grid grid-cols-2 md:grid-cols-7 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex flex-col gap-1">
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Item Name</label>
             <input
@@ -1235,6 +1240,15 @@ const shippingLock = useRef(false);
               className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
               value={filters.buyerName}
               onChange={(e) => setFilters({ ...filters, buyerName: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter ml-1">Contract</label>
+            <input
+              type="text" placeholder="Filter Contract..."
+              className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+              value={filters.contractNo}
+              onChange={(e) => setFilters({ ...filters, contractNo: e.target.value })}
             />
           </div>
           <div className="flex flex-col gap-1 col-span-2 md:col-span-1">
