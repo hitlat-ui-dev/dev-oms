@@ -248,29 +248,35 @@ export async function GET(req: Request) {
     // via each of the 3 buttons (all-time, from the append-only gem_action_log),
     // plus the current Sync Checklist snapshot (Pending vs Synced) for both of
     // its portions - Stock Update (gem_listings) and New Upload Link.
-    const [okLinkCount, updateStockCount, newLinkActionCount, gemActionByUserAgg] = await Promise.all([
+    // gem_action_log rows store `timestamp` as an ISO string (see
+    // log_gem_action in app/api/gem-sync/route.ts), not a Date - ISO 8601's
+    // zero-padded year-month-day-... ordering still sorts/compares correctly
+    // as plain strings, so a string range match works fine here.
+    const gemActionTodayMatch = { timestamp: { $gte: todayStart.toISOString(), $lt: todayEnd.toISOString() } };
+    const [okLinkCount, updateStockCount, newLinkActionCount, gemActionByUserTodayAgg] = await Promise.all([
       db.collection("gem_action_log").countDocuments({ type: "ok_link" }),
       db.collection("gem_action_log").countDocuments({ type: "update_stock" }),
       db.collection("gem_action_log").countDocuments({ type: "new_link" }),
       db
         .collection("gem_action_log")
         .aggregate([
+          { $match: gemActionTodayMatch },
           { $group: { _id: { by: { $ifNull: ["$by", "Unknown"] }, type: "$type" }, count: { $sum: 1 } } },
         ])
         .toArray(),
     ]);
-    // Per-user split of the same all-time action log, for "who did how much
-    // GeM Sync work" - keyed by the `by` username each action was logged
+    // Per-user split of TODAY's action log only, for "who did how much GeM
+    // Sync work today" - keyed by the `by` username each action was logged
     // under (see log_gem_action in app/api/gem-sync/route.ts).
     const gemByUserMap: Record<string, { okLink: number; updateStock: number; newLink: number }> = {};
-    for (const row of gemActionByUserAgg as any[]) {
+    for (const row of gemActionByUserTodayAgg as any[]) {
       const user = row._id.by || "Unknown";
       if (!gemByUserMap[user]) gemByUserMap[user] = { okLink: 0, updateStock: 0, newLink: 0 };
       if (row._id.type === "ok_link") gemByUserMap[user].okLink = row.count;
       else if (row._id.type === "update_stock") gemByUserMap[user].updateStock = row.count;
       else if (row._id.type === "new_link") gemByUserMap[user].newLink = row.count;
     }
-    const gemSyncByUser = Object.entries(gemByUserMap)
+    const gemSyncByUserToday = Object.entries(gemByUserMap)
       .map(([username, c]) => ({ username, ...c, total: c.okLink + c.updateStock + c.newLink }))
       .sort((a, b) => b.total - a.total);
     const [stockUpdatePending, stockUpdateSynced, newUploadLinkPending, newUploadLinkSynced] = await Promise.all([
@@ -285,7 +291,7 @@ export async function GET(req: Request) {
         stockUpdate: { pending: stockUpdatePending, synced: stockUpdateSynced },
         newUploadLink: { pending: newUploadLinkPending, synced: newUploadLinkSynced },
       },
-      byUser: gemSyncByUser,
+      byUserToday: gemSyncByUserToday,
     };
 
     // Team activity today — merged from every user-attributed signal the app writes:

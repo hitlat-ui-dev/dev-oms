@@ -103,7 +103,7 @@ interface SummaryData {
       stockUpdate: { pending: number; synced: number };
       newUploadLink: { pending: number; synced: number };
     };
-    byUser: { username: string; okLink: number; updateStock: number; newLink: number; total: number }[];
+    byUserToday: { username: string; okLink: number; updateStock: number; newLink: number; total: number }[];
   };
 }
 
@@ -595,10 +595,10 @@ export default function SummaryDashboardPage() {
                     </div>
                   </div>
 
-                  {data.gemSync.byUser.length > 0 && (
+                  {data.gemSync.byUserToday.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-slate-100">
                       <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-2">
-                        Requirement Mapping Actions — By User (All-Time)
+                        Requirement Mapping Actions — By User (Today)
                       </span>
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs border-collapse">
@@ -612,7 +612,7 @@ export default function SummaryDashboardPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {data.gemSync.byUser.map((u) => (
+                            {data.gemSync.byUserToday.map((u) => (
                               <tr key={u.username} className="hover:bg-blue-50/40 transition-colors">
                                 <td className="py-2 px-3 font-black text-slate-800">{u.username}</td>
                                 <td className="py-2 px-3 text-center font-mono font-bold text-emerald-700">{u.okLink || "—"}</td>
