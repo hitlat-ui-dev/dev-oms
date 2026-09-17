@@ -201,11 +201,11 @@ export async function POST(req: Request) {
   }
 }
 
-// Default page load fetches the 250 most recent orders within the 45-day window —
-// executing in sub-second speed (~1.2s). Pass ?all=1 to fetch complete order history
-// (used by the Orders board's explicit "Load All Orders" action).
+// Default page load fetches every order within the 45-day window (no count
+// cap - removed since it was hiding orders older than the newest 250 within
+// that window). Pass ?all=1 to fetch complete order history (used by the
+// Orders board's explicit "Load All Orders" action).
 const DEFAULT_DAYS_WINDOW = 45;
-const DEFAULT_INITIAL_LIMIT = 250;
 
 export async function GET(req: Request) {
   try {
@@ -220,8 +220,7 @@ export async function GET(req: Request) {
     const fortyFiveDaysAgo = new Date(Date.now() - DEFAULT_DAYS_WINDOW * 24 * 60 * 60 * 1000);
     const filterQuery = fetchAll ? {} : { createdAt: { $gte: fortyFiveDaysAgo } };
 
-    let rawOrdersQuery = db.collection("sellerorders").find(filterQuery).sort({ createdAt: -1 });
-    if (!fetchAll) rawOrdersQuery = rawOrdersQuery.limit(DEFAULT_INITIAL_LIMIT);
+    const rawOrdersQuery = db.collection("sellerorders").find(filterQuery).sort({ createdAt: -1 });
 
     // These three queries run concurrently using database indexes.
     const [orders, prTotals, opTotals] = await Promise.all([

@@ -441,26 +441,27 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
           <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-h-[80vh] overflow-y-auto">
 
-            {!isEditing && (
-              <label className="md:col-span-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 cursor-pointer w-fit">
-                <input
-                  ref={advanceCheckboxRef}
-                  type="checkbox"
-                  className="w-3.5 h-3.5 accent-amber-600"
-                  checked={formData.isAdvance}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    // "AD" is the real registered firm code (firmName "ADVANCE")
-                    // this firm's team already uses as the placeholder for
-                    // advance shipments - not an invented value.
-                    setFormData(prev => ({ ...prev, isAdvance: checked, firmCode: checked ? "AD" : "" }));
-                  }}
-                />
-                <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
-                  Advance Order — material shipped before official GeM order exists
-                </span>
-              </label>
-            )}
+            <label className="md:col-span-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 cursor-pointer w-fit">
+              <input
+                ref={advanceCheckboxRef}
+                type="checkbox"
+                className="w-3.5 h-3.5 accent-amber-600"
+                checked={formData.isAdvance}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  // "AD" is the real registered firm code (firmName "ADVANCE")
+                  // this firm's team already uses as the placeholder for
+                  // advance shipments - not an invented value. Also shown
+                  // while editing an existing order (not just on create) so
+                  // a regular order placed under the wrong firm can be
+                  // converted to Advance without deleting and re-entering it.
+                  setFormData(prev => ({ ...prev, isAdvance: checked, firmCode: checked ? "AD" : "" }));
+                }}
+              />
+              <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                Advance Order — material shipped before official GeM order exists
+              </span>
+            </label>
 
             {/* <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
