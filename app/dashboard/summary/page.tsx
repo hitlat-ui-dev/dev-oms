@@ -165,7 +165,7 @@ export default function SummaryDashboardPage() {
   // their own pages (Fetch GeM Orders, GeM Catalogue). Here they answer one
   // question at a glance: is any firm's data going stale?
   const [orderFetchHistory, setOrderFetchHistory] = useState<{ firmCode: string; firmName: string; lastFetchedAt: string | null }[] | null>(null);
-  const [catalogueFetchLog, setCatalogueFetchLog] = useState<{ firmCode: string; itemCount: number; fetchedAt: string }[] | null>(null);
+  const [catalogueFetchLog, setCatalogueFetchLog] = useState<{ firmCode: string; firmName: string; itemCount: number | null; fetchedAt: string | null }[] | null>(null);
   const [fetchHistoryLoading, setFetchHistoryLoading] = useState(false);
 
   useEffect(() => {
@@ -833,14 +833,16 @@ export default function SummaryDashboardPage() {
                   )}
                 </div>
 
-                {/* Catalogue: append-only, so every run shows, not just the last */}
+                {/* Every firm's most recent catalogue fetch, including firms
+                    never fetched at all - see app/api/gem-sync/route.ts's
+                    catalogueFetchLog handler. */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="p-5 border-b border-slate-100">
                     <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                       <FiPackage className="text-blue-600" size={14} /> GeM Catalogue Fetch History
                     </h3>
                     <p className="text-[10px] text-slate-400 mt-1">
-                      Every time the browser extension has fetched a firm&apos;s GeM catalogue, newest first.
+                      Every firm&apos;s most recent catalogue fetch, newest first.
                     </p>
                   </div>
 
@@ -864,14 +866,25 @@ export default function SummaryDashboardPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {visibleCatalogueFetchLog.map((entry, idx) => (
-                            <tr key={`${entry.firmCode}-${entry.fetchedAt}-${idx}`}>
-                              <td className="py-2.5 px-5 font-black text-slate-800">{entry.firmCode}</td>
-                              <td className="py-2.5 px-2.5 text-right font-mono text-slate-500">{entry.itemCount}</td>
-                              <td className="py-2.5 px-2.5 font-mono text-slate-500">
-                                {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {visibleCatalogueFetchLog.map((entry) => (
+                            <tr key={entry.firmCode}>
+                              <td className="py-2.5 px-5">
+                                <span className="font-black text-slate-800">{entry.firmCode}</span>
+                                <span className="block text-[10px] text-slate-400 font-bold uppercase">{entry.firmName}</span>
                               </td>
-                              <td className="py-2.5 px-5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                              {entry.fetchedAt ? (
+                                <>
+                                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-500">{entry.itemCount}</td>
+                                  <td className="py-2.5 px-2.5 font-mono text-slate-500">
+                                    {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  </td>
+                                  <td className="py-2.5 px-5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                                </>
+                              ) : (
+                                <td colSpan={3} className="py-2.5 px-5 text-right">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Never Fetched</span>
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>

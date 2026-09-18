@@ -85,11 +85,11 @@ export default function GeMCataloguePage() {
   const [addingRowKey, setAddingRowKey] = useState<string | null>(null);
   const [syncingMasterList, setSyncingMasterList] = useState(false);
 
-  // Fetch History popup - append-only log of every save_catalogue_links run
-  // (see app/api/gem-sync/route.ts), since gem_catalogue_links itself gets
-  // wholesale replaced on each fetch and can't answer "when did we fetch before this?".
+  // Fetch History popup - one row per firm (its most recent catalogue fetch),
+  // for every firm including ones never fetched at all (see
+  // app/api/gem-sync/route.ts's catalogueFetchLog handler).
   const [showFetchHistory, setShowFetchHistory] = useState(false);
-  const [fetchHistoryLog, setFetchHistoryLog] = useState<{ firmCode: string; itemCount: number; fetchedAt: string }[]>([]);
+  const [fetchHistoryLog, setFetchHistoryLog] = useState<{ firmCode: string; firmName: string; itemCount: number | null; fetchedAt: string | null }[]>([]);
   const [loadingFetchHistory, setLoadingFetchHistory] = useState(false);
 
   const openFetchHistory = () => {
@@ -655,7 +655,7 @@ export default function GeMCataloguePage() {
                   <FiClock className="text-blue-500" /> Catalogue Fetch History
                 </h3>
                 <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
-                  Every time the browser extension has fetched a firm's GeM catalogue, newest first.
+                  Every firm's most recent catalogue fetch, newest first.
                 </p>
               </div>
               <button onClick={() => setShowFetchHistory(false)} className="text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]">
@@ -670,7 +670,7 @@ export default function GeMCataloguePage() {
                 </div>
               ) : fetchHistoryLog.length === 0 ? (
                 <p className="text-xs text-[var(--gem-text-secondary)] text-center py-10">
-                  No fetch history recorded yet - it starts logging from the next catalogue fetch onward.
+                  No firms found.
                 </p>
               ) : (
                 <table className="w-full text-left text-xs border-collapse">
@@ -683,14 +683,25 @@ export default function GeMCataloguePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--gem-border)]/60">
-                    {fetchHistoryLog.map((entry, idx) => (
-                      <tr key={idx}>
-                        <td className="py-2 px-2.5 font-black text-[var(--gem-text-primary)]">{entry.firmCode}</td>
-                        <td className="py-2 px-2.5 text-right font-mono text-[var(--gem-text-secondary)]">{entry.itemCount}</td>
-                        <td className="py-2 px-2.5 font-mono text-[var(--gem-text-secondary)]">
-                          {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {fetchHistoryLog.map((entry) => (
+                      <tr key={entry.firmCode}>
+                        <td className="py-2 px-2.5">
+                          <span className="font-black text-[var(--gem-text-primary)]">{entry.firmCode}</span>
+                          <span className="block text-[10px] text-[var(--gem-text-secondary)] font-bold uppercase">{entry.firmName}</span>
                         </td>
-                        <td className="py-2 px-2.5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                        {entry.fetchedAt ? (
+                          <>
+                            <td className="py-2 px-2.5 text-right font-mono text-[var(--gem-text-secondary)]">{entry.itemCount}</td>
+                            <td className="py-2 px-2.5 font-mono text-[var(--gem-text-secondary)]">
+                              {new Date(entry.fetchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </td>
+                            <td className="py-2 px-2.5 text-right font-bold text-blue-600">{formatRelativeTime(entry.fetchedAt)}</td>
+                          </>
+                        ) : (
+                          <td colSpan={3} className="py-2 px-2.5 text-right">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-red-400">Never Fetched</span>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

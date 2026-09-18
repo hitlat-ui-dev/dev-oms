@@ -126,18 +126,42 @@ export async function GET(req: Request) {
       });
     }
 
-    // Fetch history for the Catalogue page's History popup - newest first,
-    // capped so one very actively-synced firm can't blow this up unbounded.
+    // Fetch history for the Catalogue page's History popup - one row per
+    // firm (its most recent fetch), for every firm including ones never
+    // fetched at all, not the raw append-only log (gem_catalogue_fetch_log
+    // itself keeps every past fetch too, e.g. for future "fetched N times"
+    // stats, but this view answers "which firm, when last, how many items").
     if (searchParams.get("catalogueFetchLog")) {
-      const log = await db
-        .collection("gem_catalogue_fetch_log")
-        .find({})
-        .sort({ fetchedAt: -1 })
-        .limit(500)
-        .toArray();
-      return NextResponse.json({
-        log: log.map(({ _id, ...rest }) => ({ ...rest })),
+      const [companies, log] = await Promise.all([
+        db.collection("companies").find({}, { projection: { firmCode: 1, firmName: 1 } }).toArray(),
+        db.collection("gem_catalogue_fetch_log").find({}).sort({ fetchedAt: -1 }).toArray(),
+      ]);
+
+      const latestByFirm = new Map<string, { itemCount: number; fetchedAt: Date }>();
+      for (const entry of log as any[]) {
+        if (!latestByFirm.has(entry.firmCode)) {
+          latestByFirm.set(entry.firmCode, { itemCount: entry.itemCount, fetchedAt: entry.fetchedAt });
+        }
+      }
+
+      const history = companies.map((c: any) => {
+        const latest = latestByFirm.get(c.firmCode);
+        return {
+          firmCode: c.firmCode,
+          firmName: c.firmName,
+          itemCount: latest?.itemCount ?? null,
+          fetchedAt: latest?.fetchedAt ?? null,
+        };
       });
+
+      history.sort((a, b) => {
+        if (!a.fetchedAt && !b.fetchedAt) return a.firmName.localeCompare(b.firmName);
+        if (!a.fetchedAt) return 1; // never-fetched firms sink to the bottom
+        if (!b.fetchedAt) return -1;
+        return new Date(b.fetchedAt).getTime() - new Date(a.fetchedAt).getTime();
+      });
+
+      return NextResponse.json({ log: history });
     }
 
     // Fetch the remaining collections concurrently rather than one-at-a-time —
