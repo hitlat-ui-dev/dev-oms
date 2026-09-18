@@ -1156,9 +1156,10 @@ export default function GeMSyncPage() {
     return map;
   }, [newLinkChecklist]);
 
-  // "Add New Link" only needs a firm, not an inventory mapping, so an entry
-  // can exist with no mappedItemId to key on - name keeps those findable, and
-  // without it such a row would look like its entry had been deleted.
+  // "Add New Link" now requires an inventory mapping too (see
+  // handleAddNewLink), but entries created before that check existed can
+  // still have no mappedItemId to key on - name keeps those findable, so an
+  // old row doesn't look like its entry had been deleted.
   const newLinkEntryByBuyerFirmName = useMemo(() => {
     const map = new Map<string, NewLinkChecklistEntry>();
     newLinkChecklist.forEach(e => {
@@ -2157,6 +2158,14 @@ export default function GeMSyncPage() {
   const handleAddNewLink = (row: UploadedRow) => {
     if (!row.firmCode) {
       alert("Please select a Firm first.");
+      return;
+    }
+    // Blocked here rather than only at Publish time (buildListingFromNewLink)
+    // - an unmapped row used to slip into the New Upload Link checklist and
+    // only fail later with a confusing error deep in Publish/Push to Stock,
+    // by which point it looked like a working checklist entry.
+    if (!row.mappedItemId) {
+      alert("❌ Ye row kisi inventory item se mapped nahi hai — pehle isi row me ek real stock item select karo, phir 'Add New Link' karo.");
       return;
     }
     // A firm can carry more than one GeM listing for the same item under
