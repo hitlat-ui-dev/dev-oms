@@ -76,6 +76,18 @@ export default function OrdersListPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [isBulkDelivery, setIsBulkDelivery] = useState(false);
 
+  // Bulk "TO CHECK" status-change flow: a checkbox-select mode toggled by a
+  // button, then a single modal listing every selected order's own
+  // Order Qty / In Stock / Qty To Ship Now (mirrors the single-row Partial
+  // Ship modal), submitted via the same per-order PATCH shape looped with
+  // Promise.all - same pattern as the existing Bulk Deliver flow below.
+  const [selectMode, setSelectMode] = useState(false);
+  const [showBulkCheckModal, setShowBulkCheckModal] = useState(false);
+  const [bulkShipQtys, setBulkShipQtys] = useState<Record<string, number>>({});
+  const [bulkError, setBulkError] = useState("");
+  const [isBulkShipping, setIsBulkShipping] = useState(false);
+  const [bulkToCheckAction, setBulkToCheckAction] = useState<"DELIVERY" | null>(null);
+
   const [isShipping, setIsShipping] = useState(false);
   const [reloading, setReloading] = useState(false);
 
@@ -285,6 +297,7 @@ export default function OrdersListPage() {
 
   useEffect(() => {
     setSelectedOrderIds([]);
+    setSelectMode(false);
   }, [activeTab]);
 
   // Same Ctrl/Cmd+K quick-add shortcut as the Dashboard's "New Order" tile -
@@ -492,6 +505,97 @@ const shippingLock = useRef(false);
     }
   };
 
+  const openBulkCheckModal = () => {
+    if (selectedOrderIds.length === 0) return;
+    const initialQtys: Record<string, number> = {};
+    selectedOrderIds.forEach(id => {
+      const o = orders.find(ord => ord._id === id);
+      if (o) initialQtys[id] = Math.min(o.stockQty ?? 0, o.reQty);
+    });
+    setBulkShipQtys(initialQtys);
+    setBulkError("");
+    setShowBulkCheckModal(true);
+  };
+
+  const validateBulkShipQtys = (): boolean => {
+    for (const id of selectedOrderIds) {
+      const o = orders.find(ord => ord._id === id);
+      if (!o) continue;
+      const qty = Number(bulkShipQtys[id] ?? 0);
+      const avStock = o.stockQty ?? 0;
+      if (qty <= 0) {
+        setBulkError(`${o.itemName}: Please add quantity to ship!`);
+        return false;
+      }
+      if (qty > o.reQty) {
+        setBulkError(`${o.itemName}: Quantity exceeds order limit`);
+        return false;
+      }
+      if (qty > avStock) {
+        setBulkError(`${o.itemName}: Available quantity is low! Only ${avStock} in stock.`);
+        return false;
+      }
+    }
+    setBulkError("");
+    return true;
+  };
+
+  const handleBulkDirectDeliverClick = () => {
+    if (!validateBulkShipQtys()) return;
+    setBulkToCheckAction("DELIVERY");
+    setShowBulkCheckModal(false);
+    setDeliveryData({
+      transportName: "",
+      transportRemark: "",
+      deliveryDate: new Date().toISOString().split('T')[0]
+    });
+    setShowDeliveryModal(true);
+  };
+
+  const submitBulkPartialShipment = async () => {
+    if (!validateBulkShipQtys() || isBulkShipping) return;
+    setIsBulkShipping(true);
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+
+    try {
+      const results = await Promise.all(selectedOrderIds.map(id => {
+        const o = orders.find(ord => ord._id === id);
+        const shipQtyNum = Number(bulkShipQtys[id] ?? 0);
+        return fetch(`/api/seller-orders/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "READY TO SHIP",
+            isPartialFulfillment: shipQtyNum !== o?.reQty,
+            shipQty: shipQtyNum,
+            itemName: o?.itemName,
+            activeTab: "TO CHECK",
+            userName: Login_user,
+          }),
+        });
+      }));
+
+      const failed = results.filter(r => !r.ok);
+      if (failed.length > 0) {
+        alert(`Bulk update completed: ${results.length - failed.length} succeeded, ${failed.length} failed.`);
+      } else {
+        alert("All selected orders moved to Ready to Ship!");
+      }
+
+      setShowBulkCheckModal(false);
+      setSelectedOrderIds([]);
+      setSelectMode(false);
+      setBulkShipQtys({});
+      fetchOrders();
+    } catch (err) {
+      alert("Error processing bulk shipment");
+    } finally {
+      setIsBulkShipping(false);
+    }
+  };
+
   const handleDeleteOrder = async (orderId: string, orderNo: string) => {
     if (!window.confirm(`Are you sure you want to DELETE order ${orderNo}?\nThis will remove the order and restore the stock reQty.`)) return;
 
@@ -557,7 +661,47 @@ const shippingLock = useRef(false);
     if (!deliveryData.transportName) return alert("Please select a transporter");
     setIsSubmitting(true);
     try {
-      if (isBulkDelivery) {
+      if (bulkToCheckAction === "DELIVERY") {
+        const Login_user = JSON.parse(localStorage.getItem("oms_user") || "{}")?.username || "Unknown User";
+        const promises = selectedOrderIds.map(id => {
+          const o = orders.find(ord => ord._id === id);
+          const shipQtyNum = Number(bulkShipQtys[id] ?? 0);
+          return fetch(`/api/seller-orders/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: "DELIVERY",
+              isPartialFulfillment: shipQtyNum !== o?.reQty,
+              shipQty: shipQtyNum,
+              itemName: o?.itemName,
+              activeTab: "TO CHECK",
+              userName: Login_user,
+              transportName: deliveryData.transportName,
+              transportRemark: deliveryData.transportRemark,
+              deliveryDate: deliveryData.deliveryDate
+            }),
+          });
+        });
+
+        const results = await Promise.all(promises);
+        const failed = results.filter(r => !r.ok);
+        if (failed.length > 0) {
+          alert(`Bulk delivery completed: ${results.length - failed.length} succeeded, ${failed.length} failed.`);
+        } else {
+          alert("All selected orders delivered successfully!");
+        }
+
+        setShowDeliveryModal(false);
+        setDeliveryData({
+          transportName: "", transportRemark: "",
+          deliveryDate: new Date().toISOString().split('T')[0]
+        });
+        setSelectedOrderIds([]);
+        setSelectMode(false);
+        setBulkToCheckAction(null);
+        setBulkShipQtys({});
+        fetchOrders();
+      } else if (isBulkDelivery) {
         const promises = selectedOrderIds.map(orderId => {
           return fetch(`/api/seller-orders/${orderId}`, {
             method: "PATCH",
@@ -1385,6 +1529,27 @@ const shippingLock = useRef(false);
             <FiTruck className="text-sm mr-1.5" /> Bulk Deliver ({selectedOrderIds.length})
           </button>
         )}
+        {activeTab === "TO CHECK" && (
+          <div className="flex items-center gap-2 mb-1">
+            <button
+              onClick={() => {
+                setSelectMode(prev => !prev);
+                setSelectedOrderIds([]);
+              }}
+              className={`flex items-center px-4 py-2 rounded-sm font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 ${selectMode ? "bg-slate-700 text-white hover:bg-slate-800" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+            >
+              {selectMode ? "Cancel Select" : "Select Items"}
+            </button>
+            {selectMode && selectedOrderIds.length > 0 && (
+              <button
+                onClick={openBulkCheckModal}
+                className="flex items-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-sm font-black text-[10px] uppercase tracking-widest transition-all active:scale-95"
+              >
+                <FiTruck className="text-sm mr-1.5" /> Bulk Update ({selectedOrderIds.length})
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Table Container */}
@@ -1395,6 +1560,24 @@ const shippingLock = useRef(false);
               {activeTab === "ALL" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">Paid</th>}
               {activeTab === "DELIVERY" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center"> </th>}
               {activeTab === "READY TO SHIP" && (
+                <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                    checked={visibleOrders.length > 0 && visibleOrders.every(o => selectedOrderIds.includes(o._id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        const visibleIds = visibleOrders.map(o => o._id);
+                        setSelectedOrderIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+                      } else {
+                        const visibleIds = visibleOrders.map(o => o._id);
+                        setSelectedOrderIds(prev => prev.filter(id => !visibleIds.includes(id)));
+                      }
+                    }}
+                  />
+                </th>
+              )}
+              {activeTab === "TO CHECK" && selectMode && (
                 <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">
                   <input
                     type="checkbox"
@@ -1453,6 +1636,22 @@ const shippingLock = useRef(false);
                   </td>
                 )}
                 {activeTab === "READY TO SHIP" && (
+                  <td className="px-2 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                      checked={selectedOrderIds.includes(order._id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedOrderIds([...selectedOrderIds, order._id]);
+                        } else {
+                          setSelectedOrderIds(selectedOrderIds.filter(id => id !== order._id));
+                        }
+                      }}
+                    />
+                  </td>
+                )}
+                {activeTab === "TO CHECK" && selectMode && (
                   <td className="px-2 py-2 text-center">
                     <input
                       type="checkbox"
@@ -1808,6 +2007,7 @@ const shippingLock = useRef(false);
               onClick={() => {
                 setShowDeliveryModal(false);
                 setPartialDeliveryState(null);
+                setBulkToCheckAction(null);
               }}
               className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 transition-colors"
             >
@@ -1859,6 +2059,7 @@ const shippingLock = useRef(false);
                   onClick={() => {
                     setShowDeliveryModal(false);
                     setPartialDeliveryState(null);
+                    setBulkToCheckAction(null);
                   }}
                   className="flex-1 p-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px]"
                 >
@@ -1997,6 +2198,82 @@ const shippingLock = useRef(false);
                   {isShipping ? "Shipping..." : "Ship Partial"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkCheckModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-[2.5rem] p-8 shadow-2xl border border-blue-100 relative">
+            <button
+              onClick={() => setShowBulkCheckModal(false)}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <FiX size={20} />
+            </button>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-blue-600 text-white rounded-2xl"><FiTruck size={24} /></div>
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight text-slate-800">Bulk Update</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">{selectedOrderIds.length} Items Selected</p>
+              </div>
+            </div>
+
+            <div className="space-y-4 mb-4">
+              {selectedOrderIds.map(id => {
+                const o = orders.find(ord => ord._id === id);
+                if (!o) return null;
+                return (
+                  <div key={id} className="border border-slate-100 rounded-2xl p-4">
+                    <p className="text-[11px] font-black text-slate-700 uppercase mb-3 truncate">{o.itemName}</p>
+                    <div className="grid grid-cols-3 gap-2 items-end">
+                      <div className="bg-slate-50 p-2 rounded-xl">
+                        <p className="text-[8px] font-black text-slate-400 uppercase mb-1">Order Qty</p>
+                        <p className="font-black text-slate-800 text-sm">{o.reQty}</p>
+                      </div>
+                      <div className="bg-blue-50 p-2 rounded-xl">
+                        <p className="text-[8px] font-black text-blue-400 uppercase mb-1">In Stock</p>
+                        <p className="font-black text-blue-800 text-sm">{o.stockQty ?? 0}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[8px] font-black text-slate-400 uppercase">Qty To Ship Now</p>
+                        <input
+                          type="number"
+                          className="w-full p-2 bg-slate-100 border-none rounded-xl font-black text-sm text-center outline-none focus:ring-2 focus:ring-blue-500"
+                          value={bulkShipQtys[id] ?? 0}
+                          onChange={(e) => setBulkShipQtys(prev => ({ ...prev, [id]: Number(e.target.value) }))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {bulkError ? (
+              <p className="text-[10px] text-center text-red-500 mb-4 font-black uppercase italic animate-pulse">
+                {bulkError}
+              </p>
+            ) : null}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleBulkDirectDeliverClick}
+                className="flex-1 p-4 bg-emerald-500 text-white rounded-2xl font-black uppercase text-[10px] hover:bg-emerald-600 active:scale-[0.98] transition-all"
+              >
+                Direct Deliver
+              </button>
+              <button
+                disabled={isBulkShipping}
+                onClick={submitBulkPartialShipment}
+                className={`flex-1 p-4 rounded-2xl font-black uppercase text-[10px] transition-all ${isBulkShipping
+                  ? "bg-slate-300 text-slate-500 cursor-not-allowed animate-pulse"
+                  : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
+                  }`}>
+                {isBulkShipping ? "Shipping..." : "Ship Partial"}
+              </button>
             </div>
           </div>
         </div>
