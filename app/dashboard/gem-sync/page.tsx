@@ -2219,15 +2219,80 @@ export default function GeMSyncPage() {
     alert("✓ Added to New Upload Link checklist.");
   };
 
+  /**
+   * The SYNC tick on a New Upload Link row means "this listing is now live on
+   * GeM" - so it also puts the item into the Master List, rather than only
+   * marking the checklist row done.
+   *
+   * It used to do just the latter, which meant an item was only in Master List
+   * after two separate actions: "Push to Stock" here, then the SYNC tick over
+   * in Stock Update. Ticking here now completes that in one step.
+   *
+   * Un-ticking sets the row (and its listing) back to Pending but does NOT
+   * take everSynced back, exactly as un-ticking a Stock Update row behaves:
+   * the listing really did go live at some point, so it stays in Master List.
+   */
   const toggleNewLinkStatus = (id: string) => {
-    let toggled: NewLinkChecklistEntry | null = null;
-    const updated = newLinkChecklist.map(e => {
-      if (e.id !== id) return e;
-      toggled = { ...e, status: (e.status === "Synced" ? "Pending" : "Synced") as "Synced" | "Pending" };
-      return toggled;
-    });
-    applyNewLinkChecklistLocally(updated);
-    if (toggled) persistNewLinkEntryUpsert(toggled);
+    const entry = newLinkChecklist.find(e => e.id === id);
+    if (!entry) return;
+
+    const writeEntry = (updated: NewLinkChecklistEntry) => {
+      applyNewLinkChecklistLocally(newLinkChecklist.map(e => (e.id === id ? updated : e)));
+      persistNewLinkEntryUpsert(updated);
+    };
+    const writeListing = (updated: FirmItemListing) => {
+      applyListingsLocally(listings.map(l => (l.id === updated.id ? updated : l)));
+      persistListingUpsert(updated);
+    };
+
+    // ---- Un-tick ----
+    if (entry.status === "Synced") {
+      writeEntry({ ...entry, status: "Pending" });
+      const listing = findGraduatedListing(entry);
+      if (listing && listing.status === "Synced") {
+        writeListing({ ...listing, status: "Pending" });
+      }
+      return;
+    }
+
+    // ---- Tick ----
+    const existing = findGraduatedListing(entry);
+    if (existing) {
+      // Already pushed to Stock Update - confirm THAT listing instead of
+      // creating a second one for the same link. Same promotion of the parked
+      // numbers that toggleSyncStatus does.
+      writeListing(
+        existing.pendingRevision
+          ? {
+              ...existing,
+              firmCode: existing.pendingRevision.firmCode,
+              rate: existing.pendingRevision.rate,
+              availGemStock: existing.pendingRevision.availGemStock,
+              minQty: existing.pendingRevision.minQty,
+              pendingRevision: undefined,
+              everSynced: true,
+              status: "Synced",
+            }
+          : { ...existing, everSynced: true, status: "Synced" }
+      );
+      writeEntry({ ...entry, status: "Synced", pushedListingId: existing.id });
+      return;
+    }
+
+    // Nothing graduated yet - build the Master List entry now, confirmed.
+    // A row that can't produce a valid listing is NOT ticked: leaving it
+    // ticked would claim it is in Master List when it isn't.
+    const built = buildListingFromNewLink(entry, true);
+    if ("error" in built) {
+      alert(built.error);
+      return;
+    }
+    const newListing = built.listing;
+
+    applyListingsLocally([...listings, newListing]);
+    persistListingUpsert(newListing);
+    saveRateHistory([...rateHistory, newLinkRateHistory(entry, newListing)]);
+    writeEntry({ ...entry, status: "Synced", pushedListingId: newListing.id });
   };
 
   const handleDeleteNewLinkEntry = (id: string) => {
@@ -2295,20 +2360,45 @@ export default function GeMSyncPage() {
   // into the real Master List / Stock Update checklist, landing there exactly
   // as it would have if it had been linked from the Requirement Mapping
   // Console in the first place.
-  const handlePushNewLinkToStock = (entry: NewLinkChecklistEntry) => {
+  // The listing a New Upload Link entry has already graduated into, if any -
+  // by the id stamped at graduation, falling back to the same firm+link match
+  // "Push to Stock" treats as a duplicate (an entry pushed before
+  // pushedListingId existed, or one re-created by hand, still resolves).
+  const findGraduatedListing = (entry: NewLinkChecklistEntry): FirmItemListing | undefined => {
+    if (entry.pushedListingId) {
+      const byId = listings.find(lst => lst.id === entry.pushedListingId);
+      if (byId) return byId;
+    }
+    const link = (entry.gemLink || "").trim();
+    if (!link) return undefined;
+    return listings.find(lst => lst.firmCode === entry.firmCode && (lst.gemLink || "").trim() === link);
+  };
+
+  /**
+   * Validates a New Upload Link entry and builds the listing it becomes, or
+   * returns the reason it can't graduate yet. Shared by "Push to Stock" and
+   * the SYNC tick so both refuse for the same reasons and produce the same row.
+   *
+   * `confirmed` is the whole difference between the two paths. Push to Stock
+   * hands the row over to Stock Update still awaiting its sync tick, so the
+   * numbers sit in pendingRevision and everSynced stays false - it is not in
+   * Master List yet. Ticking SYNC here says the listing is already live on
+   * GeM, so it lands confirmed and shows in Master List straight away.
+   */
+  const buildListingFromNewLink = (
+    entry: NewLinkChecklistEntry,
+    confirmed: boolean
+  ): { listing: FirmItemListing } | { error: string } => {
     const link = (entry.gemLink || "").trim();
     if (!link) {
-      alert("Is row par GeM Product URL hai hi nahi - 'Revise Rate' se link daalo, ya sheet me GeM Link bharke dobara 'Add New Link' karo.");
-      return;
+      return { error: "Is row par GeM Product URL hai hi nahi - 'Revise Rate' se link daalo, ya sheet me GeM Link bharke dobara 'Add New Link' karo." };
     }
     if (!entry.mappedItemId) {
-      alert("Ye entry kisi inventory item se mapped nahi hai - Requirement Mapping Console me item map karke dobara 'Add New Link' karo.");
-      return;
+      return { error: "Ye entry kisi inventory item se mapped nahi hai - Requirement Mapping Console me item map karke dobara 'Add New Link' karo." };
     }
     const rateVal = Number(entry.rate) || 0;
     if (rateVal <= 0) {
-      alert("Rate blank hai - pehle 'Revise' se rate bharo, phir push karo.");
-      return;
+      return { error: "Rate blank hai - pehle 'Revise' se rate bharo." };
     }
 
     // Buyer-agnostic (see findMatchingListing) - the same link under the
@@ -2319,16 +2409,10 @@ export default function GeMSyncPage() {
       lst.gemLink.trim() === link
     );
     if (dupListing) {
-      alert(`Ye link is firm ki Stock Update checklist me already hai - item: "${dupListing.itemName}".`);
-      return;
+      return { error: `Ye link is firm ki Stock Update checklist me already hai - item: "${dupListing.itemName}".` };
     }
 
-    const buyerObj = buyers.find(b => b.id === entry.buyerId);
-    // Same pendingRevision mechanism as proposeListingRevision - this
-    // graduated entry hasn't actually been confirmed synced on GeM yet
-    // either, so it stays out of Master List/Excel quoting (everSynced:
-    // false) until that's confirmed (Sync Checklist tick, or the extension).
-    const newListing: FirmItemListing = {
+    const base: FirmItemListing = {
       id: "listing_" + Date.now() + "_newlink",
       firmCode: entry.firmCode,
       itemId: entry.mappedItemId,
@@ -2337,16 +2421,10 @@ export default function GeMSyncPage() {
       rate: rateVal,
       availGemStock: entry.availGemStock || 0,
       minQty: entry.minQty || 1,
-      status: "Pending",
+      status: confirmed ? "Synced" : "Pending",
       buyerId: entry.buyerId,
       date: new Date().toISOString(),
-      everSynced: false,
-      pendingRevision: {
-        firmCode: entry.firmCode,
-        rate: rateVal,
-        availGemStock: entry.availGemStock || 0,
-        minQty: entry.minQty || 1,
-      },
+      everSynced: confirmed,
       // The entry already carries the sheet line - hand it straight over so
       // the row reads the same after it graduates into Stock Update.
       spec: entry.spec,
@@ -2356,23 +2434,51 @@ export default function GeMSyncPage() {
       sheetName: entry.sheetName,
       sheetId: entry.sheetId
     };
-    applyListingsLocally([...listings, newListing]);
-    persistListingUpsert(newListing);
 
-    const newHistory: RateHistory = {
+    // Same pendingRevision mechanism as proposeListingRevision: an unconfirmed
+    // graduation parks its numbers there and stays out of Master List/Excel
+    // quoting until the sync is confirmed. A confirmed one has nothing pending
+    // - the values above ARE the confirmed values.
+    if (!confirmed) {
+      base.pendingRevision = {
+        firmCode: entry.firmCode,
+        rate: rateVal,
+        availGemStock: entry.availGemStock || 0,
+        minQty: entry.minQty || 1,
+      };
+    }
+
+    return { listing: base };
+  };
+
+  const newLinkRateHistory = (entry: NewLinkChecklistEntry, listing: FirmItemListing): RateHistory => {
+    const buyerObj = buyers.find(b => b.id === entry.buyerId);
+    return {
       id: "hist_" + Date.now(),
-      listingId: newListing.id,
-      itemName: newListing.itemName,
+      listingId: listing.id,
+      itemName: listing.itemName,
       buyerId: entry.buyerId,
       buyerName: buyerObj?.name || "Unknown Buyer",
       oldRate: 0,
-      newRate: rateVal,
+      newRate: listing.rate,
       oldMinQty: 0,
-      newMinQty: newListing.minQty,
+      newMinQty: listing.minQty,
       reason: "New GeM listing created (New Upload Link)",
       timestamp: new Date().toISOString()
     };
-    saveRateHistory([...rateHistory, newHistory]);
+  };
+
+  const handlePushNewLinkToStock = (entry: NewLinkChecklistEntry) => {
+    const built = buildListingFromNewLink(entry, false);
+    if ("error" in built) {
+      alert(built.error);
+      return;
+    }
+    const newListing = built.listing;
+
+    applyListingsLocally([...listings, newListing]);
+    persistListingUpsert(newListing);
+    saveRateHistory([...rateHistory, newLinkRateHistory(entry, newListing)]);
 
     const graduatedEntry: NewLinkChecklistEntry = { ...entry, status: "Synced" as const, pushedListingId: newListing.id };
     applyNewLinkChecklistLocally(newLinkChecklist.map(e => e.id === entry.id ? graduatedEntry : e));
