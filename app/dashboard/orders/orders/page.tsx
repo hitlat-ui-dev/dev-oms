@@ -606,6 +606,12 @@ const shippingLock = useRef(false);
         });
 
         if (res.ok) {
+          // Same local-patch pattern as handleShipClick above - the PATCH
+          // response already carries everything changed (either the
+          // {updatedOriginal, newShippedOrder} split shape, or the single
+          // updated order), so there's no need to refetch the whole list
+          // (which was the "whole page reloads" feel on Direct Deliver).
+          const result = await res.json();
           setShowDeliveryModal(false);
           setDeliveryData({
             transportName: "", transportRemark: "",
@@ -613,7 +619,20 @@ const shippingLock = useRef(false);
           });
           setPartialDeliveryState(null);
           setSelectedOrderId(null);
-          fetchOrders();
+
+          if (result?.newShippedOrder) {
+            const updatedOriginal = result.updatedOriginal;
+            setOrders(prev => {
+              const withOriginalPatched = updatedOriginal
+                ? prev.map(o => (o._id === updatedOriginal._id ? { ...o, ...updatedOriginal } : o))
+                : prev;
+              return [{ prQty: 0, opQty: 0, stockQty: 0, ...result.newShippedOrder }, ...withOriginalPatched];
+            });
+          } else if (result?._id) {
+            setOrders(prev => prev.map(o => (o._id === result._id ? { ...o, ...result } : o)));
+          } else {
+            fetchOrders(); // unexpected response shape - fall back to a full refresh
+          }
         } else {
           const errorData = await res.json();
           alert(errorData.error || "Split delivery failed");
