@@ -267,6 +267,13 @@ export default function GeMCataloguePage() {
       if (catalogueIdQ && !(row["Gem Catalogue Id"]?.text || "").toLowerCase().includes(catalogueIdQ)) return false;
       if (brandQ && !(row["Brand"]?.text || "").toLowerCase().includes(brandQ)) return false;
       if (modelQ && !(row["Model"]?.text || "").toLowerCase().includes(modelQ)) return false;
+      // Hidden only once "Fetch All Stock" has actually run for this row
+      // (stockFetchedAt gets stamped either way - see save_stock_fields in
+      // app/api/gem-sync/route.ts) and it still came back with neither value -
+      // a row that simply hasn't been stock-checked yet (no stockFetchedAt)
+      // shows normally with its "—" placeholders, same as before. Data stays
+      // in the DB either way, this only hides it from this table.
+      if (row.stockFetchedAt && row.currentStock == null && row.minQtyPerConsignee == null) return false;
       return true;
     });
   }, [catalogueLinks, catalogueSearchFirm, catalogueSearchName, catalogueSearchCatalogueId, catalogueSearchBrand, catalogueSearchModel]);
