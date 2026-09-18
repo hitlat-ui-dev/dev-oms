@@ -1,9 +1,10 @@
 ﻿"use client";
-import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
+import GemCredentialsPanel from "@/components/GemCredentialsPanel";
 
 export default function Header() {
   const router = useRouter();
@@ -21,6 +22,7 @@ export default function Header() {
   const [filteredSuggestions, setFilteredSuggestions] = useState<any[]>([]);
 
   const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
+  const [showGemLoginModal, setShowGemLoginModal] = useState(false);
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -229,6 +231,15 @@ export default function Header() {
     setShowSuggestions(false);
   };
 
+  useEffect(() => {
+    if (!showGemLoginModal) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowGemLoginModal(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showGemLoginModal]);
+
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
     setUser(null);
@@ -377,6 +388,19 @@ export default function Header() {
           )}
         </div>
 
+        {/* GeM Login Setup - opens the same firm-wise credentials manager as
+            /dashboard/orders/gem-credentials, but as a popup right next to
+            Workspace so it's reachable from every page without navigating
+            away from whatever you're doing. */}
+        <button
+          type="button"
+          onClick={() => setShowGemLoginModal(true)}
+          className="text-[10px] md:text-xs font-black uppercase tracking-wider bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+          title="GeM Login Setup"
+        >
+          <FiKey size={13} /> <span className="hidden sm:inline">GeM Login</span>
+        </button>
+
         {/* Urgent Tasks - owner-only, opens the create-form + live list as a
             popup so it's reachable from every page without leaving whatever
             you're currently working on. */}
@@ -428,6 +452,32 @@ export default function Header() {
           </div>
           <div className="flex-1 overflow-y-auto p-5">
             <UrgentTaskManagerPanel />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showGemLoginModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+        onClick={() => setShowGemLoginModal(false)}
+      >
+        {/* A slim close bar sits above GemCredentialsPanel's own header
+            (title/Add button) rather than floating a button on top of it -
+            avoids colliding with the Add button in the same corner, and
+            matches the panel's own navy so it reads as one header. */}
+        <div className="w-full max-w-4xl max-h-[85vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-[#0f172a] flex justify-end px-3 py-2 shrink-0">
+            <button
+              onClick={() => setShowGemLoginModal(false)}
+              className="text-white/60 hover:text-white p-1.5 rounded-lg transition-colors"
+              title="Close"
+            >
+              <FiX size={20} />
+            </button>
+          </div>
+          <div className="overflow-y-auto">
+            <GemCredentialsPanel />
           </div>
         </div>
       </div>
