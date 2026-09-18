@@ -809,12 +809,26 @@ export default function GeMSyncPage() {
   // (e.g. one user's Sync Checklist tick reverting a moment later because a
   // second open tab, or the extension's own auto-mark-Synced call, raced it).
   const applyListingsLocally = (updatedListings: FirmItemListing[]) => {
+    // Dedup key MUST match filteredMasterListings' (itemId/itemName + firmCode
+    // + GeM Link) - see the comment there for why item+firm alone is wrong.
+    //
+    // This is the write path, so keying it on item+firm only was worse than
+    // hiding rows: a firm's second listing for the same item under a different
+    // Product ID collapsed against the first here, and whichever had the older
+    // date was dropped out of state AND out of localStorage before the Master
+    // List's own careful de-dup ever saw it. Adding a new link for an item the
+    // firm already lists must leave the existing listing alone and sit
+    // alongside it.
+    //
+    // Link-less listings (pre-tracking data) key as "item::firm::" and so keep
+    // collapsing together exactly as they did before.
     const seen = new Map<string, FirmItemListing>();
     for (const lst of updatedListings) {
       if (!lst) continue;
       const itemKey = (lst.itemId || lst.itemName || "").toString().trim().toLowerCase();
       const firmKey = (lst.firmCode || "").toString().trim().toLowerCase();
-      const key = `${itemKey}::${firmKey}`;
+      const linkKey = (lst.gemLink || "").toString().trim().toLowerCase();
+      const key = `${itemKey}::${firmKey}::${linkKey}`;
 
       if (!seen.has(key)) {
         seen.set(key, lst);
