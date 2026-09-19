@@ -606,6 +606,11 @@ export default function GeMSyncPage() {
     return allBuyerOptions.filter(b => b.name.toLowerCase().includes(q));
   }, [allBuyerOptions, buyerSearchFilter]);
 
+  // Keyboard nav (Up/Down/Enter) through the buyer popover's filtered list -
+  // -1 means nothing highlighted yet.
+  const [buyerHighlightIndex, setBuyerHighlightIndex] = useState(-1);
+  const buyerOptionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   // Handler to change and auto-save buyer associated with a sheet
   const handleChangeSheetBuyer = async (sheetId: string, newBuyerId: string) => {
     const updatedSheets = sheets.map(s =>
@@ -3132,6 +3137,12 @@ export default function GeMSyncPage() {
   // List listing. Only one row's dropdown is open at a time.
   const [openInventoryDropdownRow, setOpenInventoryDropdownRow] = useState<number | null>(null);
   const [inventorySearchQuery, setInventorySearchQuery] = useState<Record<number, string>>({});
+  // Keyboard nav (Up/Down/Enter) through the open row's suggestion list -
+  // -1 means nothing highlighted yet. Reset whenever the open row or its
+  // filtered list changes, so a stale highlight from a previous search
+  // doesn't carry over.
+  const [inventoryHighlightIndex, setInventoryHighlightIndex] = useState(-1);
+  const inventorySuggestionRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const inventorySuggestions = useMemo(() => {
     if (openInventoryDropdownRow === null) return [];
@@ -3168,6 +3179,7 @@ export default function GeMSyncPage() {
     }
     setOpenInventoryDropdownRow(null);
     setInventorySearchQuery(prev => ({ ...prev, [row.index]: "" }));
+    setInventoryHighlightIndex(-1);
   };
 
   const variantGroups = useMemo(() => {
@@ -3939,8 +3951,35 @@ export default function GeMSyncPage() {
                                         onFocus={(e) => {
                                           setOpenInventoryDropdownRow(row.index);
                                           setInventorySearchQuery(prev => ({ ...prev, [row.index]: e.target.value }));
+                                          setInventoryHighlightIndex(-1);
                                         }}
-                                        onChange={(e) => setInventorySearchQuery(prev => ({ ...prev, [row.index]: e.target.value }))}
+                                        onChange={(e) => {
+                                          setInventorySearchQuery(prev => ({ ...prev, [row.index]: e.target.value }));
+                                          setInventoryHighlightIndex(-1);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (openInventoryDropdownRow !== row.index || inventorySuggestions.length === 0) return;
+                                          if (e.key === "ArrowDown") {
+                                            e.preventDefault();
+                                            setInventoryHighlightIndex(prev => {
+                                              const next = prev < inventorySuggestions.length - 1 ? prev + 1 : 0;
+                                              inventorySuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                                              return next;
+                                            });
+                                          } else if (e.key === "ArrowUp") {
+                                            e.preventDefault();
+                                            setInventoryHighlightIndex(prev => {
+                                              const next = prev > 0 ? prev - 1 : inventorySuggestions.length - 1;
+                                              inventorySuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                                              return next;
+                                            });
+                                          } else if (e.key === "Enter") {
+                                            if (inventoryHighlightIndex >= 0 && inventorySuggestions[inventoryHighlightIndex]) {
+                                              e.preventDefault();
+                                              selectInventoryMapping(row, inventorySuggestions[inventoryHighlightIndex]);
+                                            }
+                                          }
+                                        }}
                                         onBlur={() => {
                                           // Cleared to empty on blur with nothing picked - same as the
                                           // old datalist's onChange(!val) behavior.
@@ -3958,19 +3997,23 @@ export default function GeMSyncPage() {
 
                                       {openInventoryDropdownRow === row.index && inventorySuggestions.length > 0 && (
                                         <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg shadow-2xl">
-                                          {inventorySuggestions.map((item) => {
+                                          {inventorySuggestions.map((item, idx) => {
                                             const alreadyLinked = (listingsByItemId.get(item._id)?.length || 0) > 0;
                                             return (
                                               <button
                                                 type="button"
                                                 key={item._id}
+                                                ref={(el) => { inventorySuggestionRefs.current[idx] = el; }}
+                                                onMouseEnter={() => setInventoryHighlightIndex(idx)}
                                                 // preventDefault stops the input from blurring on this
                                                 // click at all, so the onBlur "clear if empty" handler
                                                 // below never races against this selection (it used to
                                                 // read a stale mappedItemId from before the click and
                                                 // immediately clear the mapping right back out).
                                                 onMouseDown={(e) => { e.preventDefault(); selectInventoryMapping(row, item); }}
-                                                className="w-full text-left px-2.5 py-1.5 text-xs border-b border-[var(--gem-border)]/50 last:border-0 transition-colors hover:bg-[var(--gem-table-header)] flex items-center gap-1.5"
+                                                className={`w-full text-left px-2.5 py-1.5 text-xs border-b border-[var(--gem-border)]/50 last:border-0 transition-colors flex items-center gap-1.5 ${
+                                                  idx === inventoryHighlightIndex ? "bg-[var(--gem-table-header)]" : "hover:bg-[var(--gem-table-header)]"
+                                                }`}
                                               >
                                                 {alreadyLinked && <FiCheck className="text-emerald-600 shrink-0" size={13} />}
                                                 <span className="font-bold text-[var(--gem-text-primary)]">
@@ -4895,6 +4938,7 @@ export default function GeMSyncPage() {
                                     setBuyerPopoverPos({ top, left: rect.left });
                                     setOpenBuyerSelectSheetId(sheet.id);
                                     setBuyerSearchFilter("");
+                                    setBuyerHighlightIndex(-1);
                                   }
                                 }}
                                 className={`w-full max-w-[260px] text-left font-bold text-xs py-2 px-3.5 rounded-xl border transition-all flex items-center justify-between gap-2 shadow-sm ${
@@ -4929,7 +4973,34 @@ export default function GeMSyncPage() {
                                         autoFocus
                                         placeholder="Search buyer name..."
                                         value={buyerSearchFilter}
-                                        onChange={(e) => setBuyerSearchFilter(e.target.value)}
+                                        onChange={(e) => {
+                                          setBuyerSearchFilter(e.target.value);
+                                          setBuyerHighlightIndex(-1);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (filteredBuyerOptions.length === 0) return;
+                                          if (e.key === "ArrowDown") {
+                                            e.preventDefault();
+                                            setBuyerHighlightIndex(prev => {
+                                              const next = prev < filteredBuyerOptions.length - 1 ? prev + 1 : 0;
+                                              buyerOptionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                                              return next;
+                                            });
+                                          } else if (e.key === "ArrowUp") {
+                                            e.preventDefault();
+                                            setBuyerHighlightIndex(prev => {
+                                              const next = prev > 0 ? prev - 1 : filteredBuyerOptions.length - 1;
+                                              buyerOptionRefs.current[next]?.scrollIntoView({ block: "nearest" });
+                                              return next;
+                                            });
+                                          } else if (e.key === "Enter") {
+                                            if (buyerHighlightIndex >= 0 && filteredBuyerOptions[buyerHighlightIndex]) {
+                                              e.preventDefault();
+                                              handleChangeSheetBuyer(sheet.id, filteredBuyerOptions[buyerHighlightIndex].id);
+                                              setOpenBuyerSelectSheetId(null);
+                                            }
+                                          }
+                                        }}
                                         className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-8 pr-8 text-xs text-[var(--gem-text-primary)] outline-none focus:border-blue-500 font-semibold"
                                       />
                                       {buyerSearchFilter && (
@@ -4949,12 +5020,15 @@ export default function GeMSyncPage() {
                                           No buyer matching "{buyerSearchFilter}"
                                         </div>
                                       ) : (
-                                        filteredBuyerOptions.map(b => {
+                                        filteredBuyerOptions.map((b, idx) => {
                                           const isItemActive = b.id === sheet.selectedBuyerId || b.name === displayBuyerName;
+                                          const isHighlighted = idx === buyerHighlightIndex;
                                           return (
                                             <button
                                               key={b.id}
                                               type="button"
+                                              ref={(el) => { buyerOptionRefs.current[idx] = el; }}
+                                              onMouseEnter={() => setBuyerHighlightIndex(idx)}
                                               onClick={() => {
                                                 handleChangeSheetBuyer(sheet.id, b.id);
                                                 setOpenBuyerSelectSheetId(null);
@@ -4962,6 +5036,8 @@ export default function GeMSyncPage() {
                                               className={`w-full text-left py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between gap-2 ${
                                                 isItemActive
                                                   ? "bg-blue-50 text-blue-700 border border-blue-300"
+                                                  : isHighlighted
+                                                  ? "bg-[var(--gem-table-row-hover)] text-[var(--gem-text-primary)]"
                                                   : "text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-row-hover)] hover:text-[var(--gem-text-primary)]"
                                               }`}
                                             >
