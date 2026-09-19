@@ -253,14 +253,31 @@ export async function GET(req: Request) {
     // zero-padded year-month-day-... ordering still sorts/compares correctly
     // as plain strings, so a string range match works fine here.
     const gemActionTodayMatch = { timestamp: { $gte: todayStart.toISOString(), $lt: todayEnd.toISOString() } };
-    const [okLinkCount, updateStockCount, newLinkActionCount, gemActionByUserTodayAgg] = await Promise.all([
+    // Requirement Mapping Console's 3 action types (OK Link/Update Stock/New
+    // Link) and the Sync Checklist's 2 (Stock Update/New Upload Link's own
+    // "Sync"/"Sync to GeM" actions - see logGemAction's sync_stock_update/
+    // sync_new_link calls in app/dashboard/gem-sync/page.tsx) are aggregated
+    // separately, explicitly filtered by type each time - without that
+    // filter, the second report's rows would otherwise also land in the
+    // first's per-user map (as a spurious 0/0/0 row for a user who only did
+    // Sync Checklist work today), since both event kinds share one log.
+    const requirementMappingTypes = ["ok_link", "update_stock", "new_link"];
+    const syncChecklistTypes = ["sync_stock_update", "sync_new_link"];
+    const [okLinkCount, updateStockCount, newLinkActionCount, gemActionByUserTodayAgg, syncActionByUserTodayAgg] = await Promise.all([
       db.collection("gem_action_log").countDocuments({ type: "ok_link" }),
       db.collection("gem_action_log").countDocuments({ type: "update_stock" }),
       db.collection("gem_action_log").countDocuments({ type: "new_link" }),
       db
         .collection("gem_action_log")
         .aggregate([
-          { $match: gemActionTodayMatch },
+          { $match: { ...gemActionTodayMatch, type: { $in: requirementMappingTypes } } },
+          { $group: { _id: { by: { $ifNull: ["$by", "Unknown"] }, type: "$type" }, count: { $sum: 1 } } },
+        ])
+        .toArray(),
+      db
+        .collection("gem_action_log")
+        .aggregate([
+          { $match: { ...gemActionTodayMatch, type: { $in: syncChecklistTypes } } },
           { $group: { _id: { by: { $ifNull: ["$by", "Unknown"] }, type: "$type" }, count: { $sum: 1 } } },
         ])
         .toArray(),
@@ -279,6 +296,18 @@ export async function GET(req: Request) {
     const gemSyncByUserToday = Object.entries(gemByUserMap)
       .map(([username, c]) => ({ username, ...c, total: c.okLink + c.updateStock + c.newLink }))
       .sort((a, b) => b.total - a.total);
+
+    // Same per-user split, for the Sync Checklist's own actions today.
+    const syncByUserMap: Record<string, { stockUpdateSynced: number; newLinkSynced: number }> = {};
+    for (const row of syncActionByUserTodayAgg as any[]) {
+      const user = row._id.by || "Unknown";
+      if (!syncByUserMap[user]) syncByUserMap[user] = { stockUpdateSynced: 0, newLinkSynced: 0 };
+      if (row._id.type === "sync_stock_update") syncByUserMap[user].stockUpdateSynced = row.count;
+      else if (row._id.type === "sync_new_link") syncByUserMap[user].newLinkSynced = row.count;
+    }
+    const syncActionsByUserToday = Object.entries(syncByUserMap)
+      .map(([username, c]) => ({ username, ...c, total: c.stockUpdateSynced + c.newLinkSynced }))
+      .sort((a, b) => b.total - a.total);
     const [stockUpdatePending, stockUpdateSynced, newUploadLinkPending, newUploadLinkSynced] = await Promise.all([
       db.collection("gem_listings").countDocuments({ status: "Pending" }),
       db.collection("gem_listings").countDocuments({ status: "Synced" }),
@@ -292,6 +321,7 @@ export async function GET(req: Request) {
         newUploadLink: { pending: newUploadLinkPending, synced: newUploadLinkSynced },
       },
       byUserToday: gemSyncByUserToday,
+      syncActionsByUserToday,
     };
 
     // Team activity today — merged from every user-attributed signal the app writes:

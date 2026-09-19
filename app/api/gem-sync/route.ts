@@ -328,8 +328,9 @@ export async function POST(req: Request) {
     // are a durable all-time record, not tied to any one sheet or session.
     if (action === "log_gem_action") {
       const type = body.type;
-      if (!["ok_link", "update_stock", "new_link"].includes(type)) {
-        return NextResponse.json({ error: "type must be ok_link, update_stock, or new_link" }, { status: 400 });
+      const validTypes = ["ok_link", "update_stock", "new_link", "sync_stock_update", "sync_new_link"];
+      if (!validTypes.includes(type)) {
+        return NextResponse.json({ error: `type must be one of: ${validTypes.join(", ")}` }, { status: 400 });
       }
       await db.collection("gem_action_log").insertOne({
         id: "action_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),

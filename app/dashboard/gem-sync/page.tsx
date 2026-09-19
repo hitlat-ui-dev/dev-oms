@@ -2104,16 +2104,23 @@ export default function GeMSyncPage() {
 
   // Append-only record of every row action for the Summary dashboard's GeM
   // Sync report - fire-and-forget, never blocks the actual action on it.
-  const logGemAction = (type: "ok_link" | "update_stock" | "new_link", row: UploadedRow, itemName: string) => {
+  // Takes a loose {firmCode, qty, rate} shape rather than UploadedRow
+  // specifically, since sync_stock_update/sync_new_link are logged from a
+  // FirmItemListing/NewLinkChecklistEntry instead of an uploaded sheet row.
+  const logGemAction = (
+    type: "ok_link" | "update_stock" | "new_link" | "sync_stock_update" | "sync_new_link",
+    context: { firmCode?: string; qty?: number; rate?: number },
+    itemName: string
+  ) => {
     fetch("/api/gem-sync?action=log_gem_action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type,
         itemName,
-        firmCode: row.firmCode,
-        requiredQty: row.qty,
-        rate: row.rate,
+        firmCode: context.firmCode,
+        requiredQty: context.qty,
+        rate: context.rate,
         by: currentUsername,
         sheetFileName: fileName,
       }),
@@ -2281,6 +2288,7 @@ export default function GeMSyncPage() {
           : { ...existing, everSynced: true, status: "Synced" }
       );
       writeEntry({ ...entry, status: "Synced", pushedListingId: existing.id });
+      logGemAction("sync_new_link", { firmCode: entry.firmCode, rate: entry.rate }, entry.itemName);
       return;
     }
 
@@ -2298,6 +2306,7 @@ export default function GeMSyncPage() {
     persistListingUpsert(newListing);
     saveRateHistory([...rateHistory, newLinkRateHistory(entry, newListing)]);
     writeEntry({ ...entry, status: "Synced", pushedListingId: newListing.id });
+    logGemAction("sync_new_link", { firmCode: entry.firmCode, rate: entry.rate }, entry.itemName);
   };
 
   const handleDeleteNewLinkEntry = (id: string) => {
@@ -2809,7 +2818,13 @@ export default function GeMSyncPage() {
       return toggled;
     });
     applyListingsLocally(updatedListings);
-    if (toggled) persistListingUpsert(toggled);
+    if (toggled) {
+      const finalListing = toggled as FirmItemListing;
+      persistListingUpsert(finalListing);
+      if (finalListing.status === "Synced") {
+        logGemAction("sync_stock_update", { firmCode: finalListing.firmCode, rate: finalListing.rate }, finalListing.itemName);
+      }
+    }
   };
 
   // Sync Checklist's "Sync" button needs GeM's own Product ID to find the
@@ -2859,6 +2874,11 @@ export default function GeMSyncPage() {
         listingId: lst.id,
       });
       awaitingGemSyncRef.current = true;
+      // Logged at trigger time, not when the row actually flips to Synced -
+      // that confirmation happens later via a background poll once the
+      // extension finishes, with no user click to attribute it to at that
+      // moment. Attributing the credit to whoever started the sync instead.
+      logGemAction("sync_stock_update", { firmCode: toPush.firmCode, rate: toPush.rate }, lst.itemName);
       alert("✓ GeM tab khul gaya, automation shuru ho gayi. Captcha bharna hoga - baaki khud ho jayega. Poora hone par yeh row apne aap Synced ho jayegi.");
     } catch (err: any) {
       alert("Extension trigger nahi hua: " + err.message);
@@ -2905,6 +2925,8 @@ export default function GeMSyncPage() {
         entryId: entry.id,
       });
       awaitingGemSyncRef.current = true;
+      // Logged at trigger time - same reasoning as handleSyncToGem above.
+      logGemAction("sync_new_link", { firmCode: entry.firmCode, rate: entry.rate }, entry.itemName);
       alert("\u2713 GeM tab khul gaya, publish automation shuru ho gayi. Captcha aur OTP ke liye us tab par nazar rakho - poora hone par yeh row apne aap Stock Update me chali jayegi.");
     } catch (err: any) {
       alert("Extension trigger nahi hua: " + err.message);
