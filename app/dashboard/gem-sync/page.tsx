@@ -208,6 +208,12 @@ interface UploadedRow {
   // column in the downloaded Excel. Row-local on purpose: it is a remark
   // about this exact line, so it never spreads across a variant group.
   comment?: string;
+  // findSmartMatch's guess for this row at upload time, kept separate from
+  // mappedItemId - it used to be applied straight into mappedItemId
+  // automatically, which silently committed a possibly-wrong match with no
+  // visible confirmation step. Now surfaced as a "Suggested" chip instead;
+  // the row stays unmatched until this is explicitly clicked.
+  suggestedItemId?: string;
 }
 
 // Variant Group colours. The same hex drives the on-screen tint and the
@@ -1438,38 +1444,23 @@ export default function GeMSyncPage() {
           // Find rate/price case-insensitively
           const rate = Number(row["Rate"] || row["rate"] || row["Price"] || row["price"] || row["Quote Rate"] || 0);
 
-          const mappedItemId = findSmartMatch(String(originalName));
-
-          let firmCode = "";
-          let gemLink = "";
-          let availGemStock = 0;
-          let minQty = 1;
-          let finalRate = rate;
-
-          if (mappedItemId) {
-            const matchedListing = listings.find(lst => lst.itemId === mappedItemId);
-            if (matchedListing) {
-              firmCode = matchedListing.firmCode;
-              gemLink = matchedListing.gemLink || "";
-              minQty = matchedListing.minQty || 1;
-              if (!finalRate) {
-                finalRate = matchedListing.rate;
-              }
-
-              availGemStock = matchedListing.availGemStock || 0;
-            }
-          }
+          // Not applied automatically anymore - kept as a suggestion the user
+          // must explicitly click to accept (see the "Suggested" chip below
+          // the item-mapping input), rather than silently pre-filling
+          // mappedItemId with a guess that might be wrong.
+          const suggestedItemId = findSmartMatch(String(originalName));
 
           return {
             index,
             originalName: String(originalName),
             qty,
-            rate: finalRate,
-            mappedItemId,
-            firmCode,
-            gemLink,
-            availGemStock,
-            minQty
+            rate,
+            mappedItemId: "",
+            firmCode: "",
+            gemLink: "",
+            availGemStock: 0,
+            minQty: 1,
+            suggestedItemId: suggestedItemId || undefined
           };
         });
 
@@ -3103,6 +3094,82 @@ export default function GeMSyncPage() {
     });
   };
 
+  // One-level undo for the item-mapping input specifically - typing/picking
+  // from its datalist (or accepting a "Suggested" chip) can easily replace an
+  // already-correct mapping by mistake, since the dropdown sits right where
+  // you're typing. Snapshots the mapping-related fields right before they get
+  // overwritten, keyed by row index, so a mis-click has a way back.
+  const ITEM_MAPPING_FIELDS: (keyof UploadedRow)[] = ["mappedItemId", "firmCode", "gemLink", "availGemStock", "minQty", "rate"];
+  const [rowMappingUndo, setRowMappingUndo] = useState<Record<number, Partial<UploadedRow>>>({});
+
+  const applyItemMapping = (row: UploadedRow, newItemId: string) => {
+    const snapshot: Partial<UploadedRow> = {};
+    ITEM_MAPPING_FIELDS.forEach(f => { (snapshot as Record<string, unknown>)[f] = row[f]; });
+    setRowMappingUndo(prev => ({ ...prev, [row.index]: snapshot }));
+
+    if (!newItemId) {
+      patchRow(row.index, { mappedItemId: "" });
+      return;
+    }
+    const mapped = buildAutoMapFields(newItemId, row.rate);
+    patchRow(row.index, { mappedItemId: newItemId, ...mapped });
+  };
+
+  const undoItemMapping = (rowIndex: number) => {
+    const snapshot = rowMappingUndo[rowIndex];
+    if (!snapshot) return;
+    patchRow(rowIndex, snapshot);
+    setRowMappingUndo(prev => {
+      const next = { ...prev };
+      delete next[rowIndex];
+      return next;
+    });
+  };
+
+  // Custom Inventory Mapping dropdown (replaces a native <input list>
+  // datalist) - a native datalist's own options can't be styled at all, so
+  // there was no way to highlight which candidates already have a Master
+  // List listing. Only one row's dropdown is open at a time.
+  const [openInventoryDropdownRow, setOpenInventoryDropdownRow] = useState<number | null>(null);
+  const [inventorySearchQuery, setInventorySearchQuery] = useState<Record<number, string>>({});
+
+  const inventorySuggestions = useMemo(() => {
+    if (openInventoryDropdownRow === null) return [];
+    const q = (inventorySearchQuery[openInventoryDropdownRow] || "").toLowerCase().trim();
+    const pool = q
+      ? selectableItemsList.filter(item => `${item.sku} - ${item.itemName}`.toLowerCase().includes(q))
+      : selectableItemsList;
+    return pool.slice(0, 50);
+  }, [openInventoryDropdownRow, inventorySearchQuery, selectableItemsList]);
+
+  const selectInventoryMapping = (row: UploadedRow, match: any) => {
+    // Same firm/buyer-aware listing preference the old datalist onChange used.
+    const itemListings = listingsByItemId.get(match._id) || [];
+    const matchedListing =
+      itemListings.find(lst => lst.firmCode === row.firmCode && lst.buyerId === selectedBuyerId) ||
+      itemListings.find(lst => lst.firmCode === row.firmCode) ||
+      itemListings[0];
+
+    const snapshot: Partial<UploadedRow> = {};
+    ITEM_MAPPING_FIELDS.forEach(f => { (snapshot as Record<string, unknown>)[f] = row[f]; });
+    setRowMappingUndo(prev => ({ ...prev, [row.index]: snapshot }));
+
+    if (matchedListing) {
+      patchRow(row.index, {
+        mappedItemId: match._id,
+        firmCode: matchedListing.firmCode,
+        rate: matchedListing.rate,
+        availGemStock: matchedListing.availGemStock || 0,
+        minQty: matchedListing.minQty || 1,
+        gemLink: matchedListing.gemLink || ""
+      });
+    } else {
+      patchRow(row.index, { mappedItemId: match._id });
+    }
+    setOpenInventoryDropdownRow(null);
+    setInventorySearchQuery(prev => ({ ...prev, [row.index]: "" }));
+  };
+
   const variantGroups = useMemo(() => {
     const map = new Map<string, { color: string; rows: UploadedRow[] }>();
     uploadedRows.forEach(r => {
@@ -3855,56 +3922,77 @@ export default function GeMSyncPage() {
                                   )}
 
                                   <div className="flex gap-1.5">
-                                    <input
-                                      key={row.mappedItemId}
-                                      type="text"
-                                      list={`stock-options-${row.index}`}
-                                      placeholder="Search or select stock..."
-                                      className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2.5 focus:outline-none focus:border-blue-500 flex-1"
-                                      defaultValue={mappedItem ? `${mappedItem.sku} - ${mappedItem.itemName}` : ""}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        if (!val) {
-                                          setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: "" } : r));
-                                          return;
-                                        }
-                                        const match = selectableItemsList.find(item =>
-                                          `${item.sku} - ${item.itemName}` === val ||
-                                          item.itemName === val
-                                        );
-                                        if (match) {
-                                          // Auto-fill from this item's Master List listing - prefer
-                                          // one matching the Firm (and Buyer) already chosen on this
-                                          // row, since an item is often listed under several firms at
-                                          // different rates; falling back to itemId-only otherwise
-                                          // picked whichever listing happened to be first regardless
-                                          // of firm, silently overwriting an already-chosen Firm with
-                                          // the wrong one's numbers.
-                                          const itemListings = listingsByItemId.get(match._id) || [];
-                                          const matchedListing =
-                                            itemListings.find(lst => lst.firmCode === row.firmCode && lst.buyerId === selectedBuyerId) ||
-                                            itemListings.find(lst => lst.firmCode === row.firmCode) ||
-                                            itemListings[0];
-                                          if (matchedListing) {
-                                            patchRow(row.index, {
-                                              mappedItemId: match._id,
-                                              firmCode: matchedListing.firmCode,
-                                              rate: matchedListing.rate,
-                                              availGemStock: matchedListing.availGemStock || 0,
-                                              minQty: matchedListing.minQty || 1,
-                                              gemLink: matchedListing.gemLink || ""
-                                            });
-                                          } else {
-                                            setUploadedRows(prev => prev.map(r => r.index === row.index ? { ...r, mappedItemId: match._id } : r));
-                                          }
-                                        }
-                                      }}
-                                    />
-                                    <datalist id={`stock-options-${row.index}`}>
-                                      {selectableItemsList.map((item, idx) => (
-                                        <option key={item._id || idx} value={`${item.sku} - ${item.itemName}`} />
-                                      ))}
-                                    </datalist>
+                                    <div className="relative flex-1">
+                                      <input
+                                        key={row.mappedItemId}
+                                        type="text"
+                                        placeholder="Search or select stock..."
+                                        className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs font-bold text-[var(--gem-text-primary)] rounded-lg py-2 px-2.5 focus:outline-none focus:border-blue-500"
+                                        defaultValue={mappedItem ? `${mappedItem.sku} - ${mappedItem.itemName}` : ""}
+                                        // Uncontrolled (defaultValue, not value) - a controlled value that
+                                        // switches source on focus/blur fights the browser's own typing on
+                                        // every keystroke, which was the cause of Backspace not visibly
+                                        // deleting text. The `key` above still forces a remount (fresh
+                                        // defaultValue) whenever mappedItemId changes, e.g. after picking a
+                                        // suggestion or Undo. inventorySearchQuery here only drives the
+                                        // dropdown's own filtering, never the input's own displayed value.
+                                        onFocus={(e) => {
+                                          setOpenInventoryDropdownRow(row.index);
+                                          setInventorySearchQuery(prev => ({ ...prev, [row.index]: e.target.value }));
+                                        }}
+                                        onChange={(e) => setInventorySearchQuery(prev => ({ ...prev, [row.index]: e.target.value }))}
+                                        onBlur={() => {
+                                          // Cleared to empty on blur with nothing picked - same as the
+                                          // old datalist's onChange(!val) behavior.
+                                          setTimeout(() => {
+                                            setOpenInventoryDropdownRow(cur => (cur === row.index ? null : cur));
+                                            if ((inventorySearchQuery[row.index] ?? "") === "" && row.mappedItemId) {
+                                              const snapshot: Partial<UploadedRow> = {};
+                                              ITEM_MAPPING_FIELDS.forEach(f => { (snapshot as Record<string, unknown>)[f] = row[f]; });
+                                              setRowMappingUndo(prev => ({ ...prev, [row.index]: snapshot }));
+                                              patchRow(row.index, { mappedItemId: "" });
+                                            }
+                                          }, 150);
+                                        }}
+                                      />
+
+                                      {openInventoryDropdownRow === row.index && inventorySuggestions.length > 0 && (
+                                        <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg shadow-2xl">
+                                          {inventorySuggestions.map((item) => {
+                                            const alreadyLinked = (listingsByItemId.get(item._id)?.length || 0) > 0;
+                                            return (
+                                              <button
+                                                type="button"
+                                                key={item._id}
+                                                // preventDefault stops the input from blurring on this
+                                                // click at all, so the onBlur "clear if empty" handler
+                                                // below never races against this selection (it used to
+                                                // read a stale mappedItemId from before the click and
+                                                // immediately clear the mapping right back out).
+                                                onMouseDown={(e) => { e.preventDefault(); selectInventoryMapping(row, item); }}
+                                                className="w-full text-left px-2.5 py-1.5 text-xs border-b border-[var(--gem-border)]/50 last:border-0 transition-colors hover:bg-[var(--gem-table-header)] flex items-center gap-1.5"
+                                              >
+                                                {alreadyLinked && <FiCheck className="text-emerald-600 shrink-0" size={13} />}
+                                                <span className="font-bold text-[var(--gem-text-primary)]">
+                                                  {item.sku} - {item.itemName}
+                                                </span>
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {rowMappingUndo[row.index] && (
+                                      <button
+                                        type="button"
+                                        onClick={() => undoItemMapping(row.index)}
+                                        className="bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 font-black p-1.5 rounded-lg transition-colors flex items-center justify-center shrink-0"
+                                        title="Undo - restore the previous item mapping"
+                                      >
+                                        <FiRotateCcw size={12} />
+                                      </button>
+                                    )}
 
                                     {!isMatched && (
                                       <button
@@ -3925,6 +4013,26 @@ export default function GeMSyncPage() {
                                       </button>
                                     )}
                                   </div>
+
+                                  {/* Suggested match from findSmartMatch - shown, not applied, until
+                                      explicitly clicked (see the UploadedRow.suggestedItemId comment). */}
+                                  {!isMatched && row.suggestedItemId && (() => {
+                                    const suggested = itemsById.get(row.suggestedItemId);
+                                    if (!suggested) return null;
+                                    return (
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <span className="text-[9px] font-black text-blue-700 uppercase tracking-wider shrink-0">Suggested:</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => applyItemMapping(row, row.suggestedItemId!)}
+                                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 hover:border-blue-300 text-[9px] py-0.5 px-1.5 rounded font-bold transition-all"
+                                          title="Click to fill this item mapping in"
+                                        >
+                                          {suggested.sku} - {suggested.itemName}
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
 
                                   {/* Quick Fill Options from Master List - compact single-line chip row */}
                                   {isMatched && (
