@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "GeM Bid Exporter",
+  "version": "1.2.0",
+  "description": "Scrape GeM bidplus.gem.gov.in bid listings across pages and pull key details from each bid PDF into a single Excel file. Also runs automated OMS-triggered sync runs in the background, with item-keyword, state/city, and best-effort date-range filtering applied before anything reaches the OMS.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GeM Bid Exporter",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://bidplus.gem.gov.in/*",
+    "https://dev-oms-blush.vercel.app/*",
+    "http://localhost:3000/*"
+  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://bidplus.gem.gov.in/*"],
+      "js": ["lib/pdf-extract.js", "lib/xlsx-writer.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

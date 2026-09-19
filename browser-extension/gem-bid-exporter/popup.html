@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>GeM Bid Exporter</title>
+<style>
+  :root {
+    --accent: #2563eb;
+    --bg: #0f172a;
+    --card: #16213c;
+    --text: #e6e9f0;
+    --muted: #94a3b8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 360px;
+    margin: 0;
+    padding: 14px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 13px;
+  }
+  h1 {
+    font-size: 15px;
+    margin: 0 0 2px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 11.5px;
+    margin-bottom: 12px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .row:last-child { margin-bottom: 0; }
+  .label { color: var(--muted); }
+  .value { font-weight: 600; }
+  button {
+    width: 100%;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+    border: none;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+    background: #22314f;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.88; }
+  button.primary { background: var(--accent); }
+  button.export { background: var(--ok); color: #04220f; }
+  button.danger { background: transparent; color: #f87171; border: 1px solid #7f1d1d; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status {
+    font-size: 11.5px;
+    color: var(--muted);
+    min-height: 14px;
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+  .warn { color: var(--warn); }
+  .ok { color: var(--ok); }
+  hr {
+    border: none;
+    border-top: 1px solid #26314f;
+    margin: 10px 0;
+  }
+  label.fieldLabel {
+    display: block;
+    color: var(--muted);
+    font-size: 11.5px;
+    margin-bottom: 4px;
+  }
+  textarea, select.stateSelect, input.textField {
+    width: 100%;
+    background: #0f172a;
+    border: 1px solid #26314f;
+    border-radius: 6px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+  }
+  .fieldRow {
+    display: flex;
+    gap: 8px;
+  }
+  .fieldRow > div {
+    flex: 1;
+  }
+  textarea {
+    resize: vertical;
+    min-height: 48px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 10.5px;
+    margin: -4px 0 8px;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+  <h1>GeM Bid Exporter</h1>
+  <div class="sub">bidplus.gem.gov.in &middot; scrape bid list + PDF details &middot; export to Excel</div>
+
+  <div class="card">
+    <div class="row"><span class="label">Saved rows</span><span class="value" id="rowCount">0</span></div>
+    <div class="row"><span class="label">Status</span><span class="value" id="scanState">Idle</span></div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel" for="consigneeState">Consignee State (type any state GeM lists)</label>
+    <input list="stateOptions" id="consigneeState" class="textField" placeholder="e.g. Gujarat" />
+    <datalist id="stateOptions">
+      <option value="Andhra Pradesh"></option>
+      <option value="Arunachal Pradesh"></option>
+      <option value="Assam"></option>
+      <option value="Bihar"></option>
+      <option value="Chhattisgarh"></option>
+      <option value="Delhi"></option>
+      <option value="Goa"></option>
+      <option value="Gujarat"></option>
+      <option value="Haryana"></option>
+      <option value="Himachal Pradesh"></option>
+      <option value="Jharkhand"></option>
+      <option value="Karnataka"></option>
+      <option value="Kerala"></option>
+      <option value="Madhya Pradesh"></option>
+      <option value="Maharashtra"></option>
+      <option value="Manipur"></option>
+      <option value="Meghalaya"></option>
+      <option value="Mizoram"></option>
+      <option value="Nagaland"></option>
+      <option value="Odisha"></option>
+      <option value="Punjab"></option>
+      <option value="Rajasthan"></option>
+      <option value="Sikkim"></option>
+      <option value="Tamil Nadu"></option>
+      <option value="Telangana"></option>
+      <option value="Tripura"></option>
+      <option value="Uttar Pradesh"></option>
+      <option value="Uttarakhand"></option>
+      <option value="West Bengal"></option>
+    </datalist>
+    <label class="fieldLabel" for="cityList">Consignee Cities (one per line - leave blank for ALL cities in the state)</label>
+    <textarea id="cityList" placeholder="Ahmedabad&#10;Surat&#10;Vadodara&#10;Rajkot"></textarea>
+    <label class="fieldLabel">Bid Start Date range (optional, best-effort - see hint)</label>
+    <div class="fieldRow">
+      <div>
+        <input type="text" id="bidStartDateFrom" class="textField" placeholder="From: dd-mm-yyyy" />
+      </div>
+      <div>
+        <input type="text" id="bidStartDateTo" class="textField" placeholder="To: dd-mm-yyyy" />
+      </div>
+    </div>
+    <div class="hint">
+      For each city listed, this opens Advance Search &rarr; Consignee Location on the GeM tab,
+      selects the state/city (and the date range above, if filled in), runs the search, then
+      auto-scans every results page + PDF for that city before moving to the next - straight into
+      one combined sheet with the city as the first column. Keep the GeM tab open and in front
+      while it runs. The date range fields are a best-effort match against GeM's own form (like
+      the state/city fields were before they were confirmed) - if a value doesn't take, use
+      Diagnose Page below to find the real field and report it.
+    </div>
+    <button id="btnLoadCities">Load All Cities From GeM</button>
+    <button id="btnCitySearch" class="primary">Search + Scan These Cities</button>
+    <button id="btnDiagnose">Diagnose Page (if the above fails)</button>
+    <textarea id="debugOutput" style="display:none; min-height:120px; font-family: monospace; font-size:10.5px;" readonly></textarea>
+    <button id="btnCancelBatch" class="danger">Cancel Running City Batch</button>
+  </div>
+
+  <hr />
+  <div class="hint">
+    Manual scanning (only if you're not using the city batch above - it
+    already includes this step for every city automatically):
+  </div>
+  <button id="btnScanFast">Scan This Page (fast, no PDF)</button>
+  <button id="btnScanPdf" class="primary">Scan This Page + PDF Details</button>
+  <button id="btnAutoAll" class="primary">Auto-Scan ALL Pages + PDF Details (current search)</button>
+
+  <hr />
+
+  <div class="card">
+    <label class="fieldLabel" for="includeKeywords">Only keep bids where Items contains (comma-separated, optional)</label>
+    <textarea id="includeKeywords" placeholder="e.g. printing, stationery"></textarea>
+    <label class="fieldLabel" for="excludeKeywords">Skip bids where Items contains (comma-separated, optional)</label>
+    <textarea id="excludeKeywords" placeholder="e.g. catering, security"></textarea>
+    <div class="hint">
+      Case-insensitive substring match against the Items field. Applied to every row before it's
+      saved anywhere - manual scans, city batches, AND automated Start-Sync runs triggered from
+      the OMS all use these same filters, even if this popup is closed at the time. Leave both
+      blank to keep everything found (the OMS's own category exclusion list still applies
+      separately, after this, on the server side).
+    </div>
+  </div>
+
+  <hr />
+
+  <div class="card">
+    <label class="fieldLabel" for="omsUrl">OMS Server URL</label>
+    <textarea id="omsUrl" style="min-height:20px;" placeholder="https://dev-oms-blush.vercel.app"></textarea>
+    <label class="fieldLabel" for="omsUserName">Your Name (recorded on the import)</label>
+    <textarea id="omsUserName" style="min-height:20px;" placeholder="e.g. Chintan"></textarea>
+    <div class="hint">
+      Sends every saved row straight to your OMS's GeM Bids module — no Excel file involved.
+      The bids are matched by Bid No there and tagged New Published / Old / Updated-Extended.
+      The first time you send to a new OMS URL, Chrome will ask you to allow it.
+    </div>
+    <button id="btnSendOms" class="primary">Send to OMS</button>
+  </div>
+
+  <button id="btnExport" class="export">Export to Excel</button>
+  <button id="btnClear" class="danger">Clear Saved Data</button>
+
+  <script src="lib/xlsx-writer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
