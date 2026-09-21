@@ -4,15 +4,24 @@ import clientPromise from "@/lib/mongodb";
 const DB_NAME = "dev_oms_db";
 
 // POST: start a new sync run, or resume/replace a previously stopped one.
-// body: { startedBy, resolution?: "keep" | "discard" }
+// body: { startedBy, resolution?: "keep" | "discard", filterState?, filterCities?: string[],
+//         dateFrom?, dateTo?, filterExcludeKeywords?: string[] }
 // If a run was left "stopped" (Stop was clicked mid-scrape) and no resolution
 // is given, this responds 409 asking the caller to choose "keep" (resume that
 // same run) or "discard" (mark it discarded and start clean) — the UI shows
 // that as the Keep/Discard prompt before actually starting.
+//
+// filterState/filterCities/dateFrom/dateTo/filterExcludeKeywords are the
+// Advance Search + item filters the user picked in the Start Sync modal (see
+// GemBidsPage) — the extension's background worker reads them off this run
+// (via GET /sync/status) to drive GeM's own Consignee State/City/Date fields
+// and to filter scraped rows before scraping, instead of requiring the GeM
+// tab to already be manually filtered and the extension popup's own filter
+// fields to already be set.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { startedBy, resolution } = body;
+    const { startedBy, resolution, filterState, filterCities, dateFrom, dateTo, filterExcludeKeywords } = body;
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);
@@ -48,6 +57,15 @@ export async function POST(req: Request) {
       startedAt: now,
       finishedAt: null,
       startedBy: startedBy || "",
+      filterState: (typeof filterState === "string" && filterState.trim()) || "Gujarat",
+      filterCities: Array.isArray(filterCities)
+        ? filterCities.filter((c) => typeof c === "string" && c.trim()).map((c) => c.trim())
+        : [],
+      dateFrom: (typeof dateFrom === "string" && dateFrom.trim()) || "",
+      dateTo: (typeof dateTo === "string" && dateTo.trim()) || "",
+      excludeKeywords: Array.isArray(filterExcludeKeywords)
+        ? filterExcludeKeywords.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim())
+        : [],
     });
 
     return NextResponse.json({ runId: result.insertedId.toString(), status: "scraping", resumed: false });

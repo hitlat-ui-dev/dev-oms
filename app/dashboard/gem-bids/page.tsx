@@ -55,6 +55,104 @@ export default function GemBidsPage() {
   const [syncActionLoading, setSyncActionLoading] = useState(false);
   const [resumePrompt, setResumePrompt] = useState<SyncRun | null>(null);
 
+  // Filters picked in the Start Sync modal below, sent to /sync/start and
+  // read back by the extension's background worker to drive GeM's own
+  // Consignee State/City/Date fields — this replaces having to open the
+  // extension's popup and set them there before every run.
+  const [startSyncModalOpen, setStartSyncModalOpen] = useState(false);
+  const [filterState, setFilterState] = useState("Gujarat");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  // City checkboxes: options come from a per-state cache the extension
+  // fills in (bidplus.gem.gov.in can't be reached directly from the OMS
+  // server — see /api/gem-bids/cities). "All Cities" checked (the default)
+  // means "no city filter", i.e. search the whole state, same as leaving
+  // the old free-text box blank.
+  const [cityOptions, setCityOptions] = useState<string[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [selectedCities, setSelectedCities] = useState<string[]>([]);
+  const [allCitiesSelected, setAllCitiesSelected] = useState(true);
+  const [customCityInput, setCustomCityInput] = useState("");
+
+  // Exclude-keyword list: persisted on the server (not per-browser like the
+  // extension popup's own copy of this field) so it's the same list no
+  // matter who clicks Start Sync, and keeps growing as words are added.
+  const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
+  const [newKeywordInput, setNewKeywordInput] = useState("");
+  const [keywordsSaving, setKeywordsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!startSyncModalOpen) return;
+    fetch("/api/gem-bids/exclude-keywords")
+      .then((res) => res.json())
+      .then((data) => setExcludeKeywords(Array.isArray(data?.keywords) ? data.keywords : []))
+      .catch((err) => console.error("Failed to load exclude keywords", err));
+  }, [startSyncModalOpen]);
+
+  useEffect(() => {
+    if (!startSyncModalOpen) return;
+    const state = filterState.trim();
+    if (!state) {
+      setCityOptions([]);
+      return;
+    }
+    setCitiesLoading(true);
+    fetch(`/api/gem-bids/cities?state=${encodeURIComponent(state)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setCityOptions(Array.isArray(data?.cities) ? data.cities : []);
+        setSelectedCities([]);
+        setAllCitiesSelected(true);
+      })
+      .catch((err) => console.error("Failed to load city cache", err))
+      .finally(() => setCitiesLoading(false));
+  }, [startSyncModalOpen, filterState]);
+
+  const toggleCity = (city: string) => {
+    setSelectedCities((prev) => (prev.includes(city) ? prev.filter((c) => c !== city) : [...prev, city]));
+    setAllCitiesSelected(false);
+  };
+
+  const addCustomCity = () => {
+    const city = customCityInput.trim();
+    if (!city) return;
+    if (!cityOptions.includes(city)) setCityOptions((prev) => [...prev, city]);
+    setSelectedCities((prev) => (prev.includes(city) ? prev : [...prev, city]));
+    setAllCitiesSelected(false);
+    setCustomCityInput("");
+  };
+
+  const saveExcludeKeywords = async (next: string[]) => {
+    setExcludeKeywords(next);
+    setKeywordsSaving(true);
+    try {
+      await fetch("/api/gem-bids/exclude-keywords", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keywords: next }),
+      });
+    } catch (err) {
+      console.error("Failed to save exclude keywords", err);
+    } finally {
+      setKeywordsSaving(false);
+    }
+  };
+
+  const addExcludeKeyword = () => {
+    const word = newKeywordInput.trim();
+    if (!word || excludeKeywords.some((k) => k.toLowerCase() === word.toLowerCase())) {
+      setNewKeywordInput("");
+      return;
+    }
+    saveExcludeKeywords([...excludeKeywords, word]);
+    setNewKeywordInput("");
+  };
+
+  const removeExcludeKeyword = (word: string) => {
+    saveExcludeKeywords(excludeKeywords.filter((k) => k !== word));
+  };
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem("oms_user");
@@ -128,7 +226,15 @@ export default function GemBidsPage() {
       const res = await fetch("/api/gem-bids/sync/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startedBy: currentUsername, resolution }),
+        body: JSON.stringify({
+          startedBy: currentUsername,
+          resolution,
+          filterState: filterState.trim() || "Gujarat",
+          filterCities: allCitiesSelected ? [] : selectedCities,
+          dateFrom: dateFrom.trim(),
+          dateTo: dateTo.trim(),
+          filterExcludeKeywords: excludeKeywords,
+        }),
       });
       const data = await res.json();
       if (res.status === 409 && data.needsResolution) {
@@ -238,7 +344,7 @@ export default function GemBidsPage() {
                 </button>
               ) : (
                 <button
-                  onClick={() => handleStartSync()}
+                  onClick={() => setStartSyncModalOpen(true)}
                   disabled={syncActionLoading}
                   className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
                 >
@@ -300,7 +406,7 @@ export default function GemBidsPage() {
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1.5">
                   {syncRun.phase === "starting"
-                    ? "Waiting for the extension to pick this up — keep the GeM Advance Search results tab open."
+                    ? "Waiting for the GeM Bid Exporter extension to pick this up (checks about once a minute) — it'll open the GeM Advance Search page on its own and apply the filters you picked."
                     : syncRun.phase}
                 </p>
               </div>
@@ -347,6 +453,178 @@ export default function GemBidsPage() {
           )}
         </div>
       </div>
+
+      {startSyncModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5">
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 mb-1">Start Sync — GeM filters</h3>
+            <p className="text-[11px] text-slate-500 mb-4">
+              The GeM Bid Exporter extension will open GeM&apos;s Advance Search page on its own and apply these
+              before scraping.
+            </p>
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">Consignee State</label>
+            <input
+              list="gemStateOptions"
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value)}
+              placeholder="e.g. Gujarat"
+              className="w-full mb-3 border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <datalist id="gemStateOptions">
+              {[
+                "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Delhi", "Goa", "Gujarat",
+                "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra",
+                "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim",
+                "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+              ].map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">
+              Consignee Cities
+            </label>
+            <div className="mb-3 border border-slate-200 rounded-lg overflow-hidden">
+              <label className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50 cursor-pointer text-[12px] font-bold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={allCitiesSelected}
+                  onChange={(e) => {
+                    setAllCitiesSelected(e.target.checked);
+                    if (e.target.checked) setSelectedCities([]);
+                  }}
+                />
+                All Cities in {filterState.trim() || "the state"}
+              </label>
+              <div className="max-h-36 overflow-y-auto px-3 py-2">
+                {citiesLoading ? (
+                  <p className="text-[11px] text-slate-400">Loading cities…</p>
+                ) : cityOptions.length === 0 ? (
+                  <p className="text-[11px] text-slate-400">
+                    No cities cached yet for this state — open the extension popup and click &quot;Load All Cities
+                    From GeM&quot; once, or add one below.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    {cityOptions.map((city) => (
+                      <label key={city} className="flex items-center gap-1.5 text-[12px] text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!allCitiesSelected && selectedCities.includes(city)}
+                          disabled={allCitiesSelected}
+                          onChange={() => toggleCity(city)}
+                        />
+                        {city}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-1.5 px-3 py-2 border-t border-slate-100 bg-slate-50">
+                <input
+                  value={customCityInput}
+                  onChange={(e) => setCustomCityInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCustomCity();
+                    }
+                  }}
+                  placeholder="Add a city not in the list…"
+                  className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  onClick={addCustomCity}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">
+              Bid Start Date range (optional, best-effort)
+            </label>
+            <div className="flex gap-2 mb-4">
+              <input
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                placeholder="From: dd-mm-yyyy"
+                className="w-1/2 border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                placeholder="To: dd-mm-yyyy"
+                className="w-1/2 border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">
+              Skip bids whose Items contain (saved, reused every time)
+            </label>
+            <div className="mb-4 border border-slate-200 rounded-lg p-2.5">
+              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px]">
+                {excludeKeywords.length === 0 ? (
+                  <span className="text-[11px] text-slate-400">No words excluded yet.</span>
+                ) : (
+                  excludeKeywords.map((word) => (
+                    <span
+                      key={word}
+                      className="flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 rounded-full pl-2.5 pr-1 py-0.5 text-[11px] font-bold"
+                    >
+                      {word}
+                      <button
+                        onClick={() => removeExcludeKeyword(word)}
+                        className="hover:bg-red-200 rounded-full p-0.5 transition-colors"
+                        aria-label={`Remove ${word}`}
+                      >
+                        <FiX size={11} />
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  value={newKeywordInput}
+                  onChange={(e) => setNewKeywordInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addExcludeKeyword();
+                    }
+                  }}
+                  placeholder="e.g. catering"
+                  className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  onClick={addExcludeKeyword}
+                  disabled={keywordsSaving}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setStartSyncModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setStartSyncModalOpen(false);
+                  handleStartSync();
+                }}
+                disabled={syncActionLoading}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors"
+              >
+                Start Sync
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {resumePrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

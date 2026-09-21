@@ -26,16 +26,28 @@
 
   // Item-keyword filters, read fresh from storage by filterRowsByItemKeywords()
   // below and applied to every row before it's saved anywhere - manual scans,
-  // city batches, AND the automated Start-Sync flow (runAutomatedBidSync)
-  // triggered from the OMS all funnel through it, so a keyword typed once in
-  // the popup is respected everywhere regardless of which flow found the row.
-  // This is in addition to - not a replacement for - the OMS's own
-  // server-side category exclusion list (lib/gemBids/exclusionKeywords.json),
-  // which still runs afterwards on whatever gets sent.
+  // city batches, AND OMS-triggered city batches (an omsRunId-tagged batch -
+  // see runBatchStepIfActive/autoScanAllPages further down) all funnel
+  // through it, so a keyword typed once in the popup is respected everywhere
+  // regardless of which flow found the row. This is in addition to - not a
+  // replacement for - the OMS's own server-side category exclusion list
+  // (lib/gemBids/exclusionKeywords.json), which still runs afterwards on
+  // whatever gets sent.
   const INCLUDE_KEYWORDS_KEY = "gemItemIncludeKeywords";
   const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
   const BID_START_DATE_FROM_KEY = "gemBidStartDateFrom";
   const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
+
+  // Row accumulator used only while a city batch is driving an OMS-triggered
+  // run (batch.omsRunId set) - kept separate from STORAGE_KEY (gemBidRows,
+  // the popup's own manual scan data) so an OMS-driven run never mixes with
+  // or gets sent alongside whatever the user is separately collecting by
+  // hand. Cleared once the run is applied. Written by background.js too (it
+  // reads/clears CLAIMED_RUN_KEY, the shared "a batch is already being
+  // driven for some run" lock between this script and background.js's
+  // periodic poll).
+  const OMS_BATCH_ROWS_KEY = "gemOmsBatchRows";
+  const CLAIMED_RUN_KEY = "gemBgClaimedRunId";
 
   // English fragments of the bilingual field labels requested for the
   // PDF detail extraction. Devanagari text in these PDFs frequently comes
@@ -285,6 +297,21 @@
     return rows.length;
   }
 
+  // Same as appendRow(), just writing to the OMS-batch-only accumulator
+  // instead of the popup's shared gemBidRows.
+  async function appendOmsBatchRow(row) {
+    const data = await chrome.storage.local.get([OMS_BATCH_ROWS_KEY, ACTIVE_CITY_KEY]);
+    const rows = data[OMS_BATCH_ROWS_KEY] || [];
+    const consigneeCity = data[ACTIVE_CITY_KEY] || "";
+    const withCity = { ...row, consigneeCity };
+    const dedupeKey = (r) => r.bidNo + "||" + (r.consigneeCity || "");
+    const idx = rows.findIndex((r) => dedupeKey(r) === dedupeKey(withCity));
+    if (idx === -1) rows.push(withCity);
+    else rows[idx] = { ...rows[idx], ...withCity };
+    await chrome.storage.local.set({ [OMS_BATCH_ROWS_KEY]: rows });
+    return rows.length;
+  }
+
   async function setStatus(status) {
     // Merge instead of overwrite: autoScanAllPages() and its per-page
     // progress updates only know about page/scanned counters, not which
@@ -297,8 +324,13 @@
     await chrome.storage.local.set({ [STATUS_KEY]: { ...prev, ...status } });
   }
 
-  async function scanRowsWithPdf(rows) {
-    let done = 0;
+  // opts.omsRunId (optional): when set, rows are written to the OMS-only
+  // accumulator (OMS_BATCH_ROWS_KEY) instead of the popup's shared
+  // gemBidRows - used when this is running as part of an OMS-triggered
+  // city batch (see runBatchStepIfActive/finishOmsBatch below) rather than
+  // a manual scan.
+  async function scanRowsWithPdf(rows, opts) {
+    const omsRunId = opts && opts.omsRunId;
     for (const row of rows) {
       const pdfResult = row.bidLink
         ? await fetchAndParsePdf(row.bidLink, PDF_FIELD_LABELS)
@@ -306,9 +338,8 @@
       const merged = { ...row, pdfStatus: pdfResult.status, pdfDirectUrl: pdfResult.pdfUrl || "", ...pdfResult.fields };
       const atcLinks = pdfResult.fields[ATC_LABEL + "__links"];
       merged[ATC_LABEL] = atcLinks && atcLinks.length ? atcLinks[0] : "";
-      const total = await appendRow(merged);
-      done++;
-      await setStatus({ scanning: true, scanned: total, lastAction: "pdf", lastBidNo: row.bidNo });
+      const total = omsRunId ? await appendOmsBatchRow(merged) : await appendRow(merged);
+      await setStatus({ scanning: true, scanned: total, lastAction: omsRunId ? "city_batch" : "pdf", lastBidNo: row.bidNo });
     }
   }
 
@@ -672,13 +703,49 @@
     return !!batch && batch.running === false;
   }
 
+  // Marks the current city batch as not-running - shared by the popup's
+  // "Cancel Running City Batch" button and by autoScanAllPages() below when
+  // it notices an OMS-triggered run was Stopped from the OMS page mid-scan.
+  async function cancelCityBatch() {
+    const data = await chrome.storage.local.get(CITY_BATCH_KEY);
+    const batch = data[CITY_BATCH_KEY];
+    if (batch) {
+      batch.running = false;
+      await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+    }
+  }
+
+  async function isOmsRunStillActive(runId) {
+    const result = await sendToBackground("GEM_BID_SYNC_STATUS", { runId });
+    return !!(result && result.ok && result.run && result.run.status === "scraping");
+  }
+
   async function autoScanAllPages(lastAction) {
     await setStatus({ scanning: true, scanned: 0, page: 1, lastAction });
     let pageNum = 1;
     let guard = 0;
+
+    // Only set for a city_batch step that's driving an OMS-triggered run
+    // (see runBatchStepIfActive) - a manual city batch or a plain
+    // Auto-Scan click has no OMS run backing it.
+    let omsRunId = null;
+    if (lastAction === "city_batch") {
+      const data = await chrome.storage.local.get(CITY_BATCH_KEY);
+      omsRunId = (data[CITY_BATCH_KEY] || {}).omsRunId || null;
+    }
+
     while (guard < 60) {
       guard++;
-      if (lastAction === "city_batch" && (await isBatchCancelled())) break;
+      if (lastAction === "city_batch") {
+        if (await isBatchCancelled()) break;
+        if (omsRunId && !(await isOmsRunStillActive(omsRunId))) {
+          // The OMS run was Stopped (or discarded) from the OMS page while
+          // this city was mid-scan - stop the whole batch, not just this
+          // city's page loop, the same as a manual Cancel click.
+          await cancelCityBatch();
+          break;
+        }
+      }
       const rows = scanCurrentPage();
       if (rows.length === 0) break;
       // Filtered before the (slow, one-per-bid) PDF fetch below, not after -
@@ -686,8 +753,24 @@
       // the unfiltered `rows` so "did the page actually change" detection
       // isn't thrown off by everything on a page being filtered out.
       const filteredRows = await filterRowsByItemKeywords(rows);
-      await scanRowsWithPdf(filteredRows);
+      await scanRowsWithPdf(filteredRows, omsRunId ? { omsRunId } : undefined);
       await setStatus({ scanning: true, page: pageNum, lastAction });
+
+      if (omsRunId) {
+        const cbData = await chrome.storage.local.get(CITY_BATCH_KEY);
+        const cb = cbData[CITY_BATCH_KEY] || {};
+        const cityLabel =
+          cb.cities && cb.cities.length > 1
+            ? `[${(cb.index || 0) + 1}/${cb.cities.length}] ${cb.cities[cb.index] || ""} — `
+            : "";
+        const omsRowsData = await chrome.storage.local.get(OMS_BATCH_ROWS_KEY);
+        const rowCount = (omsRowsData[OMS_BATCH_ROWS_KEY] || []).length;
+        await sendToBackground("GEM_BID_SYNC_PROGRESS", {
+          runId: omsRunId,
+          percent: Math.min(90, pageNum * 10),
+          phase: `${cityLabel}page ${pageNum} — ${rowCount} bids scanned`,
+        });
+      }
 
       const firstBidNo = rows[0].bidNo;
       const nextEl = findNextControl();
@@ -697,8 +780,9 @@
       if (!changed) break;
       pageNum++;
     }
-    const data = await chrome.storage.local.get(STORAGE_KEY);
-    await setStatus({ scanning: false, scanned: (data[STORAGE_KEY] || []).length, page: pageNum, lastAction });
+    const key = omsRunId ? OMS_BATCH_ROWS_KEY : STORAGE_KEY;
+    const data = await chrome.storage.local.get(key);
+    await setStatus({ scanning: false, scanned: (data[key] || []).length, page: pageNum, lastAction });
   }
 
   let batchStepInFlight = false;
@@ -721,8 +805,12 @@
       if (batch.index >= batch.cities.length) {
         batch.running = false;
         await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
-        const exported = await exportRowsToXlsx("gujarat");
-        await setStatus({ scanning: false, lastAction: "city_batch_done", exported });
+        if (batch.omsRunId) {
+          await finishOmsBatch(batch.omsRunId);
+        } else {
+          const exported = await exportRowsToXlsx("gujarat");
+          await setStatus({ scanning: false, lastAction: "city_batch_done", exported });
+        }
         return;
       }
 
@@ -751,16 +839,36 @@
         // in the genuine post-reload-resume case (it just reselects the
         // same state/city and re-submits), so there's no good reason to
         // skip it.
-        await runConsigneeSearch(batch.state, city);
+        const searchResult = await runConsigneeSearch(batch.state, city);
+        if (!searchResult.ok && batch.omsRunId) {
+          // An OMS-triggered run is unattended - nobody's watching the
+          // popup to notice a silently wrong/empty result set the way a
+          // manual city batch's user might. Fail loudly instead of scanning
+          // whatever happens to be on screen and pushing it to the OMS.
+          throw new Error("consignee search failed: " + (searchResult.error || "unknown"));
+        }
         batch.phase = "scan";
         await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
       }
 
       if (batch.phase === "scan") {
         await autoScanAllPages("city_batch");
-        batch.index += 1;
-        batch.phase = "search";
-        await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+        // Re-read rather than trust this function's in-memory `batch`
+        // snapshot - a Cancel click (manual) or the OMS run being Stopped
+        // (checked inside autoScanAllPages) may have flipped `running` to
+        // false while the scan was in progress. Writing the stale snapshot
+        // back here used to silently resurrect a cancelled batch and let it
+        // continue on to the next city.
+        const freshData = await chrome.storage.local.get(CITY_BATCH_KEY);
+        const freshBatch = freshData[CITY_BATCH_KEY];
+        if (!freshBatch || !freshBatch.running) {
+          if (batch.omsRunId) await chrome.storage.local.remove(CLAIMED_RUN_KEY);
+          await setStatus({ scanning: false, lastAction: "city_batch_cancelled" });
+          return;
+        }
+        freshBatch.index += 1;
+        freshBatch.phase = "search";
+        await chrome.storage.local.set({ [CITY_BATCH_KEY]: freshBatch });
       }
     } catch (e) {
       // Without this, an exception here (e.g. a fetch/PDF-parsing error, or
@@ -776,6 +884,7 @@
         if (batch) {
           batch.running = false;
           await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+          if (batch.omsRunId) await chrome.storage.local.remove(CLAIMED_RUN_KEY);
         }
       } catch (_) {
         /* storage itself may be unavailable during a navigation - ignore */
@@ -789,20 +898,49 @@
     runBatchStepIfActive();
   }
 
+  // Sends everything this OMS-triggered batch collected (across every city)
+  // to the OMS in one sync/apply call, the same end-of-run step a plain
+  // Start Sync always used to do - just fed from a full multi-city sweep
+  // instead of "whatever the tab happened to already be showing".
+  async function finishOmsBatch(runId) {
+    const data = await chrome.storage.local.get(OMS_BATCH_ROWS_KEY);
+    const rows = data[OMS_BATCH_ROWS_KEY] || [];
+    await setStatus({
+      scanning: true,
+      lastAction: "city_batch",
+      phase: "apply",
+      cityLabel: `sending ${rows.length} bid(s) to OMS…`,
+    });
+    const userData = await chrome.storage.local.get(OMS_USER_KEY);
+    const applyResult = await sendToBackground("GEM_BID_SYNC_APPLY", {
+      runId,
+      rows: rows.map(mapBidRowToOmsSchema),
+      userName: userData[OMS_USER_KEY] || "",
+    });
+    await chrome.storage.local.remove([OMS_BATCH_ROWS_KEY, CLAIMED_RUN_KEY]);
+    if (applyResult && applyResult.ok) {
+      await setStatus({ scanning: false, lastAction: "city_batch_done", omsApplied: true, omsRowCount: rows.length });
+    } else {
+      await setStatus({
+        scanning: false,
+        lastAction: "city_batch_error",
+        errorMessage: (applyResult && applyResult.error) || "apply failed",
+      });
+    }
+  }
+
   // ---------------------------------------------------------------------
-  // Automated OMS-triggered sync (Phase 2 bridge). Runs unattended: polls
-  // the OMS for a pending "scraping" run and, when this tab is sitting on
-  // an Advance Search results page, scrapes it the same way Auto-Scan does
-  // - reusing scanCurrentPage()/findNextControl()/waitForListChange()/
-  // fetchAndParsePdf() as-is - reporting progress back after every page and
-  // finishing with one sync/apply call. See the gem-bids sync plan for the
-  // full design.
+  // OMS-triggered sync bridge. background.js polls the OMS for a pending
+  // "scraping" run (its filterState/filterCities/dateFrom/dateTo), opens or
+  // navigates a bidplus.gem.gov.in tab to Advance Search, and stashes a
+  // CITY_BATCH_KEY job (with omsRunId set) in storage before doing so - this
+  // script's own unconditional runBatchStepIfActive() call at the bottom of
+  // the file then picks it up exactly like a popup-started manual city
+  // batch, just reporting progress to the OMS and finishing with a
+  // sync/apply call (finishOmsBatch above) instead of an Excel download.
   // ---------------------------------------------------------------------
 
   const OMS_USER_KEY = "gemOmsUserName";
-  const GEM_BID_SYNC_CLAIM_KEY = "gemBidSyncClaim";
-  const GEM_BID_SYNC_STATUS_KEY = "gemBidSyncStatus";
-  const GEM_BID_SYNC_POLL_INTERVAL_MS = 15000;
 
   // Mirrors popup.js's mapRowToOmsSchema exactly - duplicated here (not
   // shared) because these are plain injected scripts with no bundler, same
@@ -840,153 +978,6 @@
         resolve(response);
       });
     });
-  }
-
-  async function setBidSyncStatus(status) {
-    const data = await chrome.storage.local.get(GEM_BID_SYNC_STATUS_KEY);
-    const prev = data[GEM_BID_SYNC_STATUS_KEY] || {};
-    await chrome.storage.local.set({ [GEM_BID_SYNC_STATUS_KEY]: { ...prev, ...status } });
-  }
-
-  async function getClaimedRunId() {
-    const data = await chrome.storage.local.get(GEM_BID_SYNC_CLAIM_KEY);
-    return (data[GEM_BID_SYNC_CLAIM_KEY] && data[GEM_BID_SYNC_CLAIM_KEY].runId) || null;
-  }
-
-  async function claimRun(runId) {
-    await chrome.storage.local.set({ [GEM_BID_SYNC_CLAIM_KEY]: { runId, claimedAt: Date.now() } });
-  }
-
-  async function clearClaim() {
-    await chrome.storage.local.remove(GEM_BID_SYNC_CLAIM_KEY);
-  }
-
-  // Same per-row work as scanRowsWithPdf(), just pushing into a local array
-  // (deduped on bidNo) instead of chrome.storage.local's shared gemBidRows
-  // key - keeps an automated run's data fully separate from whatever the
-  // user might be manually collecting via the popup at the same time.
-  async function scanRowsIntoArray(rows, targetArray) {
-    for (const row of rows) {
-      const pdfResult = row.bidLink
-        ? await fetchAndParsePdf(row.bidLink, PDF_FIELD_LABELS)
-        : { status: "no_link", fields: {}, pdfUrl: "" };
-      const merged = { ...row, pdfStatus: pdfResult.status, pdfDirectUrl: pdfResult.pdfUrl || "", ...pdfResult.fields };
-      const atcLinks = pdfResult.fields[ATC_LABEL + "__links"];
-      merged[ATC_LABEL] = atcLinks && atcLinks.length ? atcLinks[0] : "";
-
-      const idx = targetArray.findIndex((r) => r.bidNo === merged.bidNo);
-      if (idx === -1) targetArray.push(merged);
-      else targetArray[idx] = merged;
-    }
-  }
-
-  let automatedSyncInFlight = false;
-
-  // One full scrape-all-pages-currently-in-the-search pass for a claimed
-  // run. Mirrors autoScanAllPages() closely: same page-loop/end-detection
-  // logic, but reports progress + checks for a Stop after every page, and
-  // finishes with a single sync/apply call instead of leaving rows sitting
-  // in local storage for a manual export/send.
-  async function runAutomatedBidSync(runId) {
-    automatedSyncInFlight = true;
-    await setBidSyncStatus({ running: true, runId, phase: "starting", rowCount: 0 });
-
-    const allRows = [];
-    let pageNum = 1;
-    let guard = 0;
-    let stopped = false;
-
-    try {
-      while (guard < 60) {
-        guard++;
-
-        const rows = scanCurrentPage();
-        if (rows.length === 0) break;
-        // Same filter-before-PDF-fetch treatment as autoScanAllPages() -
-        // pagination still anchors on the unfiltered `rows`.
-        const filteredRows = await filterRowsByItemKeywords(rows);
-        await scanRowsIntoArray(filteredRows, allRows);
-
-        const phase = `page ${pageNum} — ${allRows.length} bids scanned`;
-        const percent = Math.min(90, pageNum * 10);
-        await setBidSyncStatus({ running: true, runId, phase, rowCount: allRows.length });
-        await sendToBackground("GEM_BID_SYNC_PROGRESS", { runId, percent, phase });
-
-        const statusCheck = await sendToBackground("GEM_BID_SYNC_STATUS", { runId });
-        if (!statusCheck.ok || !statusCheck.run || statusCheck.run.status !== "scraping") {
-          stopped = true;
-          break;
-        }
-
-        const firstBidNo = rows[0].bidNo;
-        const nextEl = findNextControl();
-        if (!nextEl) break;
-        nextEl.click();
-        const changed = await waitForListChange(firstBidNo, 10000);
-        if (!changed) break;
-        pageNum++;
-      }
-
-      if (stopped) {
-        await setBidSyncStatus({ running: false, runId, phase: "stopped by OMS" });
-        return;
-      }
-
-      await setBidSyncStatus({ running: true, runId, phase: `sending ${allRows.length} bids to OMS...` });
-      const userData = await chrome.storage.local.get(OMS_USER_KEY);
-      const applyResult = await sendToBackground("GEM_BID_SYNC_APPLY", {
-        runId,
-        rows: allRows.map(mapBidRowToOmsSchema),
-        userName: userData[OMS_USER_KEY] || "",
-      });
-
-      if (applyResult.ok) {
-        await setBidSyncStatus({ running: false, runId, phase: "completed", rowCount: allRows.length });
-      } else {
-        await setBidSyncStatus({ running: false, runId, phase: "apply failed: " + (applyResult.error || "unknown") });
-      }
-    } catch (e) {
-      console.error("[GeM Bid Exporter] automated sync failed:", e);
-      await setBidSyncStatus({ running: false, runId, phase: "error: " + String((e && e.message) || e) });
-    } finally {
-      await clearClaim();
-      automatedSyncInFlight = false;
-    }
-  }
-
-  // Runs every GEM_BID_SYNC_POLL_INTERVAL_MS (and once immediately on
-  // script load, so a reload mid-run resumes without waiting for the next
-  // tick). Either resumes a run this tab already claimed, or claims a
-  // freshly-started ("starting") run and kicks it off.
-  async function pollForPendingBidSyncRun() {
-    if (automatedSyncInFlight) return;
-
-    const claimedRunId = await getClaimedRunId();
-    if (claimedRunId) {
-      const statusCheck = await sendToBackground("GEM_BID_SYNC_STATUS", { runId: claimedRunId });
-      if (statusCheck.ok && statusCheck.run && statusCheck.run.status === "scraping") {
-        runAutomatedBidSync(claimedRunId); // not awaited - long-running
-      } else {
-        await clearClaim();
-      }
-      return;
-    }
-
-    const statusCheck = await sendToBackground("GEM_BID_SYNC_STATUS", {});
-    if (!statusCheck.ok || !statusCheck.run) return;
-    if (statusCheck.run.status !== "scraping") return;
-
-    const phase = statusCheck.run.phase;
-    if (phase && phase !== "starting") {
-      // Already progressed past its initial phase - another poller (or a
-      // claim this tab lost track of) is already driving it. Best-effort
-      // guard only, not a real distributed lock - see the sync plan's
-      // "single-tab usage assumed" note.
-      return;
-    }
-
-    await claimRun(statusCheck.run._id);
-    runAutomatedBidSync(statusCheck.run._id); // not awaited - long-running
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -1093,12 +1084,7 @@
 
     if (msg.action === "CANCEL_CITY_BATCH") {
       (async () => {
-        const data = await chrome.storage.local.get(CITY_BATCH_KEY);
-        const batch = data[CITY_BATCH_KEY];
-        if (batch) {
-          batch.running = false;
-          await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
-        }
+        await cancelCityBatch();
         await setStatus({ scanning: false, lastAction: "city_batch_cancelled" });
       })();
       sendResponse({ ok: true });
@@ -1109,15 +1095,13 @@
   // If a city batch was mid-flight when this script last ran (popup
   // closed, or the search-form submission navigated the page away and
   // this script is the freshly re-injected instance on the new page),
-  // pick the batch back up automatically. This is what makes
-  // RUN_CITY_BATCH survive both the popup closing and a full page
-  // reload - the "resume point" lives in chrome.storage.local, not in
-  // any in-memory JS state that a reload would wipe out.
+  // pick the batch back up automatically. This is what makes RUN_CITY_BATCH
+  // survive both the popup closing and a full page reload - the "resume
+  // point" lives in chrome.storage.local, not in any in-memory JS state a
+  // reload would wipe out. It's also how an OMS-triggered batch actually
+  // starts: background.js writes a CITY_BATCH_KEY job (with omsRunId set)
+  // and navigates a tab to this page *before* this script even loads, so
+  // this same call picks it up on the very first run, no separate
+  // OMS-polling loop needed in this script at all.
   runBatchStepIfActive();
-
-  // Automated OMS sync: check once immediately (resumes a claimed run
-  // across a reload without waiting for the next tick) and then on every
-  // poll interval for as long as this tab stays open on the GeM site.
-  pollForPendingBidSyncRun();
-  setInterval(pollForPendingBidSyncRun, GEM_BID_SYNC_POLL_INTERVAL_MS);
 })();

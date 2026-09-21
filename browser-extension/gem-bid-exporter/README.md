@@ -21,6 +21,101 @@ requires everything to be bundled locally anyway (no remote code).
    in it).
 5. Pin the extension (puzzle-piece icon in the toolbar → pin "GeM Bid Exporter").
 
+## Fixed: Start Sync stuck at 0% forever after closing the GeM tab mid-batch
+
+Clearing `background.js`'s "a batch is already claimed, don't start another"
+flag was entirely content.js's job (`finishOmsBatch`, or the error/cancel
+paths in `runBatchStepIfActive`) - all of which only run *inside* the GeM
+tab. Closing that tab outright (not just navigating away) while a batch was
+mid-flight killed its whole execution context with it, so nothing ever got
+a chance to clear the flag - `background.js` was then permanently convinced
+a batch was already running and silently ignored every future Start Sync,
+with no error anywhere (there was nothing left alive to error). If this
+happens to you: `chrome.storage.local.get(["gemBgClaimedRunId"], console.log)`
+in the extension's service worker console (`chrome://extensions` → this
+extension → "service worker") shows the stuck claim.
+
+Fixed two ways: `pollAndMaybeStartAutoSync` now checks, before every poll,
+whether a `bidplus.gem.gov.in` tab exists at all - if none does, whatever
+claimed the batch can't possibly still be driving it (content.js can only
+run inside such a tab), so the claim is cleared automatically. An hour-old
+claim is also cleared as a second, cheaper safety net for any other way
+this could get wedged. Keep the GeM tab open (or let it drive its own
+navigations) while a batch runs; if you do need to stop one, use **Stop
+Sync** on the OMS page or **Cancel Running City Batch** in the popup rather
+than just closing the tab.
+
+## New: Start Sync's Cities are checkboxes, and its exclude-keyword list is saved on the OMS
+
+The Start Sync modal's Consignee Cities are now checkboxes (with an "All
+Cities" toggle and a "select more than one" multi-select) instead of a
+free-text box, and its exclude-keyword field is a persisted list you add
+words to over time rather than a one-off text box — see the "OMS side" notes
+below for exactly how each is populated.
+
+**Cities**: `bidplus.gem.gov.in` blocks non-browser requests (see the
+Advance-search honesty note further down), so the OMS server can't fetch
+GeM's own city list on its own. Every time you click this popup's **Load All
+Cities From GeM**, the real list it reads out of the live page is now also
+posted to the OMS (`POST /api/gem-bids/cities`), which is what the Start
+Sync modal's checkboxes are populated from. If a state has never been
+loaded that way, the modal shows an empty list with a note to do that once
+(or add a city by hand right there in the modal).
+
+**Exclude keywords**: the Start Sync modal's list lives in the OMS's own
+database (`GET`/`POST /api/gem-bids/exclude-keywords`), not in this
+extension's `chrome.storage.local` — so it's the same list for everyone who
+opens the modal, and it's what an OMS-triggered run actually filters by.
+When a run starts, `background.js` writes that run's exclude-keyword list
+into this extension's own `gemItemExcludeKeywords` storage key (see
+`pollAndMaybeStartAutoSync`), so `filterRowsByItemKeywords()` in
+`content.js` applies it exactly the same way it always has — no new
+filtering logic needed here. That does mean an OMS-triggered run overwrites
+whatever you'd separately typed into this popup's own exclude-keyword box
+for manual scans (same caveat as the Bid Start Date range below).
+
+## New: Start Sync now opens and drives GeM itself
+
+The OMS's **Start Sync** button now opens a small form right there on the
+GeM Bids page — Consignee State, Consignee Cities (one per line, blank =
+every city in the state), and an optional Bid Start Date range — instead of
+requiring you to open this extension's popup and fill those in yourself.
+Once you confirm:
+
+1. The run (with your chosen filters attached) is created in the OMS.
+2. `background.js`'s own poll (see below) notices it, opens or reuses a
+   `bidplus.gem.gov.in` tab, and navigates it straight to Advance Search —
+   you no longer need a GeM tab open beforehand at all.
+3. It drives GeM's own Consignee State/City (and, best-effort, Bid Start
+   Date) fields exactly the way the popup's **Search + Scan These Cities**
+   button already did, city by city, scanning every results page + PDF as
+   it goes.
+4. When every city is done, everything collected is sent to the OMS in one
+   `sync/apply` call — same as before, just fed from a full automated sweep
+   instead of "whatever the tab already happened to be showing."
+
+Clicking **Stop Sync** on the OMS page is checked between pages and stops
+the whole batch cleanly, not just the city in progress.
+
+Under the hood this reuses the exact same `gemCityBatch` state machine in
+`content.js` that the popup's manual city-batch button already drives (see
+`runBatchStepIfActive`) — an OMS-triggered run and a popup-started manual
+batch are the same code path, just tagged with (or without) an `omsRunId`.
+
+**One thing worth knowing**: because `background.js` writes the OMS run's
+date range into the same `gemBidStartDateFrom`/`gemBidStartDateTo` storage
+keys the popup's own Bid Start Date fields use, starting a sync from the OMS
+will overwrite whatever you'd typed into the popup's date fields for your
+own manual use (visible next time you open the popup). Re-type them there if
+you go back to a manual city batch afterward.
+
+**Latency**: `background.js` is a Manifest V3 service worker, which Chrome
+kills when idle — a plain `setInterval` wouldn't survive that, so this uses
+`chrome.alarms` instead, which Chrome clamps to a 1-minute-minimum period.
+That means up to ~1 minute between clicking Start Sync in the OMS and the
+GeM tab actually opening. Acceptable given the scrape itself runs for
+minutes, but worth knowing if it doesn't look instant.
+
 ## Fixed: Start Sync (from the OMS) not being picked up
 
 The OMS's **Start Sync** button creates a "scraping" run in its database;
@@ -40,6 +135,17 @@ whatever the GeM tab is currently showing (see the new filters section below
 for narrowing that), so a GeM tab logged in and open (any bidplus.gem.gov.in
 page is enough for the poller to run) is still required for it to be picked
 up at all.
+
+## Fixed: popup fields (exclude keywords, etc.) not saving
+
+Chrome extension popups can be dismissed (click elsewhere, click the toolbar
+icon again, Esc) without a field ever losing focus first, and these fields
+used to save on the "change" event only, which fires on blur — so whatever
+you'd just typed (most noticeably the exclude/include keyword boxes, since
+those get edited and the popup just gets closed rather than tabbed away
+from) was silently dropped, forcing you to retype it every time. Every
+persisted popup field now also saves on every keystroke ("input" event), so
+it's in storage well before any close path can tear the popup down.
 
 ## New: item-keyword and best-effort date-range filters
 

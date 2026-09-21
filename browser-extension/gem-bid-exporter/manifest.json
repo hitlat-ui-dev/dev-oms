@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "GeM Bid Exporter",
-  "version": "1.2.0",
-  "description": "Scrape GeM bidplus.gem.gov.in bid listings across pages and pull key details from each bid PDF into a single Excel file. Also runs automated OMS-triggered sync runs in the background, with item-keyword, state/city, and best-effort date-range filtering applied before anything reaches the OMS.",
+  "version": "1.4.1",
+  "description": "Scrape GeM bidplus.gem.gov.in bid listings across pages and pull key details from each bid PDF into a single Excel file. Clicking Start Sync on the OMS page opens/drives the GeM Advance Search page automatically with the state/city/date filters chosen there, applies item-keyword filtering, and sends the results straight into the OMS.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "GeM Bid Exporter",
@@ -17,7 +17,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://bidplus.gem.gov.in/*",
     "https://dev-oms-blush.vercel.app/*",

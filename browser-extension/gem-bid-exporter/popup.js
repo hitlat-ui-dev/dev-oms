@@ -125,21 +125,28 @@
     bidStartDateFromEl.value = data[DATE_FROM_KEY] || "";
     bidStartDateToEl.value = data[DATE_TO_KEY] || "";
   }
-  omsUrlEl.addEventListener("change", () => chrome.storage.local.set({ [OMS_URL_KEY]: omsUrlEl.value.trim() }));
-  omsUserNameEl.addEventListener("change", () => chrome.storage.local.set({ [OMS_USER_KEY]: omsUserNameEl.value.trim() }));
-  consigneeStateEl.addEventListener("change", () => chrome.storage.local.set({ [STATE_KEY]: consigneeStateEl.value.trim() }));
-  includeKeywordsEl.addEventListener("change", () =>
-    chrome.storage.local.set({ [INCLUDE_KEYWORDS_KEY]: includeKeywordsEl.value.trim() })
-  );
-  excludeKeywordsEl.addEventListener("change", () =>
-    chrome.storage.local.set({ [EXCLUDE_KEYWORDS_KEY]: excludeKeywordsEl.value.trim() })
-  );
-  bidStartDateFromEl.addEventListener("change", () =>
-    chrome.storage.local.set({ [DATE_FROM_KEY]: bidStartDateFromEl.value.trim() })
-  );
-  bidStartDateToEl.addEventListener("change", () =>
-    chrome.storage.local.set({ [DATE_TO_KEY]: bidStartDateToEl.value.trim() })
-  );
+  // Popups can be dismissed (click elsewhere, click the toolbar icon again,
+  // Esc) without the field ever losing focus first - and a "change" event
+  // only fires on blur. That silently dropped whatever was just typed every
+  // time (most noticeably the exclude/include keyword boxes, since those
+  // get edited and then the popup just gets closed, not tabbed away from).
+  // Saving on every "input" keystroke instead - no debounce - means
+  // whatever's in the field is already in storage by the time any close
+  // path can tear the popup down, at the cost of one small storage write
+  // per keystroke (cheap, and this popup has no other user-typed field
+  // sensitive to that).
+  function persistOnInput(el, key) {
+    const save = () => chrome.storage.local.set({ [key]: el.value.trim() });
+    el.addEventListener("input", save);
+    el.addEventListener("change", save);
+  }
+  persistOnInput(omsUrlEl, OMS_URL_KEY);
+  persistOnInput(omsUserNameEl, OMS_USER_KEY);
+  persistOnInput(consigneeStateEl, STATE_KEY);
+  persistOnInput(includeKeywordsEl, INCLUDE_KEYWORDS_KEY);
+  persistOnInput(excludeKeywordsEl, EXCLUDE_KEYWORDS_KEY);
+  persistOnInput(bidStartDateFromEl, DATE_FROM_KEY);
+  persistOnInput(bidStartDateToEl, DATE_TO_KEY);
 
   async function refreshUI() {
     const data = await chrome.storage.local.get([STORAGE_KEY, STATUS_KEY]);
@@ -151,10 +158,14 @@
       scanStateEl.className = "value warn";
       let msg = "";
       if (status.lastAction === "city_batch") {
-        const n = (status.cityIndex || 0) + 1;
-        const total = status.cityTotal || 1;
-        const step = status.phase === "search" ? "opening search" : "scanning pages + PDFs";
-        msg = `[${n}/${total}] ${status.cityLabel || ""} — ${step}… keep the GeM tab open.`;
+        if (status.phase === "apply") {
+          msg = `${status.cityLabel || "Sending to OMS…"} keep the GeM tab open.`;
+        } else {
+          const n = (status.cityIndex || 0) + 1;
+          const total = status.cityTotal || 1;
+          const step = status.phase === "search" ? "opening search" : "scanning pages + PDFs";
+          msg = `[${n}/${total}] ${status.cityLabel || ""} — ${step}… keep the GeM tab open.`;
+        }
       } else if (status.lastAction === "auto") {
         msg = `Page ${status.page || 1} in progress… keep the GeM tab open.`;
       } else if (status.lastAction === "pdf") {
@@ -166,7 +177,9 @@
       scanStateEl.textContent = "Idle";
       scanStateEl.className = "value ok";
       if (status && status.lastAction === "city_batch_done") {
-        statusEl.textContent = status.exported
+        statusEl.textContent = status.omsApplied
+          ? `City batch finished — ${status.omsRowCount || 0} bid(s) sent to the OMS.`
+          : status.exported
           ? "City batch finished — Excel file downloaded automatically."
           : "City batch finished, but there was nothing to export.";
       } else if (status && status.lastAction === "city_batch_error") {
@@ -258,6 +271,16 @@
         }
       }
       chrome.tabs.onUpdated.addListener(listener);
+    });
+  }
+
+  async function pushCityListToOms(state, cities) {
+    const omsUrl = (omsUrlEl.value || DEFAULT_OMS_URL).trim().replace(/\/+$/, "");
+    if (!omsUrl) return;
+    await fetch(`${omsUrl}/api/gem-bids/cities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state, cities }),
     });
   }
 
@@ -355,6 +378,13 @@
       if (result && result.ok) {
         cityListEl.value = result.cities.join("\n");
         statusEl.textContent = `Loaded ${result.cities.length} cities from GeM for ${state}. Review the list, then click Search + Scan.`;
+        // Best-effort: cache this real, freshly-read-from-GeM city list on
+        // the OMS so the Start Sync modal's city checkboxes (which the OMS
+        // has no other way to populate - bidplus.gem.gov.in blocks
+        // non-browser requests) have something accurate to show. A failure
+        // here (offline OMS, unusual OMS URL without permission) doesn't
+        // affect the city list this popup just loaded, so it's swallowed.
+        pushCityListToOms(state, result.cities).catch(() => {});
       } else {
         statusEl.textContent = `Could not read the city list (${(result && result.error) || "unknown error"}). ` +
           "You can still type city names in manually.";
