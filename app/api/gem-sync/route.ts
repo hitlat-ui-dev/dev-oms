@@ -52,6 +52,9 @@ function deduplicateListings(items: any[]) {
 // e.g. paired via "Add to Master List" against an already-live GeM
 // Catalogue item, just gets marked confirmed as-is).
 function promoteListingSetClause(doc: any): Record<string, any> {
+  // Clears any lastSyncError left over from an earlier failed attempt (see
+  // mark_listing_sync_failed below) - a successful sync supersedes it, so the
+  // Sync Checklist's red warning shouldn't keep showing after a retry works.
   const pending = doc?.pendingRevision;
   if (pending) {
     return {
@@ -62,9 +65,11 @@ function promoteListingSetClause(doc: any): Record<string, any> {
       pendingRevision: null,
       everSynced: true,
       status: "Synced",
+      lastSyncError: null,
+      lastSyncErrorAt: null,
     };
   }
-  return { everSynced: true, status: "Synced" };
+  return { everSynced: true, status: "Synced", lastSyncError: null, lastSyncErrorAt: null };
 }
 
 // GET: Fetch the shared console state from MongoDB (with auto-deduplicated listings).
@@ -361,6 +366,25 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: `No listing found for id=${id}.` }, { status: 404 });
       }
       await db.collection("gem_listings").updateOne({ id }, { $set: promoteListingSetClause(doc) });
+      return NextResponse.json({ success: true });
+    }
+
+    // Called by the extension's bulk Sync Checklist run when a single item's
+    // automation gives up on it (captcha kept coming back wrong, a field
+    // wasn't found, etc.) - leaves status/pendingRevision untouched (still
+    // Pending, still needs a real sync) but records why, so the Sync
+    // Checklist can show a visible warning on that specific row instead of
+    // it just silently staying Pending with no explanation.
+    if (action === "mark_listing_sync_failed") {
+      const id = (body.id || "").toString().trim();
+      const reason = (body.reason || "").toString().trim();
+      if (!id) {
+        return NextResponse.json({ error: "id is required" }, { status: 400 });
+      }
+      await db.collection("gem_listings").updateOne(
+        { id },
+        { $set: { lastSyncError: reason || "Unknown error", lastSyncErrorAt: new Date().toISOString() } }
+      );
       return NextResponse.json({ success: true });
     }
 

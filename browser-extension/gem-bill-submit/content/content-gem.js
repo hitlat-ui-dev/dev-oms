@@ -78,6 +78,124 @@
     }
   }
 
+  // Reads an already-loaded captcha <img> through the OMS backend's Gemini
+  // Vision OCR (/api/gem-captcha-ocr) instead of leaving it for the user to
+  // type. Every GeM captcha seen so far is same-origin (served by the GeM
+  // page itself), so drawing it to a canvas doesn't taint it - toDataURL
+  // works without any CORS workaround. Any failure along the way (OCR call
+  // fails, garbage/short result) just returns null - callers fall back to
+  // their existing "wait for the user to type it" behavior unchanged.
+  async function ocrCaptchaFromImage(img, omsOrigin) {
+    if (!omsOrigin) {
+      console.warn("[GeM Bill Auto-Submit] omsOrigin missing hai - captcha OCR call nahi ho sakta.");
+      return null;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      let imageDataUrl;
+      try {
+        imageDataUrl = canvas.toDataURL("image/png");
+      } catch (err) {
+        console.warn("[GeM Bill Auto-Submit] Captcha canvas se image nahi nikli:", err.message);
+        return null;
+      }
+
+      // Called DIRECTLY (not relayed through background.js) - a background
+      // service-worker fetch() risks getting cut off mid-request by MV3's
+      // lifecycle limits (confirmed live 19-Sep-2026: "message channel
+      // closed before a response was received" even with a keep-alive ping
+      // running). This content script has no such limit; the OMS API route
+      // sends permissive CORS headers itself to allow this cross-origin call
+      // (see app/api/gem-captcha-ocr/route.ts).
+      const res = await fetch(`${omsOrigin}/api/gem-captcha-ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageDataUrl }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.warn("[GeM Bill Auto-Submit] Captcha OCR fail hua:", errData.error || `status ${res.status}`);
+        return null;
+      }
+      const data = await res.json();
+
+      const text = String(data.text || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      return text.length === 6 ? text : null; // GeM's captcha text is always exactly 6 characters
+    } catch (err) {
+      console.warn("[GeM Bill Auto-Submit] Captcha OCR me error:", err.message);
+      return null;
+    }
+  }
+
+  // Finds the container holding a captcha image+input pair, anchored on a
+  // known GeM caption phrase rather than a specific id/src - both of those
+  // have been observed (confirmed live 19-Sep-2026 on the catalog Update
+  // Stock page) to stop matching after GeM regenerates the captcha (a fresh
+  // element, sometimes without preserving its id) or to never match at all
+  // (the image rendered from a data: URI containing no literal "captcha"
+  // text for a src match to find). GeM's own on-page caption text is
+  // comparatively stable since it's user-facing copy, not a generated
+  // id/src - captionRegex is whatever exact phrasing that particular page
+  // uses (confirmed to differ: the login page says "Type the characters in
+  // the box below", the catalog edit page says "Please enter the text shown
+  // in the above image").
+  function findCaptchaWidgetContainerByCaption(captionRegex) {
+    // Walks raw TEXT NODES (not elements) - confirmed live 19-Sep-2026 that
+    // requiring a childless leaf ELEMENT to match (the previous approach)
+    // found nothing at all, most likely because the caption's own markup
+    // wraps the text in something (an icon, a nested span) that this file
+    // has no live DevTools inspection of yet. A TreeWalker over text nodes
+    // finds the phrase regardless of whatever element structure wraps it.
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let caption = null;
+    let node;
+    while ((node = walker.nextNode())) {
+      if (captionRegex.test(node.textContent || "")) {
+        caption = node.parentElement;
+        break;
+      }
+    }
+    if (!caption) return null;
+
+    let container = caption;
+    let hops = 0;
+    while (container && hops < 6) {
+      if (container.querySelector("img") && container.querySelector('input[type="text"], input:not([type])')) {
+        return container;
+      }
+      container = container.parentElement;
+      hops++;
+    }
+    return null;
+  }
+
+  function findCaptchaImageByCaption(captionRegex) {
+    const container = findCaptchaWidgetContainerByCaption(captionRegex);
+    if (!container) return null;
+    return Array.from(container.querySelectorAll("img")).find((im) => isVisible(im) && im.complete && im.naturalWidth > 0) || null;
+  }
+
+  // Login page's captcha specifically - <img id="captcha1">, confirmed live
+  // 19-Sep-2026 via DevTools on sso.gem.gov.in. Falls back to the caption-
+  // anchored search above if that id doesn't match within a few seconds
+  // (confirmed live 19-Sep-2026: this id sometimes doesn't match at all,
+  // same failure mode observed on the catalog edit page's captcha).
+  async function ocrCaptcha(omsOrigin) {
+    const byId = await waitForElementMatching(() => {
+      const el = document.getElementById("captcha1");
+      return el && isVisible(el) && el.complete && el.naturalWidth > 0 ? el : null;
+    }, 4000).catch(() => null);
+
+    const img = byId || findCaptchaImageByCaption(/type the characters in the box below/i);
+    if (!img) return null;
+
+    return ocrCaptchaFromImage(img, omsOrigin);
+  }
+
   async function fillUsernameAndCaptchaStep(data) {
     const usernameField = await waitForElement("#loginid", 10000).catch(() => null);
     if (!usernameField) {
@@ -86,7 +204,7 @@
     }
     setNativeValue(usernameField, data.gemUserId);
     fireEvents(usernameField);
-    console.log("[GeM Bill Auto-Submit] User ID fill kar diya. Captcha manually daalo - bharte hi Submit apne aap ho jayega.");
+    console.log("[GeM Bill Auto-Submit] User ID fill kar diya. Captcha OCR se read karne ki koshish kar raha hu - nahi bana to manually daal dena, bharte hi Submit apne aap ho jayega.");
 
     const captchaField = await waitForElement("#captcha_math", 10000).catch(() => null);
     if (!captchaField) {
@@ -94,10 +212,10 @@
       return;
     }
 
-    // Debounced on the captcha field's own input event - waits for the user
-    // to stop typing (not just the first keystroke) before treating it as
-    // "filled in" and clicking Submit.
-    await new Promise((resolve) => {
+    // Debounced on the captcha field's own input event - waits for whoever
+    // (OCR below, or the user typing) to stop changing it before treating it
+    // as "filled in" and clicking Submit.
+    const filled = new Promise((resolve) => {
       let debounceId;
       const onInput = () => {
         clearTimeout(debounceId);
@@ -109,6 +227,17 @@
       };
       captchaField.addEventListener("input", onInput);
     });
+
+    // Fired in the background (not awaited here) so a slow OCR round-trip
+    // never blocks a human who's already typing the captcha themselves.
+    ocrCaptcha(data.omsOrigin).then((text) => {
+      if (!text) return;
+      console.log("[GeM Bill Auto-Submit] Captcha OCR se read kar liya:", text);
+      setNativeValue(captchaField, text);
+      fireEvents(captchaField);
+    });
+
+    await filled;
 
     const submitBtn = Array.from(document.querySelectorAll("button")).find(
       (b) => isVisible(b) && /^submit$/i.test(b.textContent.trim())
@@ -297,14 +426,53 @@
       }
     } catch (err) {
       console.error("[GeM Bill Auto-Submit] Catalogue update automation fail hua:", err);
-      alert(`GeM catalogue update me error aaya: ${err.message}\n\nKripya manually complete karo, phir Sync Checklist me khud tick karo.`);
-      chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+
+      // A bulk run shouldn't block on alert() waiting for a human who may
+      // not be watching this tab - one item failing (unexpectedly, not just
+      // the captcha-retry-exhausted case catalogueStockUpdateStep already
+      // handles) gets recorded and skipped instead, same as any other
+      // failure in a batch. A single (non-bulk) sync keeps the original
+      // alert-and-stop behavior, since there IS a human waiting on it here.
+      const { pendingCatalogueQueue } = await chrome.storage.local.get("pendingCatalogueQueue");
+      if (pendingCatalogueQueue && data.listingId) {
+        await markFailedAndAdvance(data, err.message);
+      } else {
+        alert(`GeM catalogue update me error aaya: ${err.message}\n\nKripya manually complete karo, phir Sync Checklist me khud tick karo.`);
+        chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+      }
     }
   }
 
   async function setCatalogueStep(data, step) {
     data.step = step;
     await chrome.runtime.sendMessage({ type: "SET_PENDING_CATALOGUE_UPDATE_STEP", step });
+  }
+
+  // Records why this item couldn't be synced (visible on its own Sync
+  // Checklist row - see MARK_CHECKLIST_SYNC_FAILED in background.js), then
+  // moves the bulk run on to whatever's next in the queue.
+  async function markFailedAndAdvance(data, reason) {
+    try {
+      await chrome.runtime.sendMessage({ type: "MARK_CHECKLIST_SYNC_FAILED", omsOrigin: data.omsOrigin, listingId: data.listingId, reason });
+    } catch (err) {
+      console.warn("[GeM Bill Auto-Submit] OMS ko fail-mark bhejne me error:", err.message);
+    }
+    await tryAdvanceQueue();
+  }
+
+  // Asks background.js whether another item is queued (see
+  // advanceCatalogueQueue in background.js) - a no-op returning false if
+  // this run was never part of a bulk batch to begin with. Navigating back
+  // to CATALOGUE_INDEX_URL re-triggers checkPendingCatalogueUpdate fresh for
+  // whichever item advanceCatalogueQueue just made current.
+  async function tryAdvanceQueue() {
+    const response = await chrome.runtime.sendMessage({ type: "ADVANCE_CATALOGUE_QUEUE" }).catch(() => ({ hasNext: false }));
+    if (response?.hasNext) {
+      console.log("[GeM Bill Auto-Submit] Bulk run - agla item process kar raha hu.");
+      window.location.href = CATALOGUE_INDEX_URL;
+      return true;
+    }
+    return false;
   }
 
   // Same #loginid/#captcha_math page as checkPendingLogin's username step,
@@ -317,7 +485,7 @@
     }
     setNativeValue(usernameField, data.gemUserId);
     fireEvents(usernameField);
-    console.log("[GeM Bill Auto-Submit] (Catalogue update) User ID fill kar diya. Captcha manually daalo.");
+    console.log("[GeM Bill Auto-Submit] (Catalogue update) User ID fill kar diya. Captcha OCR se read karne ki koshish kar raha hu.");
 
     const captchaField = await waitForElement("#captcha_math", 10000).catch(() => null);
     if (!captchaField) {
@@ -325,7 +493,7 @@
       return;
     }
 
-    await new Promise((resolve) => {
+    const filled = new Promise((resolve) => {
       let debounceId;
       const onInput = () => {
         clearTimeout(debounceId);
@@ -337,6 +505,15 @@
       };
       captchaField.addEventListener("input", onInput);
     });
+
+    ocrCaptcha(data.omsOrigin).then((text) => {
+      if (!text) return;
+      console.log("[GeM Bill Auto-Submit] (Catalogue update) Captcha OCR se read kar liya:", text);
+      setNativeValue(captchaField, text);
+      fireEvents(captchaField);
+    });
+
+    await filled;
 
     const submitBtn = Array.from(document.querySelectorAll("button")).find(
       (b) => isVisible(b) && /^submit$/i.test(b.textContent.trim())
@@ -479,6 +656,35 @@
     return !!btn;
   }
 
+  // Same isTrusted problem publishSellItemStep already hit and fixed for
+  // "SELL THIS ITEM" (see its own comment further down) - a plain .click()
+  // silently does nothing, no error shown, just no reaction at all.
+  // Confirmed live 19-Sep-2026 on the catalog edit page's "UPDATE STOCK"
+  // button: its markup carries a custom `one-click` directive alongside
+  // ng-click, whose naming strongly suggests it only reacts to a genuinely
+  // trusted click event - exactly the kind of guard a script-dispatched
+  // .click() (isTrusted: false) would silently fail. Goes straight to the
+  // trusted click via chrome.debugger (same trustedClick() used there)
+  // rather than trying a plain click first, since that's already confirmed
+  // to do nothing useful for this specific button.
+  async function trustedClickButtonByText(textRegex) {
+    const btn = findButtonByText(textRegex);
+    if (!btn) return false;
+
+    btn.scrollIntoView({ block: "center" });
+    await sleep(200);
+    const rect = btn.getBoundingClientRect();
+    const result = await chrome.runtime
+      .sendMessage({ type: "TRUSTED_CLICK", x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      .catch((err) => ({ success: false, error: err.message }));
+
+    if (!result?.success) {
+      console.warn("[GeM Bill Auto-Submit] Trusted click fail hua:", result?.error, "- plain click try kar raha hu.");
+      btn.click();
+    }
+    return true;
+  }
+
   function escapeRegex(str) {
     return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
@@ -527,6 +733,7 @@
 
     if (!searchInput) {
       console.warn("[GeM Bill Auto-Submit] Catalogue Search box nahi mila.");
+      await markFailedAndAdvance(data, "Catalogue Search box nahi mila.");
       return;
     }
 
@@ -536,6 +743,7 @@
     const clicked = clickButtonByText(/^search$/i);
     if (!clicked) {
       console.warn("[GeM Bill Auto-Submit] Search button nahi mila.");
+      await markFailedAndAdvance(data, "Search button nahi mila.");
       return;
     }
 
@@ -552,6 +760,7 @@
 
     if (!editLink) {
       console.warn(`[GeM Bill Auto-Submit] Product ID "${data.productId}" search results me nahi mila.`);
+      await markFailedAndAdvance(data, `Product ID "${data.productId}" search results me nahi mila.`);
       return;
     }
 
@@ -576,6 +785,7 @@
 
     if (!editPageReady) {
       console.warn("[GeM Bill Auto-Submit] Edit page load hone ka wait karte hue timeout ho gaya - manually complete karo.");
+      await markFailedAndAdvance(data, "Edit page load hone ka wait karte hue timeout ho gaya.");
       return;
     }
 
@@ -606,13 +816,11 @@
         "[GeM Bill Auto-Submit] GeM ka 30-din price-increase restriction laga hua hai is product par - Rate update SKIP ho gaya, Stock/Min Qty phir bhi update hoga."
       );
     } else {
-      await waitForCaptchaIfPresent(data.omsOrigin);
       // NOT an exact-text match ("save"/"update"/"submit" alone) - GeM's real
       // buttons here are multi-word (e.g. "UPDATE STOCK", confirmed live
       // 01-Sep-2026), so this needs to match one of those words ANYWHERE in
       // the button text, not the whole text.
-      clickButtonByText(/\b(save|update|submit)\b/i);
-      await sleep(1500);
+      await saveWithCaptchaRetry(data.omsOrigin, /\b(save|update|submit)\b/i);
     }
 
     await setCatalogueStep(data, "STOCK_UPDATE");
@@ -634,6 +842,16 @@
       didAnything = setLabeledInputValue(/minimum\s*quantity\s*per\s*consignee/i, data.newMinQty) || didAnything;
     }
 
+    // Tracks whether this item genuinely went through, rather than assuming
+    // success just because nothing threw - a captcha that never comes out
+    // right after saveWithCaptchaRetry's own retries, or the fields not even
+    // being found, both need to end up as MARK_CHECKLIST_SYNC_FAILED below,
+    // not MARK_CHECKLIST_SYNCED (confirmed live 19-Sep-2026: this used to
+    // mark a listing Synced unconditionally regardless of whether the save
+    // actually succeeded).
+    let succeeded = false;
+    let failureReason = "";
+
     if (didAnything) {
       // "I confirm that all the details for my offering are up to date" -
       // GeM won't accept the update without this ticked (confirmed live
@@ -645,26 +863,43 @@
         console.warn('[GeM Bill Auto-Submit] "I confirm that all the details..." checkbox nahi mila - manually tick karo.');
       }
 
-      await waitForCaptchaIfPresent(data.omsOrigin);
       // NOT an exact-text match - see the same note in catalogueRateUpdateStep
       // above (GeM's real button here is "UPDATE STOCK", confirmed live 01-Sep-2026).
-      clickButtonByText(/\b(save|update|submit)\b/i);
-      await sleep(1500);
-      console.log("[GeM Bill Auto-Submit] Stock/Min Qty update kar diya.");
+      succeeded = await saveWithCaptchaRetry(data.omsOrigin, /\b(save|update|submit)\b/i);
+      if (succeeded) {
+        console.log("[GeM Bill Auto-Submit] Stock/Min Qty update kar diya.");
+      } else {
+        failureReason = "Captcha baar-baar galat/khali raha (3 attempts ke baad bhi).";
+      }
     } else {
-      console.warn(
-        "[GeM Bill Auto-Submit] Current Stock / Min Qty fields is page par nahi mile - manually update karo, phir Sync Checklist me khud tick karo."
-      );
+      failureReason = "Current Stock / Min Qty fields is page par nahi mile.";
+      console.warn(`[GeM Bill Auto-Submit] ${failureReason} - manually update karo, phir Sync Checklist me khud tick karo.`);
     }
 
-    try {
-      await chrome.runtime.sendMessage({ type: "MARK_CHECKLIST_SYNCED", omsOrigin: data.omsOrigin, listingId: data.listingId });
-      console.log("[GeM Bill Auto-Submit] OMS Sync Checklist me is item ko Synced mark kar diya.");
-    } catch (err) {
-      console.warn("[GeM Bill Auto-Submit] OMS ko sync-mark bhejne me error:", err.message);
+    if (succeeded) {
+      try {
+        await chrome.runtime.sendMessage({ type: "MARK_CHECKLIST_SYNCED", omsOrigin: data.omsOrigin, listingId: data.listingId });
+        console.log("[GeM Bill Auto-Submit] OMS Sync Checklist me is item ko Synced mark kar diya.");
+      } catch (err) {
+        console.warn("[GeM Bill Auto-Submit] OMS ko sync-mark bhejne me error:", err.message);
+      }
+    } else {
+      try {
+        await chrome.runtime.sendMessage({ type: "MARK_CHECKLIST_SYNC_FAILED", omsOrigin: data.omsOrigin, listingId: data.listingId, reason: failureReason });
+        console.log("[GeM Bill Auto-Submit] OMS Sync Checklist me is item ko failed mark kar diya:", failureReason);
+      } catch (err) {
+        console.warn("[GeM Bill Auto-Submit] OMS ko fail-mark bhejne me error:", err.message);
+      }
     }
 
-    await chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+    // Bulk run - move on to whatever's next in the queue (a no-op if this
+    // wasn't part of one). Only clear pendingCatalogueUpdate when nothing
+    // follows - advanceCatalogueQueue already overwrote it with the NEXT
+    // item's data when hasNext is true, so clearing here would wipe that out.
+    const advanced = await tryAdvanceQueue();
+    if (!advanced) {
+      await chrome.runtime.sendMessage({ type: "CLEAR_PENDING_CATALOGUE_UPDATE" });
+    }
   }
 
   // ===== New Upload Link "Publish to GeM": create a brand-new offering =====
@@ -1798,20 +2033,62 @@
   // pushes a visible banner onto the OMS tab itself, not just a console.log
   // here that's easy to miss while watching the GeM tab.
   async function waitForCaptchaIfPresent(omsOrigin) {
-    const findCaptchaInput = () => {
-      // #captcha-text confirmed live 01-Sep-2026 as the real id on this page -
-      // checked FIRST and directly, since the old broad fallback below
-      // (matching ANY input whose nearby container text mentions "captcha")
-      // was climbing up to a shared ancestor (a whole <form> wrapping Rate/
-      // Stock/Min Qty AND the captcha section together) and matching Current
-      // Stock or another field INSTEAD of the real captcha box, because that
-      // ancestor's full text also happens to mention "captcha" somewhere
-      // below. That meant this was silently waiting on the wrong element's
-      // value forever - kept only as a fallback now, for any other GeM page
-      // that reuses this same wait with a different id.
-      const byId = document.getElementById("captcha-text");
-      if (byId && isVisible(byId)) return byId;
+    // Confirmed live 19-Sep-2026 via DevTools (actual outerHTML, not a
+    // screenshot guess) - this whole widget is a custom Angular directive
+    // with a STABLE outer container id, unlike the <img>/<input> inside it:
+    //   <show-captcha entered-captcha="catSvc.data.captcha" ...>
+    //     <div id="simple_captcha">
+    //       <div class="simple_captcha_image">
+    //         <img alt="simple_captcha.jpg" ng-src="https://admin-mkp.gem.gov.in/simple_captcha/simple_captcha?...">
+    //         <i class="fa fa-refresh" ng-click="createCaptchaUrl()"></i>
+    //       </div>
+    //       <div class="simple_captcha_field">
+    //         <input type="text" id="captcha-text" ng-model="enteredCaptcha" ...>
+    //       </div>
+    //       <div class="simple_captcha_label">...</div>
+    //     </div>
+    //   </show-captcha>
+    // Two earlier attempts to find the image/input WITHOUT this container -
+    // matching the image's src/alt for "captcha", then matching a nearby
+    // caption's text - both failed to find anything at all live (no
+    // "Captcha OCR..." log of any kind, meaning the lookup itself returned
+    // null before ever reaching a fetch). #simple_captcha is a plain,
+    // directly-set id that isn't part of whatever Angular regenerates when
+    // the confirm-checkbox below is ticked, so anchoring on it instead of
+    // its contents should survive that regeneration too.
+    const findCaptchaContainer = () => document.getElementById("simple_captcha");
 
+    const findCaptchaImageAnywhere = () => {
+      const container = findCaptchaContainer();
+      if (!container) return null;
+      const img = container.querySelector("img");
+      return img && isVisible(img) && img.complete && img.naturalWidth > 0 ? img : null;
+    };
+
+    // The ONLY lookup ever trusted to WRITE into (OCR-fill below) - typing
+    // an OCR'd answer into a wrongly-matched element is destructive (it
+    // silently overwrites whatever real field that was), unlike the broad
+    // fallback further down which is only ever used to READ a value while
+    // polling - worst case there is waiting on the wrong field forever,
+    // never corrupting one.
+    const findCaptchaInputStrict = () => {
+      const container = findCaptchaContainer();
+      if (!container) return null;
+      const input = container.querySelector('input[type="text"], input:not([type])');
+      return input && isVisible(input) ? input : null;
+    };
+
+    const findCaptchaInput = () => {
+      const strict = findCaptchaInputStrict();
+      if (strict) return strict;
+
+      // Old broad fallback - confirmed live 19-Sep-2026 to sometimes match
+      // Current Stock or Minimum Quantity Per Consignee INSTEAD of the real
+      // captcha box, because they share a form ancestor whose combined text
+      // also happens to mention "captcha" somewhere below. Kept only for the
+      // read-only polling wait at the bottom of this function - never used
+      // for the OCR-fill above, which only ever calls findCaptchaInputStrict
+      // directly for exactly this reason.
       return Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find((inp) => {
         if (!isVisible(inp)) return false;
         const id = (inp.id || "").toLowerCase();
@@ -1823,13 +2100,70 @@
       });
     };
 
-    if (!findCaptchaInput()) return;
+    // Waits for the STABLE CONTAINER specifically first (not the broad
+    // fallback below) - confirmed live 19-Sep-2026 that <show-captcha>/
+    // #simple_captcha is an ng-if in GeM's Angular code (catSvc.data.mode
+    // === 'stock_edit'), which REMOVES the element from the DOM entirely
+    // rather than merely hiding it while that condition is false. That
+    // transition can take noticeably longer than a brief settle delay after
+    // the confirm-checkbox click above - checking too soon (or falling
+    // straight through to the broad fallback, which can match a
+    // plausible-looking but WRONG input elsewhere in the form while the
+    // real captcha section still doesn't exist yet) silently skipped
+    // captcha-handling entirely and let the caller click Save/Update with
+    // the field still empty ("Please enter captcha").
+    const container = await waitForElementMatching(findCaptchaContainer, 15000).catch(() => null);
 
-    console.log("[GeM Bill Auto-Submit] Is page par bhi Captcha hai - manually bhar do, bharte hi Save/Submit apne aap ho jayega.");
+    // Old broad fallback used only if the container itself never showed up
+    // at all within that time - i.e. this run genuinely has no captcha (or
+    // GeM changed this page's structure again). See its own comment above
+    // for why it's never trusted to WRITE into.
+    const captchaInput = container
+      ? Array.from(container.querySelectorAll('input[type="text"], input:not([type])')).find(isVisible)
+      : await waitForElementMatching(() => findCaptchaInput(), 5000).catch(() => null);
+    if (!captchaInput) return;
+
+    console.log("[GeM Bill Auto-Submit] Is page par bhi Captcha hai - OCR se read karne ki koshish kar raha hu, nahi bana to manually bhar do (bharte hi Save/Submit apne aap ho jayega).");
     if (omsOrigin) {
       chrome.runtime
-        .sendMessage({ type: "NOTIFY_OMS", omsOrigin, text: "⚠️ GeM tab me Captcha bharo — bharte hi update apne aap ho jayega." })
+        .sendMessage({ type: "NOTIFY_OMS", omsOrigin, text: "⚠️ GeM tab me Captcha hai - OCR se bharne ki koshish ho rahi hai, agar na bhare to manually bhar do." })
         .catch(() => {}); // OMS tab not open, or messaging failed - not fatal, GeM tab itself is still usable
+    }
+
+    // Waits (via POLLING, not waitForElementMatching's MutationObserver -
+    // see waitForCondition's own comment for why) for the image to actually
+    // finish LOADING (img.complete && naturalWidth > 0), not just for it to
+    // exist in the DOM. Confirmed live 19-Sep-2026 that the container+img+
+    // input were all genuinely present exactly as expected (verified
+    // directly in the Elements panel) yet findCaptchaImageAnywhere() still
+    // returned null right after a flat 600ms delay - GeM's
+    // <i class="fa fa-refresh" ng-click="createCaptchaUrl()"> sets a fresh
+    // ng-src whenever the captcha regenerates (confirmed live 01-Sep-2026
+    // that ticking the confirm-checkbox above triggers exactly that
+    // regeneration), and while that new image is still downloading from
+    // GeM's own server, .complete is false and .naturalWidth is 0 - a flat
+    // delay (or a mutation-based wait, since the load finishing isn't a DOM
+    // mutation) can easily lose that race on a slow load.
+    const captchaImg = await waitForCondition(findCaptchaImageAnywhere, 8000).catch(() => null);
+
+    // Fire-and-forget, same reasoning as the login page's OCR (ocrCaptcha
+    // above) - a slow OCR round-trip shouldn't block a human who's already
+    // typing.
+    //
+    // Uses simulateTyping, NOT setNativeValue+fireEvents - this is the same
+    // AngularJS ng-model-bound input as Rate/Stock/Min Qty (confirmed live
+    // 01-Sep-2026, see simulateTyping's own comment above), which only
+    // registers a change via real per-character keyboard events.
+    if (captchaImg) {
+      ocrCaptchaFromImage(captchaImg, omsOrigin).then((text) => {
+        if (!text) return;
+        const liveInput = findCaptchaInputStrict(); // strict re-find right before typing - see note above
+        if (!liveInput) return;
+        console.log("[GeM Bill Auto-Submit] Is page ka Captcha OCR se read kar liya:", text);
+        simulateTyping(liveInput, text);
+      });
+    } else {
+      console.warn("[GeM Bill Auto-Submit] Captcha image nahi mili OCR ke liye - manually bhar do.");
     }
 
     // Polls the LIVE DOM (re-finds the captcha input fresh every tick)
@@ -1856,8 +2190,98 @@
     });
   }
 
+  // The "reload captcha and try again" refresh control - <i class="fa
+  // fa-refresh" ng-click="createCaptchaUrl()"> sitting next to the image
+  // inside #simple_captcha (confirmed live 19-Sep-2026 via DevTools, see
+  // waitForCaptchaIfPresent's own HTML comment for the full structure).
+  function clickCaptchaRefreshIfPresent() {
+    const container = document.getElementById("simple_captcha");
+    const refreshBtn = container && container.querySelector('.fa-refresh, [ng-click*="createCaptchaUrl"]');
+    if (refreshBtn) refreshBtn.click();
+    return !!refreshBtn;
+  }
+
+  // Wraps waitForCaptchaIfPresent + a Save/Update click in a retry loop -
+  // OCR's answer is sometimes just wrong (character confusions like I/1,
+  // O/0 are a known OCR failure mode, human or automated) and GeM's own
+  // response to that is a fresh captcha needing another attempt, not a dead
+  // end (confirmed live 19-Sep-2026: "Invalid Captcha"). Also covers
+  // waitForCaptchaIfPresent's other confirmed-live case, the widget not
+  // existing in the DOM at all until this button is clicked once ("Please
+  // enter captcha") - both surface through the same retry here. Bounded to
+  // maxAttempts so a captcha OCR keeps getting wrong on doesn't loop
+  // forever; the outer pendingCatalogueUpdate's own 15-minute staleness
+  // timeout is the hard backstop regardless.
+  // Returns true once Save/Update goes through cleanly, false if maxAttempts
+  // are exhausted without that - callers use this to decide whether the item
+  // actually succeeded (MARK_CHECKLIST_SYNCED) or needs to be recorded as
+  // failed (MARK_CHECKLIST_SYNC_FAILED) rather than assuming success just
+  // because this function returned at all.
+  async function saveWithCaptchaRetry(omsOrigin, saveButtonRegex, maxAttempts = 3) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await waitForCaptchaIfPresent(omsOrigin);
+      // trustedClickButtonByText, NOT clickButtonByText - see its own
+      // comment for why a plain .click() silently does nothing on this
+      // button (confirmed live 19-Sep-2026: captcha filled correctly, no
+      // error shown, button just never reacted).
+      await trustedClickButtonByText(saveButtonRegex);
+      await sleep(1500);
+
+      const captchaRejected = /invalid captcha|please enter captcha/i.test(document.body.textContent || "");
+      if (!captchaRejected) return true; // succeeded, or this page never had a captcha to begin with
+
+      if (attempt < maxAttempts) {
+        console.log(`[GeM Bill Auto-Submit] Captcha galat ya khali tha (attempt ${attempt}/${maxAttempts}) - refresh karke dobara try kar raha hu.`);
+        clickCaptchaRefreshIfPresent();
+        await sleep(800); // let GeM swap in the fresh image before the next waitForCaptchaIfPresent runs
+
+        // Clears whatever wrong answer is still sitting in the box from this
+        // attempt - otherwise waitForCaptchaIfPresent's own "wait until 6
+        // characters are typed" polling loop on the next attempt would see
+        // that STALE (already-known-wrong) value and resolve immediately,
+        // resubmitting it again instead of waiting for the fresh OCR read.
+        const container = document.getElementById("simple_captcha");
+        const staleInput = container && container.querySelector('input[type="text"], input:not([type])');
+        if (staleInput) setNativeValue(staleInput, "");
+      } else {
+        console.warn(`[GeM Bill Auto-Submit] Captcha ${maxAttempts} baar try karne ke baad bhi sahi nahi bana - manually complete karo.`);
+        return false;
+      }
+    }
+    return false;
+  }
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Polls checkFn on an interval until it returns a truthy value, instead of
+  // waiting for a DOM mutation like waitForElementMatching does - needed for
+  // conditions that change WITHOUT any DOM mutation firing at all, such as
+  // an already-present <img> finishing its own async load (img.complete /
+  // naturalWidth flip once the browser finishes downloading it - that's an
+  // internal resource-loading state change, not a DOM tree/attribute
+  // mutation, so a MutationObserver-based wait never re-checks it and just
+  // times out unhelpfully instead).
+  function waitForCondition(checkFn, timeoutMs, intervalMs = 300) {
+    return new Promise((resolve, reject) => {
+      const immediate = checkFn();
+      if (immediate) return resolve(immediate);
+
+      const intervalId = setInterval(() => {
+        const result = checkFn();
+        if (result) {
+          clearInterval(intervalId);
+          clearTimeout(timeoutId);
+          resolve(result);
+        }
+      }, intervalMs);
+
+      const timeoutId = setTimeout(() => {
+        clearInterval(intervalId);
+        reject(new Error(`Condition not met within ${timeoutMs}ms.`));
+      }, timeoutMs);
+    });
   }
 
   function waitForUrlContains(fragment, timeoutMs = MAX_WAIT_MS) {

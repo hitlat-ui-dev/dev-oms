@@ -38,7 +38,7 @@ import {
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
 import BuildSheetModal from "@/components/gemSync/BuildSheetModal";
-import { triggerGemCatalogueUpdate, triggerGemCataloguePublish } from "@/lib/triggerGemSubmit";
+import { triggerGemCatalogueUpdate, triggerGemCataloguePublish, triggerGemBulkCatalogueUpdate } from "@/lib/triggerGemSubmit";
 
 // Types definition
 interface Buyer {
@@ -113,6 +113,14 @@ interface FirmItemListing {
     availGemStock: number;
     minQty: number;
   };
+  // Set by the extension when a Bulk Sync run gives up on this specific item
+  // (captcha kept coming back wrong, a field wasn't found) - status stays
+  // "Pending" (it still needs a real sync), this is just why the last
+  // attempt didn't go through. Cleared automatically the next time this
+  // listing syncs successfully (see promoteListingSetClause in
+  // app/api/gem-sync/route.ts).
+  lastSyncError?: string | null;
+  lastSyncErrorAt?: string | null;
 }
 
 interface RateHistory {
@@ -310,6 +318,7 @@ export default function GeMSyncPage() {
   const [showAllSynced, setShowAllSynced] = useState<boolean>(false);
   const [gemCredentials, setGemCredentials] = useState<{ firmCode: string; gemUserId: string; gemPassword: string; gemMailId: string }[]>([]);
   const [syncingListingId, setSyncingListingId] = useState<string | null>(null);
+  const [bulkSyncingFirmCode, setBulkSyncingFirmCode] = useState<string | null>(null);
   const [publishingEntryId, setPublishingEntryId] = useState<string | null>(null);
   // Set once a Sync-to-GeM or Publish-to-GeM automation is handed to the
   // extension. Both flows end by writing to Mongo straight from the GeM tab
@@ -2887,6 +2896,71 @@ export default function GeMSyncPage() {
     }
   };
 
+  // Sync Checklist's "Bulk Sync" button - every "Pending" listing under this
+  // firm card in one go, processed by the extension one at a time in a
+  // single GeM tab/session (logs in once, not per item). Only items whose
+  // effective target firm (pendingRevision.firmCode, falling back to the
+  // confirmed firmCode) actually matches THIS card are included - one set of
+  // credentials drives the whole batch, so a listing whose staged revision
+  // moves it to a DIFFERENT firm is left for its own individual "Sync to
+  // GeM" button instead (that one already looks up the right firm's
+  // credentials per item). Same for a listing with no resolvable Product ID.
+  const handleBulkSyncFirm = async (firm: { firmCode: string; firmName: string }, firmListings: FirmItemListing[]) => {
+    const cred = gemCredentials.find(c => c.firmCode === firm.firmCode);
+    if (!cred || !cred.gemUserId || !cred.gemPassword) {
+      alert(`"${firm.firmCode}" firm ke GeM login credentials "GeM Login Setup" me save nahi hai - pehle wahan save karo.`);
+      return;
+    }
+
+    const items: { productId: string; newRate?: number; newStock?: number; newMinQty?: number; listingId: string }[] = [];
+    const skipped: string[] = [];
+
+    for (const lst of firmListings.filter(l => l.status === "Pending")) {
+      const toPush = lst.pendingRevision || { firmCode: lst.firmCode, rate: lst.rate, availGemStock: lst.availGemStock || 0, minQty: lst.minQty };
+      if (toPush.firmCode !== firm.firmCode) {
+        skipped.push(`${lst.itemName} (iski revision "${toPush.firmCode}" firm me le ja rahi hai - individually "Sync to GeM" se karo)`);
+        continue;
+      }
+      const productId = lst.gemCatalogueId || (lst.gemLink ? extractProductIdFromGemLink(lst.gemLink) : "");
+      if (!productId) {
+        skipped.push(`${lst.itemName} (Product ID nahi mila)`);
+        continue;
+      }
+      items.push({ productId, newRate: toPush.rate, newStock: toPush.availGemStock, newMinQty: toPush.minQty, listingId: lst.id });
+    }
+
+    if (items.length === 0) {
+      alert("Is firm ke koi Pending item bulk sync ke liye eligible nahi hai." + (skipped.length ? `\n\nSkip hue:\n${skipped.join("\n")}` : ""));
+      return;
+    }
+
+    const confirmMsg =
+      `${items.length} item(s) GeM par ek-ek karke sync honge (login sirf ek baar hoga).` +
+      (skipped.length ? `\n\n${skipped.length} item(s) is batch me skip ho gaye:\n${skipped.join("\n")}` : "") +
+      `\n\nContinue karein?`;
+    if (!confirm(confirmMsg)) return;
+
+    setBulkSyncingFirmCode(firm.firmCode);
+    try {
+      await triggerGemBulkCatalogueUpdate({
+        gemUserId: cred.gemUserId,
+        gemPassword: cred.gemPassword,
+        gemMailId: cred.gemMailId,
+        firmCode: firm.firmCode,
+        items,
+      });
+      awaitingGemSyncRef.current = true;
+      logGemAction("sync_stock_update", { firmCode: firm.firmCode }, `${items.length} items (bulk)`);
+      alert(
+        `✓ GeM tab khul gaya, bulk sync shuru ho gaya (${items.length} items). Har item ka captcha khud OCR se bharega. Poora hone par har row apne aap Synced ho jayegi - agar koi item fail ho, us row par warning dikhegi.`
+      );
+    } catch (err: any) {
+      alert("Extension trigger nahi hua: " + err.message);
+    } finally {
+      setBulkSyncingFirmCode(null);
+    }
+  };
+
   // "PUBLISH TO GEM" - the New Upload Link counterpart of Stock Update's
   // "Sync to GeM". That one edits an offering this firm already has; this one
   // creates the offering itself against the marketplace product the sheet row
@@ -4474,10 +4548,11 @@ export default function GeMSyncPage() {
 
                 return firmsToShow.map(firm => {
                   const allFirmListings = listings.filter(l => l.firmCode === firm.firmCode);
-                  const displayListings = showAllSynced 
-                    ? allFirmListings 
+                  const displayListings = showAllSynced
+                    ? allFirmListings
                     : allFirmListings.filter(l => l.status === "Pending");
                   const syncedCount = allFirmListings.filter(l => l.status === "Synced").length;
+                  const pendingCount = allFirmListings.length - syncedCount;
 
                   return (
                     <div key={firm._id} className="bg-[var(--gem-card)] rounded-2xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
@@ -4492,6 +4567,17 @@ export default function GeMSyncPage() {
                         </div>
 
                         <div className="text-right flex items-center gap-3">
+                          {pendingCount > 0 && (
+                            <button
+                              onClick={() => handleBulkSyncFirm(firm, allFirmListings)}
+                              disabled={bulkSyncingFirmCode === firm.firmCode}
+                              title="Is firm ke saare Pending items ek-ek karke GeM par sync karega (ek hi login session me)"
+                              className="text-[10px] font-black uppercase tracking-wider bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 hover:border-emerald-300 py-1.5 px-3.5 rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                            >
+                              <FiRefreshCw size={12} className={bulkSyncingFirmCode === firm.firmCode ? "animate-spin" : ""} />
+                              {bulkSyncingFirmCode === firm.firmCode ? "Bulk Syncing..." : `Bulk Sync (${pendingCount})`}
+                            </button>
+                          )}
                           <button
                             onClick={() => setShowAllSynced(!showAllSynced)}
                             className="text-[10px] font-black uppercase tracking-wider bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] hover:border-[var(--gem-border)] py-1.5 px-3.5 rounded-lg transition-all cursor-pointer"
@@ -4548,6 +4634,18 @@ export default function GeMSyncPage() {
                                       <span className="text-blue-600"><b>Sheet:</b> {lst.sheetName}</span>
                                     )}
                                   </span>
+                                  {/* Left by a Bulk Sync (or single Sync to GeM) run that gave up
+                                      on this item - status stays Pending, this just explains why the
+                                      last attempt didn't go through. Cleared automatically the next
+                                      time it syncs successfully (see promoteListingSetClause). */}
+                                  {lst.lastSyncError && (
+                                    <span
+                                      className="text-[10px] font-bold text-red-600 mt-1 inline-flex items-center gap-1"
+                                      title={lst.lastSyncErrorAt ? new Date(lst.lastSyncErrorAt).toLocaleString() : undefined}
+                                    >
+                                      <FiAlertTriangle size={11} /> Sync failed: {lst.lastSyncError}
+                                    </span>
+                                  )}
                                 </td>
 
                                 <td className="py-3.5 px-4">

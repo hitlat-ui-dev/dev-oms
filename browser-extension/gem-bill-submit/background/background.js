@@ -86,7 +86,12 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   }
 
   if (message.type === "GEM_LOGIN") {
-    handleGemLogin(message.payload)
+    // sender.origin (the OMS tab that clicked "Login") is stashed alongside
+    // the credentials so content-gem.js's captcha OCR step (see ocrCaptcha /
+    // ocrCaptchaFromImage in content-gem.js, which call the OMS's
+    // /api/gem-captcha-ocr directly) knows which OMS instance to call back -
+    // localhost while developing, the deployed origin otherwise.
+    handleGemLogin(message.payload, sender.origin)
       .then((result) => sendResponse({ success: true, result }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -108,6 +113,13 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 
   if (message.type === "PUBLISH_GEM_CATALOGUE_ITEM") {
     handlePublishGemCatalogueItem(message.payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "BULK_UPDATE_GEM_CATALOGUE_ITEMS") {
+    handleBulkUpdateGemCatalogueItems(message.payload)
       .then((result) => sendResponse({ success: true, result }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -154,6 +166,85 @@ async function handleUpdateGemCatalogueItem(payload) {
   // skip the whole login step for it, instead of always forcing a fresh login.
   const tab = await chrome.tabs.create({ url: CATALOGUE_INDEX_URL, active: true });
   return { tabId: tab.id, message: "GeM catalogue tab khola gaya - pehle se login hai to seedha update shuru hoga, warna login step aayega." };
+}
+
+// Sync Checklist's "Bulk Sync" button - every Pending listing under one firm
+// in a single GeM tab/session, processed one item at a time rather than
+// re-logging in per item. Stores the FULL list as pendingCatalogueQueue
+// (items + currentIndex + the shared credentials), and separately sets
+// pendingCatalogueUpdate to just the FIRST item - content-gem.js's existing
+// per-item state machine (checkPendingCatalogueUpdate) runs completely
+// unchanged for that item, with no idea it's part of a batch at all. Once it
+// finishes that item (success or failure - see advanceCatalogueQueue below),
+// content-gem.js asks background.js to advance the queue, which swaps
+// pendingCatalogueUpdate to the NEXT item and reports whether one existed;
+// content-gem.js then just navigates back to CATALOGUE_INDEX_URL to
+// continue, same as a fresh single-item run (already-logged-in detection
+// skips straight past the login step for every item after the first).
+async function handleBulkUpdateGemCatalogueItems(payload) {
+  const { gemUserId, gemPassword, gemMailId, firmCode, items, omsOrigin } = payload || {};
+  if (!gemUserId || !gemPassword) throw new Error("gemUserId aur gemPassword zaroori hain.");
+  if (!Array.isArray(items) || items.length === 0) throw new Error("items (kam se kam ek listing) zaroori hai.");
+  if (!omsOrigin) throw new Error("omsOrigin zaroori hai (checklist rows ko wapas sync-mark karne ke liye).");
+
+  const queueItems = items.map((it) => ({
+    productId: it.productId,
+    newRate: it.newRate,
+    newStock: it.newStock,
+    newMinQty: it.newMinQty,
+    listingId: it.listingId,
+  }));
+
+  await chrome.storage.local.set({
+    pendingCatalogueQueue: {
+      gemUserId, gemPassword, gemMailId: gemMailId || "", firmCode: firmCode || "", omsOrigin,
+      items: queueItems, currentIndex: 0, startedAt: Date.now(),
+    },
+    pendingCatalogueUpdate: {
+      gemUserId, gemPassword, gemMailId: gemMailId || "",
+      firmCode: firmCode || "", omsOrigin,
+      ...queueItems[0],
+      step: "LOGIN_USERNAME",
+      startedAt: Date.now(),
+    },
+  });
+
+  const tab = await chrome.tabs.create({ url: CATALOGUE_INDEX_URL, active: true });
+  return {
+    tabId: tab.id,
+    message: `GeM catalogue tab khola gaya - ${queueItems.length} items ek-ek karke sync honge, poora batch complete hone tak.`,
+  };
+}
+
+// Called by content-gem.js once a single item in a bulk run finishes
+// (success or failure) - swaps pendingCatalogueUpdate to the next queued
+// item (still logged in, same tab) and reports whether one existed. Clears
+// pendingCatalogueQueue once the last item is done.
+async function advanceCatalogueQueue() {
+  const { pendingCatalogueQueue } = await chrome.storage.local.get("pendingCatalogueQueue");
+  if (!pendingCatalogueQueue) return { hasNext: false };
+
+  const nextIndex = pendingCatalogueQueue.currentIndex + 1;
+  if (nextIndex >= pendingCatalogueQueue.items.length) {
+    await chrome.storage.local.remove("pendingCatalogueQueue");
+    return { hasNext: false };
+  }
+
+  const { gemUserId, gemPassword, gemMailId, firmCode, omsOrigin } = pendingCatalogueQueue;
+  const nextItem = pendingCatalogueQueue.items[nextIndex];
+
+  await chrome.storage.local.set({
+    pendingCatalogueQueue: { ...pendingCatalogueQueue, currentIndex: nextIndex },
+    pendingCatalogueUpdate: {
+      gemUserId, gemPassword, gemMailId: gemMailId || "",
+      firmCode: firmCode || "", omsOrigin,
+      ...nextItem,
+      step: "LOGIN_USERNAME",
+      startedAt: Date.now(),
+    },
+  });
+
+  return { hasNext: true };
 }
 
 // New Upload Link's "Publish to GeM" button. Same pending-state machine as
@@ -223,6 +314,21 @@ async function markChecklistSynced(omsOrigin, listingId) {
   }
 }
 
+// Records why ONE item in a bulk run couldn't be synced - leaves it Pending
+// (still needs a real sync) but visible on its own row, same reasoning as
+// markChecklistSynced above (no OMS session available from the GeM tab).
+async function markChecklistSyncFailed(omsOrigin, listingId, reason) {
+  const res = await fetch(`${omsOrigin}/api/gem-sync?action=mark_listing_sync_failed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: listingId, reason }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `OMS sync-fail-mark fail hua (status ${res.status}).`);
+  }
+}
+
 // Injects a self-dismissing banner into whichever open tab(s) match
 // omsOrigin - uses chrome.scripting.executeScript (already have the
 // "scripting" + host_permissions for both OMS origins) rather than needing
@@ -262,15 +368,20 @@ async function notifyOmsTab(omsOrigin, text) {
 // GeM Login Setup page's "Login" button - stashes the saved Username/
 // Password/Mail so content-gem.js can fill them in (and fetch the login OTP
 // from gemMailId, if given) once the login page loads, then opens/focuses
-// that tab. Captcha is the only thing left for the user.
-async function handleGemLogin(payload) {
+// that tab. Captcha is read via OCR too (content-gem.js calls the OMS's
+// /api/gem-captcha-ocr directly, not through this background script) - only
+// falls back to the user typing it if that OCR call fails.
+async function handleGemLogin(payload, omsOrigin) {
   const { gemUserId, gemPassword, gemMailId } = payload || {};
   if (!gemUserId || !gemPassword) {
     throw new Error("gemUserId aur gemPassword zaroori hain.");
   }
 
   await chrome.storage.local.set({
-    pendingGemLogin: { gemUserId, gemPassword, gemMailId: gemMailId || "", step: "USERNAME", startedAt: Date.now() },
+    pendingGemLogin: {
+      gemUserId, gemPassword, gemMailId: gemMailId || "", omsOrigin: omsOrigin || "",
+      step: "USERNAME", startedAt: Date.now(),
+    },
   });
 
   const tab = await chrome.tabs.create({ url: GEM_LOGIN_URL, active: true });
@@ -482,6 +593,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // the outcome without the user having to tick it by hand.
     markChecklistSynced(message.omsOrigin, message.listingId)
       .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "MARK_CHECKLIST_SYNC_FAILED") {
+    // payload: { omsOrigin, listingId, reason } - sent when a bulk run gives
+    // up on ONE item (captcha kept coming back wrong, a field wasn't found)
+    // so that item's row can show a visible warning instead of just staying
+    // silently Pending, while the rest of the batch keeps going.
+    markChecklistSyncFailed(message.omsOrigin, message.listingId, message.reason)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "ADVANCE_CATALOGUE_QUEUE") {
+    // Sent by content-gem.js right after finishing ONE item of a bulk run
+    // (see handleBulkUpdateGemCatalogueItems/advanceCatalogueQueue above).
+    advanceCatalogueQueue()
+      .then((result) => sendResponse({ success: true, ...result }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }

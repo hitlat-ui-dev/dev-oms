@@ -176,6 +176,49 @@ export function triggerGemCatalogueUpdate(params: UpdateGemCatalogueItemParams):
   });
 }
 
+export interface BulkUpdateGemCatalogueItemsParams {
+  gemUserId: string;
+  gemPassword: string;
+  gemMailId?: string;
+  firmCode: string;
+  /** One entry per listing to sync, in the order they'll be processed. */
+  items: { productId: string; newRate?: number; newStock?: number; newMinQty?: number; listingId: string }[];
+}
+
+// Sync Checklist's "Bulk Sync" button - same automation as
+// triggerGemCatalogueUpdate, but for every Pending listing under one firm in
+// a single GeM tab/session: logs in once, then works through the items one
+// at a time (Catalogue Search -> Product ID -> Rate/Stock/Min Qty -> Captcha
+// -> mark Synced) without re-logging in between them. A single item's
+// automation giving up on it (captcha kept coming back wrong, a field wasn't
+// found) doesn't stop the batch - that item is marked failed with a reason
+// (visible on its own row) and the run moves on to the next one. See
+// checkPendingCatalogueUpdate's BULK_QUEUE handling in content-gem.js for
+// the actual per-item loop.
+export function triggerGemBulkCatalogueUpdate(params: BulkUpdateGemCatalogueItemsParams): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chromeRuntime = (window as any).chrome?.runtime;
+    if (!chromeRuntime?.sendMessage) {
+      reject(new Error("Extension detect nahi hua — install hai ya nahi check karo."));
+      return;
+    }
+
+    chromeRuntime.sendMessage(
+      GEM_EXTENSION_ID,
+      { type: "BULK_UPDATE_GEM_CATALOGUE_ITEMS", payload: { ...params, omsOrigin: window.location.origin } },
+      (response: any) => {
+        if (chromeRuntime.lastError) {
+          reject(new Error(chromeRuntime.lastError.message));
+        } else if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || "Unknown error"));
+        }
+      }
+    );
+  });
+}
+
 export interface PublishGemCatalogueItemParams {
   gemUserId: string;
   gemPassword: string;
