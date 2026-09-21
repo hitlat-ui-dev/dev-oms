@@ -2551,6 +2551,10 @@ export default function GeMSyncPage() {
         // week"), so it always goes out.
         return {
           ...row,
+          // Cart is independent of quotability - whether this row's been
+          // added to the cart on the live GeM portal has nothing to do with
+          // whether it's cancelled/blanked here, so it goes out regardless.
+          "Cart": mappedRow?.addedToCart ? "✓" : "",
           // Comment sits ahead of the quote columns - it is about the item,
           // not about the quote, and reads next to the client's own columns.
           "Comment": mappedRow?.comment || "",
@@ -2574,6 +2578,7 @@ export default function GeMSyncPage() {
 
       return {
         ...row,
+        "Cart": mappedRow?.addedToCart ? "✓" : "",
         "Comment": mappedRow?.comment || "",
         "Quoted Rate (₹)": source?.rate ?? mappedRow!.rate,
         "Seller Register Address": sellerRegisterAddress,
@@ -2661,6 +2666,28 @@ export default function GeMSyncPage() {
                 }
               };
             }
+          }
+        });
+      }
+    }
+
+    // Highlight the Cart column's checkmark, same soft-green treatment as
+    // Mapped Firm, so a row added to the GeM cart stands out in the file too.
+    if (filledData.length > 0) {
+      const keys = Object.keys(filledData[0] || {});
+      const cartColIndex = keys.indexOf("Cart");
+      if (cartColIndex !== -1) {
+        const colLetter = XLSX.utils.encode_col(cartColIndex);
+
+        filledData.forEach((row, index) => {
+          if (row["Cart"] !== "✓") return;
+          const cellRef = `${colLetter}${index + 2}`;
+          if (worksheet[cellRef]) {
+            worksheet[cellRef].s = {
+              fill: { patternType: "solid", fgColor: { rgb: "C6EFCE" } },
+              font: { color: { rgb: "006100" }, bold: true },
+              alignment: { horizontal: "center" }
+            };
           }
         });
       }
@@ -3971,7 +3998,19 @@ export default function GeMSyncPage() {
                                 />
                               </td>
 
-                              <td className="py-2 px-2.5 text-center text-[var(--gem-text-secondary)] font-mono text-xs min-w-[32px]">{row.index + 1}</td>
+                              <td className="py-2 px-2.5 text-center text-[var(--gem-text-secondary)] font-mono text-xs min-w-[32px]">
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <span>{row.index + 1}</span>
+                                  {row.addedToCart && (
+                                    <span
+                                      title="Added to cart on GeM (tick/untick from Preview)"
+                                      className="text-emerald-600 font-bold text-[10px] leading-none"
+                                    >
+                                      ✓
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
 
                               {/* Grouped rows carry their group's tint here, the same hex
                                   the Excel item-name cell gets - explicit dark text, since
@@ -5435,7 +5474,11 @@ export default function GeMSyncPage() {
               actual .xlsx download gets - shows what the file will look like
               before it's downloaded. */}
           {showExcelPreviewModal && (() => {
-            const previewKeys = excelPreviewData.length > 0 ? Object.keys(excelPreviewData[0]) : [];
+            // "Cart" is excluded here - it's already shown as its own
+            // interactive checkbox column below, so it isn't repeated as a
+            // plain data column too. It still goes into the actual .xlsx
+            // download (see buildFilledExcelData/handleDownloadFilledExcel).
+            const previewKeys = excelPreviewData.length > 0 ? Object.keys(excelPreviewData[0]).filter(k => k !== "Cart") : [];
             const firstOriginal = originalExcelData[0] || {};
             const itemNameKey =
               ["Item Name", "item name", "Item", "item", "Name", "name", "Particulars", "particulars"]
