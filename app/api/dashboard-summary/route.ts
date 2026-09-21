@@ -30,6 +30,19 @@ export async function GET(req: Request) {
 
     const orders = db.collection("sellerorders");
 
+    // A partial-ship split (see LOGIC C in app/api/seller-orders/[id]/route.ts)
+    // creates a brand-new SellerOrder for the shipped portion, with its own
+    // createdAt = right now - it's a split of an existing order, not a new
+    // sale, but its fresh createdAt was making it look like one in "Today"/
+    // "This Month" whenever an order placed on an earlier day got partially
+    // shipped today. The split's own orderNo always carries a "-P<n>" suffix
+    // (that route derives it as `${baseOrderNo}-P${n}`, a naming convention
+    // exclusive to this feature), so excluding that pattern here keeps
+    // Today/This Month counting only genuinely new orders. All-time totals
+    // don't need this - a split's two halves' totalAmount still sums back to
+    // the original order's, so nothing is double-counted there.
+    const notSplitOrder = { orderNo: { $not: /-P\d+$/ } };
+
     const [facetResult] = await orders
       .aggregate([
         { $match: baseMatch },
@@ -47,7 +60,7 @@ export async function GET(req: Request) {
               },
             ],
             today: [
-              { $match: { createdAt: { $gte: todayStart, $lt: todayEnd } } },
+              { $match: { createdAt: { $gte: todayStart, $lt: todayEnd }, ...notSplitOrder } },
               {
                 $group: {
                   _id: null,
@@ -57,7 +70,7 @@ export async function GET(req: Request) {
               },
             ],
             thisMonth: [
-              { $match: { createdAt: { $gte: monthStart } } },
+              { $match: { createdAt: { $gte: monthStart }, ...notSplitOrder } },
               {
                 $group: {
                   _id: null,
