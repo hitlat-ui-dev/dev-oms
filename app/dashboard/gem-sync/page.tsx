@@ -209,10 +209,13 @@ interface UploadedRow {
   // Manual flag - link looks fine but doesn't actually work (buyer's cart
   // add fails, rate isn't L1, etc). Nothing here can be verified against
   // live GeM automatically, so this just marks the row for a human to
-  // re-check the link, same manual-toggle pattern as notAvailable.
-  linkIssue?: boolean;
+  // re-check the link. Cycles flagged -> resolved -> flagged again if the
+  // same link breaks a second time; undefined means never flagged.
+  linkIssueStatus?: "flagged" | "resolved";
   linkIssueBy?: string;
   linkIssueAt?: string;
+  linkIssueResolvedBy?: string;
+  linkIssueResolvedAt?: string;
   linkIssueComment?: string;
   // Variant Group: several sheet rows that are the same product in different
   // sizes/variants, all quoted against ONE GeM listing. The colour is stored
@@ -2123,16 +2126,39 @@ export default function GeMSyncPage() {
   // filled, etc) but doesn't actually work on live GeM (not L1, cart-add
   // fails for the buyer...). Purely a human note, so unlike notAvailable it
   // doesn't touch any of the row's other fields or its Completed status.
-  const toggleRowLinkIssue = (rowIndex: number) => {
+  // Cycles on click: (none) -> flagged -> resolved -> flagged again - so the
+  // same link can be re-flagged if the issue comes back after being marked
+  // solved, instead of the flag just disappearing for good.
+  const cycleRowLinkIssue = (rowIndex: number) => {
     setUploadedRows(prev => prev.map(r => {
       if (r.index !== rowIndex) return r;
-      const nowLinkIssue = !r.linkIssue;
+      if (r.linkIssueStatus === "flagged") {
+        // Mark solved - keeps who/when it was flagged and the reason, just
+        // adds who/when it was resolved, so the history stays readable.
+        return {
+          ...r,
+          linkIssueStatus: "resolved",
+          linkIssueResolvedBy: currentUsername || "Unknown",
+          linkIssueResolvedAt: new Date().toISOString(),
+        };
+      }
+      if (r.linkIssueStatus === "resolved") {
+        // Re-flag - the issue is back, so it's a fresh flagged record again.
+        return {
+          ...r,
+          linkIssueStatus: "flagged",
+          linkIssueBy: currentUsername || "Unknown",
+          linkIssueAt: new Date().toISOString(),
+          linkIssueResolvedBy: undefined,
+          linkIssueResolvedAt: undefined,
+        };
+      }
+      // Never flagged - first flag.
       return {
         ...r,
-        linkIssue: nowLinkIssue,
-        linkIssueBy: nowLinkIssue ? (currentUsername || "Unknown") : undefined,
-        linkIssueAt: nowLinkIssue ? new Date().toISOString() : undefined,
-        linkIssueComment: nowLinkIssue ? r.linkIssueComment : undefined,
+        linkIssueStatus: "flagged",
+        linkIssueBy: currentUsername || "Unknown",
+        linkIssueAt: new Date().toISOString(),
       };
     }));
   };
@@ -3206,7 +3232,7 @@ export default function GeMSyncPage() {
   const [rowSearchRemark, setRowSearchRemark] = useState("");
   const [rowSearchSpecification, setRowSearchSpecification] = useState("");
   const [rowSearchCart, setRowSearchCart] = useState<"all" | "cart" | "uncart">("all");
-  const [rowSearchLinkIssue, setRowSearchLinkIssue] = useState<"all" | "issue" | "noissue">("all");
+  const [rowSearchLinkIssue, setRowSearchLinkIssue] = useState<"all" | "flagged" | "resolved" | "never">("all");
 
   // Cart and Link Issue are deliberately excluded here - they reset on their
   // own, by picking "All" back in their own dropdowns, independent of the
@@ -3495,8 +3521,9 @@ export default function GeMSyncPage() {
       }
       if (rowSearchCart === "cart" && !row.addedToCart) return false;
       if (rowSearchCart === "uncart" && row.addedToCart) return false;
-      if (rowSearchLinkIssue === "issue" && !row.linkIssue) return false;
-      if (rowSearchLinkIssue === "noissue" && row.linkIssue) return false;
+      if (rowSearchLinkIssue === "flagged" && row.linkIssueStatus !== "flagged") return false;
+      if (rowSearchLinkIssue === "resolved" && row.linkIssueStatus !== "resolved") return false;
+      if (rowSearchLinkIssue === "never" && !!row.linkIssueStatus) return false;
       return true;
     });
   }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart, rowSearchLinkIssue, itemsById, companies, originalExcelData]);
@@ -3927,13 +3954,14 @@ export default function GeMSyncPage() {
                       </select>
                       <select
                         value={rowSearchLinkIssue}
-                        onChange={(e) => setRowSearchLinkIssue(e.target.value as "all" | "issue" | "noissue")}
+                        onChange={(e) => setRowSearchLinkIssue(e.target.value as "all" | "flagged" | "resolved" | "never")}
                         title="Filter by manually flagged link issues"
                         className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       >
                         <option value="all">Link Issue: All</option>
-                        <option value="issue">Link Issue: Flagged</option>
-                        <option value="noissue">Link Issue: Not Flagged</option>
+                        <option value="flagged">Link Issue: Flagged</option>
+                        <option value="resolved">Link Issue: Resolved</option>
+                        <option value="never">Link Issue: Never Flagged</option>
                       </select>
                       {anyRowSearchActive && (
                         <button
@@ -4093,7 +4121,10 @@ export default function GeMSyncPage() {
                           return (
                             <tr
                               key={row.index}
-                              className={`hover:bg-[var(--gem-table-row-hover)] transition-colors ${row.linkIssue ? "outline outline-2 -outline-offset-1 outline-orange-400" : ""}`}
+                              className={`hover:bg-[var(--gem-table-row-hover)] transition-colors ${
+                                row.linkIssueStatus === "flagged" ? "outline outline-2 -outline-offset-1 outline-orange-400" :
+                                row.linkIssueStatus === "resolved" ? "outline outline-2 -outline-offset-1 outline-emerald-400" : ""
+                              }`}
                             >
 
                               <td className="py-2 px-2.5 text-center min-w-[32px]">
@@ -4133,19 +4164,23 @@ export default function GeMSyncPage() {
                                   <span className={`font-bold text-xs ${row.variantGroupId ? "" : "text-[var(--gem-text-primary)]"}`}>{row.originalName}</span>
                                   <button
                                     type="button"
-                                    onClick={() => toggleRowLinkIssue(row.index)}
+                                    onClick={() => cycleRowLinkIssue(row.index)}
                                     title={
-                                      row.linkIssue
-                                        ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}. Click to clear.`
+                                      row.linkIssueStatus === "flagged"
+                                        ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}. Click to mark resolved.`
+                                        : row.linkIssueStatus === "resolved"
+                                        ? `Resolved${row.linkIssueResolvedBy ? ` - by ${row.linkIssueResolvedBy}` : ""}${row.linkIssueComment ? ` (was: ${row.linkIssueComment})` : ""}. Click to re-flag if it breaks again.`
                                         : "Flag Link Issue - link maps fine but doesn't actually work on GeM (not L1, cart-add fails for buyer, etc)"
                                     }
                                     className={`shrink-0 w-5 h-5 flex items-center justify-center rounded transition-colors ${
-                                      row.linkIssue
+                                      row.linkIssueStatus === "flagged"
                                         ? "bg-orange-100 text-orange-700 border border-orange-400"
+                                        : row.linkIssueStatus === "resolved"
+                                        ? "bg-emerald-100 text-emerald-700 border border-emerald-400"
                                         : "bg-transparent hover:bg-orange-50 text-slate-300 hover:text-orange-500 border border-transparent hover:border-orange-300"
                                     }`}
                                   >
-                                    <FiAlertTriangle size={11} />
+                                    {row.linkIssueStatus === "resolved" ? <FiCheck size={11} /> : <FiAlertTriangle size={11} />}
                                   </button>
                                 </div>
                                 {row.variantGroupId && (
@@ -4513,15 +4548,23 @@ export default function GeMSyncPage() {
                                   type="text"
                                   value={row.gemLink}
                                   onChange={(e) => patchRow(row.index, { gemLink: e.target.value })}
-                                  title={row.linkIssue ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}` : undefined}
+                                  title={
+                                    row.linkIssueStatus === "flagged"
+                                      ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}`
+                                      : row.linkIssueStatus === "resolved"
+                                      ? `Resolved${row.linkIssueResolvedBy ? ` - by ${row.linkIssueResolvedBy}` : ""}`
+                                      : undefined
+                                  }
                                   className={`text-xs rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500 ${
-                                    row.linkIssue
+                                    row.linkIssueStatus === "flagged"
                                       ? "bg-orange-50 border-2 border-orange-400 text-orange-900 font-semibold"
+                                      : row.linkIssueStatus === "resolved"
+                                      ? "bg-emerald-50 border-2 border-emerald-400 text-emerald-900 font-semibold"
                                       : "bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-[var(--gem-text-primary)]"
                                   }`}
                                   placeholder="GeM Link..."
                                 />
-                                {row.linkIssue && (
+                                {row.linkIssueStatus === "flagged" && (
                                   <input
                                     type="text"
                                     value={row.linkIssueComment || ""}
@@ -4530,6 +4573,11 @@ export default function GeMSyncPage() {
                                     title="Reason for the Link Issue flag"
                                     className="mt-1 w-full rounded py-1 px-1.5 text-[10px] bg-orange-50 border border-orange-300 text-orange-900 font-semibold focus:outline-none focus:border-orange-500"
                                   />
+                                )}
+                                {row.linkIssueStatus === "resolved" && row.linkIssueComment && (
+                                  <p className="mt-1 w-full rounded py-1 px-1.5 text-[10px] bg-emerald-50 border border-emerald-300 text-emerald-800 font-semibold">
+                                    ✓ Resolved (was: {row.linkIssueComment})
+                                  </p>
                                 )}
                               </td>
 
