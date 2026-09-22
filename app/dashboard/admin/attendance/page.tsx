@@ -708,7 +708,7 @@ export default function AttendancePage() {
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Monthly Register</h3>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Blank cell = us din attendance mark hi nahi hui.
+                    Blank cell = us din attendance mark hi nahi hui. Net Payable = (Monthly Salary ÷ 30) × (Present + Half Day×0.5) — OT ka paisa aur Advance/Loan katauti isme shamil nahi hai, wo alag se manually adjust karo (Adv/Loan Baki column reference ke liye hai).
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -753,6 +753,8 @@ export default function AttendancePage() {
                           <th key={s.key} className="py-2 px-2 text-center">{s.short}</th>
                         ))}
                         <th className="py-2 px-3 text-center">OT</th>
+                        <th className="py-2 px-3 text-center">Net Payable</th>
+                        <th className="py-2 px-3 text-center">Adv/Loan Baki</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -764,6 +766,22 @@ export default function AttendancePage() {
                           counts[rec.status] = (counts[rec.status] || 0) + 1;
                           otTotal += Number(rec.overtimeHours) || 0;
                         });
+
+                        // Net Payable = per-day rate (Monthly Salary ÷ 30,
+                        // fixed - not the actual number of days in this
+                        // month) × payable days (Present counts full, Half
+                        // Day counts 0.5, Absent counts 0).
+                        // Deliberately excludes OT pay (no ₹/hour rate is
+                        // configured anywhere) and Advance/Loan (that's a
+                        // running balance, not a fixed monthly deduction -
+                        // whether/how much to deduct this month is a manual
+                        // call, so its balance is only shown for reference).
+                        const emp = employees.find((e) => e._id === person.id);
+                        const payableDays = (counts["present"] || 0) + (counts["half_day"] || 0) * 0.5;
+                        const perDayRate = (emp?.monthlySalary || 0) / 30;
+                        const netPayable = perDayRate * payableDays;
+                        const bal = balances[person.id] || ZERO_BALANCE;
+                        const advLoanBaki = bal.advanceBalance + bal.loanBalance;
 
                         return (
                           <tr key={person.id} className="hover:bg-slate-50/60">
@@ -790,6 +808,10 @@ export default function AttendancePage() {
                               </td>
                             ))}
                             <td className="py-2 px-3 text-center font-mono font-black text-blue-700">{otTotal || 0}</td>
+                            <td className="py-2 px-3 text-center font-mono font-black text-emerald-700">{inr(netPayable)}</td>
+                            <td className="py-2 px-3 text-center font-mono font-bold text-amber-700">
+                              {advLoanBaki > 0 ? inr(advLoanBaki) : "—"}
+                            </td>
                           </tr>
                         );
                       })}
