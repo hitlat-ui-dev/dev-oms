@@ -206,6 +206,14 @@ interface UploadedRow {
   // reload the same way isCompleted/notAvailable do - toggled from the Excel
   // Preview popup's checkbox column.
   addedToCart?: boolean;
+  // Manual flag - link looks fine but doesn't actually work (buyer's cart
+  // add fails, rate isn't L1, etc). Nothing here can be verified against
+  // live GeM automatically, so this just marks the row for a human to
+  // re-check the link, same manual-toggle pattern as notAvailable.
+  linkIssue?: boolean;
+  linkIssueBy?: string;
+  linkIssueAt?: string;
+  linkIssueComment?: string;
   // Variant Group: several sheet rows that are the same product in different
   // sizes/variants, all quoted against ONE GeM listing. The colour is stored
   // rather than derived from group order so deleting one group never
@@ -2111,6 +2119,24 @@ export default function GeMSyncPage() {
     }));
   };
 
+  // Manual "Link Issue" flag - the link looks fine on paper (mapped, rate
+  // filled, etc) but doesn't actually work on live GeM (not L1, cart-add
+  // fails for the buyer...). Purely a human note, so unlike notAvailable it
+  // doesn't touch any of the row's other fields or its Completed status.
+  const toggleRowLinkIssue = (rowIndex: number) => {
+    setUploadedRows(prev => prev.map(r => {
+      if (r.index !== rowIndex) return r;
+      const nowLinkIssue = !r.linkIssue;
+      return {
+        ...r,
+        linkIssue: nowLinkIssue,
+        linkIssueBy: nowLinkIssue ? (currentUsername || "Unknown") : undefined,
+        linkIssueAt: nowLinkIssue ? new Date().toISOString() : undefined,
+        linkIssueComment: nowLinkIssue ? r.linkIssueComment : undefined,
+      };
+    }));
+  };
+
   // Append-only record of every row action for the Summary dashboard's GeM
   // Sync report - fire-and-forget, never blocks the actual action on it.
   // Takes a loose {firmCode, qty, rate} shape rather than UploadedRow
@@ -3180,10 +3206,11 @@ export default function GeMSyncPage() {
   const [rowSearchRemark, setRowSearchRemark] = useState("");
   const [rowSearchSpecification, setRowSearchSpecification] = useState("");
   const [rowSearchCart, setRowSearchCart] = useState<"all" | "cart" | "uncart">("all");
+  const [rowSearchLinkIssue, setRowSearchLinkIssue] = useState<"all" | "issue" | "noissue">("all");
 
-  // Cart is deliberately excluded here - it resets on its own, by picking
-  // "Cart: All" back in its own dropdown, independent of the other text
-  // searches and their shared clear button below.
+  // Cart and Link Issue are deliberately excluded here - they reset on their
+  // own, by picking "All" back in their own dropdowns, independent of the
+  // other text searches and their shared clear button below.
   const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink || rowSearchRemark || rowSearchSpecification);
 
   // ---- Variant Groups ----
@@ -3441,7 +3468,7 @@ export default function GeMSyncPage() {
     const linkQ = norm(rowSearchGemLink);
     const remarkTerms = splitTerms(rowSearchRemark);
     const specTerms = splitTerms(rowSearchSpecification);
-    if (!reqTerms.length && !invTerms.length && !firmTerms.length && !rateQ && !linkQ && !remarkTerms.length && !specTerms.length && rowSearchCart === "all") return byStatus;
+    if (!reqTerms.length && !invTerms.length && !firmTerms.length && !rateQ && !linkQ && !remarkTerms.length && !specTerms.length && rowSearchCart === "all" && rowSearchLinkIssue === "all") return byStatus;
 
     return byStatus.filter(row => {
       if (reqTerms.length && !matchesAny(reqTerms, (row.originalName || "").toLowerCase())) return false;
@@ -3468,9 +3495,11 @@ export default function GeMSyncPage() {
       }
       if (rowSearchCart === "cart" && !row.addedToCart) return false;
       if (rowSearchCart === "uncart" && row.addedToCart) return false;
+      if (rowSearchLinkIssue === "issue" && !row.linkIssue) return false;
+      if (rowSearchLinkIssue === "noissue" && row.linkIssue) return false;
       return true;
     });
-  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart, itemsById, companies, originalExcelData]);
+  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart, rowSearchLinkIssue, itemsById, companies, originalExcelData]);
 
   // Renders only this many rows at a time - a 200+ row sheet rendering all
   // at once (each with its own inventory-search datalist, Quick Fill chips,
@@ -3479,7 +3508,7 @@ export default function GeMSyncPage() {
   const [visibleRowCount, setVisibleRowCount] = useState(ROWS_PAGE_SIZE);
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
-  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart]);
+  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart, rowSearchLinkIssue]);
 
   // GeM Link column sort toggle: "blankFirst" groups every row with no GeM
   // Link at the top in one go (so missing links are easy to spot/fill),
@@ -3896,6 +3925,16 @@ export default function GeMSyncPage() {
                         <option value="cart">Cart: In Cart</option>
                         <option value="uncart">Cart: Not in Cart</option>
                       </select>
+                      <select
+                        value={rowSearchLinkIssue}
+                        onChange={(e) => setRowSearchLinkIssue(e.target.value as "all" | "issue" | "noissue")}
+                        title="Filter by manually flagged link issues"
+                        className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="all">Link Issue: All</option>
+                        <option value="issue">Link Issue: Flagged</option>
+                        <option value="noissue">Link Issue: Not Flagged</option>
+                      </select>
                       {anyRowSearchActive && (
                         <button
                           type="button"
@@ -4052,7 +4091,10 @@ export default function GeMSyncPage() {
                           const lastQuoted = getLastQuotedHint(row.mappedItemId, selectedBuyerId);
 
                           return (
-                            <tr key={row.index} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
+                            <tr
+                              key={row.index}
+                              className={`hover:bg-[var(--gem-table-row-hover)] transition-colors ${row.linkIssue ? "outline outline-2 -outline-offset-1 outline-orange-400" : ""}`}
+                            >
 
                               <td className="py-2 px-2.5 text-center min-w-[32px]">
                                 <input
@@ -4087,7 +4129,25 @@ export default function GeMSyncPage() {
                                   color: "#0f172a",
                                 } : undefined}
                               >
-                                <span className={`font-bold block text-xs ${row.variantGroupId ? "" : "text-[var(--gem-text-primary)]"}`}>{row.originalName}</span>
+                                <div className="flex items-center gap-1">
+                                  <span className={`font-bold text-xs ${row.variantGroupId ? "" : "text-[var(--gem-text-primary)]"}`}>{row.originalName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleRowLinkIssue(row.index)}
+                                    title={
+                                      row.linkIssue
+                                        ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}. Click to clear.`
+                                        : "Flag Link Issue - link maps fine but doesn't actually work on GeM (not L1, cart-add fails for buyer, etc)"
+                                    }
+                                    className={`shrink-0 w-5 h-5 flex items-center justify-center rounded transition-colors ${
+                                      row.linkIssue
+                                        ? "bg-orange-100 text-orange-700 border border-orange-400"
+                                        : "bg-transparent hover:bg-orange-50 text-slate-300 hover:text-orange-500 border border-transparent hover:border-orange-300"
+                                    }`}
+                                  >
+                                    <FiAlertTriangle size={11} />
+                                  </button>
+                                </div>
                                 {row.variantGroupId && (
                                   <span className="text-[9px] font-black uppercase tracking-wider text-slate-700 bg-white/70 border border-black/10 rounded px-1 py-0.5 inline-block mt-0.5">
                                     Variant group · {variantGroups.get(row.variantGroupId)?.rows.length || 0} rows
@@ -4453,9 +4513,24 @@ export default function GeMSyncPage() {
                                   type="text"
                                   value={row.gemLink}
                                   onChange={(e) => patchRow(row.index, { gemLink: e.target.value })}
-                                  className="bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-xs text-[var(--gem-text-primary)] rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500"
+                                  title={row.linkIssue ? `Flagged: link issue${row.linkIssueBy ? ` - by ${row.linkIssueBy}` : ""}${row.linkIssueComment ? ` (${row.linkIssueComment})` : ""}` : undefined}
+                                  className={`text-xs rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500 ${
+                                    row.linkIssue
+                                      ? "bg-orange-50 border-2 border-orange-400 text-orange-900 font-semibold"
+                                      : "bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-[var(--gem-text-primary)]"
+                                  }`}
                                   placeholder="GeM Link..."
                                 />
+                                {row.linkIssue && (
+                                  <input
+                                    type="text"
+                                    value={row.linkIssueComment || ""}
+                                    onChange={(e) => patchRow(row.index, { linkIssueComment: e.target.value })}
+                                    placeholder="Reason (not L1, cart-add fails...)"
+                                    title="Reason for the Link Issue flag"
+                                    className="mt-1 w-full rounded py-1 px-1.5 text-[10px] bg-orange-50 border border-orange-300 text-orange-900 font-semibold focus:outline-none focus:border-orange-500"
+                                  />
+                                )}
                               </td>
 
                               <td className="py-2 px-1.5 w-[165px] min-w-[165px]">
