@@ -3177,8 +3177,11 @@ export default function GeMSyncPage() {
   const [rowSearchFirm, setRowSearchFirm] = useState("");
   const [rowSearchRate, setRowSearchRate] = useState("");
   const [rowSearchGemLink, setRowSearchGemLink] = useState("");
+  const [rowSearchRemark, setRowSearchRemark] = useState("");
+  const [rowSearchSpecification, setRowSearchSpecification] = useState("");
+  const [rowSearchCart, setRowSearchCart] = useState<"all" | "cart" | "uncart">("all");
 
-  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink);
+  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink || rowSearchRemark || rowSearchSpecification || rowSearchCart !== "all");
 
   // ---- Variant Groups ----
   // Selection is transient (never saved with the sheet) and keyed by row index
@@ -3408,6 +3411,9 @@ export default function GeMSyncPage() {
     setRowSearchFirm("");
     setRowSearchRate("");
     setRowSearchGemLink("");
+    setRowSearchRemark("");
+    setRowSearchSpecification("");
+    setRowSearchCart("all");
   };
 
   const filteredUploadedRows = useMemo(() => {
@@ -3418,28 +3424,49 @@ export default function GeMSyncPage() {
       uploadedRows.filter(row => !row.isCompleted && !row.notAvailable);
 
     const norm = (s: string) => s.trim().toLowerCase();
-    const reqQ = norm(rowSearchRequirement);
-    const invQ = norm(rowSearchInventory);
-    const firmQ = norm(rowSearchFirm);
+    // Comma-separated terms are OR'd - "pencil, eraser" matches a row
+    // containing either word, so several items can be hunted down in one
+    // search instead of one query at a time. Only applies to the free-text
+    // name/description boxes (Rate and GeM Link stay single-term).
+    const splitTerms = (s: string) => s.split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
+    const matchesAny = (terms: string[], target: string) => terms.some(t => target.includes(t));
+    const reqTerms = splitTerms(rowSearchRequirement);
+    const invTerms = splitTerms(rowSearchInventory);
+    const firmTerms = splitTerms(rowSearchFirm);
     const rateQ = norm(rowSearchRate);
     const linkQ = norm(rowSearchGemLink);
-    if (!reqQ && !invQ && !firmQ && !rateQ && !linkQ) return byStatus;
+    const remarkTerms = splitTerms(rowSearchRemark);
+    const specTerms = splitTerms(rowSearchSpecification);
+    if (!reqTerms.length && !invTerms.length && !firmTerms.length && !rateQ && !linkQ && !remarkTerms.length && !specTerms.length && rowSearchCart === "all") return byStatus;
 
     return byStatus.filter(row => {
-      if (reqQ && !(row.originalName || "").toLowerCase().includes(reqQ)) return false;
-      if (invQ) {
+      if (reqTerms.length && !matchesAny(reqTerms, (row.originalName || "").toLowerCase())) return false;
+      if (invTerms.length) {
         const item = itemsById.get(row.mappedItemId);
-        if (!`${item?.sku || ""} ${item?.itemName || ""}`.toLowerCase().includes(invQ)) return false;
+        if (!matchesAny(invTerms, `${item?.sku || ""} ${item?.itemName || ""}`.toLowerCase())) return false;
       }
-      if (firmQ) {
+      if (firmTerms.length) {
         const firmName = companies.find(c => c.firmCode === row.firmCode)?.firmName || "";
-        if (!`${row.firmCode || ""} ${firmName}`.toLowerCase().includes(firmQ)) return false;
+        if (!matchesAny(firmTerms, `${row.firmCode || ""} ${firmName}`.toLowerCase())) return false;
       }
       if (rateQ && !String(row.rate ?? "").toLowerCase().includes(rateQ)) return false;
       if (linkQ && !(row.gemLink || "").toLowerCase().includes(linkQ)) return false;
+      if (remarkTerms.length || specTerms.length) {
+        const origRow = originalExcelData[row.index] || {};
+        if (remarkTerms.length) {
+          const remark = String(origRow["Remark"] || origRow["remark"] || "").toLowerCase();
+          if (!matchesAny(remarkTerms, remark)) return false;
+        }
+        if (specTerms.length) {
+          const specification = String(origRow["Specification"] || origRow["specification"] || origRow["Spec"] || origRow["spec"] || "").toLowerCase();
+          if (!matchesAny(specTerms, specification)) return false;
+        }
+      }
+      if (rowSearchCart === "cart" && !row.addedToCart) return false;
+      if (rowSearchCart === "uncart" && row.addedToCart) return false;
       return true;
     });
-  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, itemsById, companies]);
+  }, [uploadedRows, mappingStatusFilter, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart, itemsById, companies, originalExcelData]);
 
   // Renders only this many rows at a time - a 200+ row sheet rendering all
   // at once (each with its own inventory-search datalist, Quick Fill chips,
@@ -3448,7 +3475,7 @@ export default function GeMSyncPage() {
   const [visibleRowCount, setVisibleRowCount] = useState(ROWS_PAGE_SIZE);
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
-  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink]);
+  }, [mappingStatusFilter, activeSheetId, rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification, rowSearchCart]);
 
   // GeM Link column sort toggle: "blankFirst" groups every row with no GeM
   // Link at the top in one go (so missing links are easy to spot/fill),
@@ -3794,27 +3821,35 @@ export default function GeMSyncPage() {
                     </div>
 
                     {/* One box per column, matching the table's own column
-                        order, so a search sits over the thing it searches. */}
-                    <div className="flex flex-wrap items-center gap-1.5">
+                        order, so a search sits over the thing it searches.
+                        flex-1 + justify-center keeps this row centered in the
+                        toolbar whether or not the Preview/Download buttons
+                        are present alongside it (they only render for the
+                        "all" status filter - without flex-1 here, the search
+                        row got shoved to the far side on every other tab). */}
+                    <div className="flex-1 flex flex-wrap items-center justify-center gap-1.5">
                       <input
                         type="text"
                         value={rowSearchRequirement}
                         onChange={(e) => setRowSearchRequirement(e.target.value)}
-                        placeholder="Requirement..."
+                        title="Comma-separate multiple words to match any of them"
+                        placeholder="Requirement... (a, b, c)"
                         className="w-[140px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       />
                       <input
                         type="text"
                         value={rowSearchInventory}
                         onChange={(e) => setRowSearchInventory(e.target.value)}
-                        placeholder="Inventory mapping..."
+                        title="Comma-separate multiple words to match any of them"
+                        placeholder="Inventory mapping... (a, b, c)"
                         className="w-[160px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       />
                       <input
                         type="text"
                         value={rowSearchFirm}
                         onChange={(e) => setRowSearchFirm(e.target.value)}
-                        placeholder="Firm..."
+                        title="Comma-separate multiple words to match any of them"
+                        placeholder="Firm... (a, b, c)"
                         className="w-[110px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       />
                       <input
@@ -3831,6 +3866,32 @@ export default function GeMSyncPage() {
                         placeholder="GeM link..."
                         className="w-[150px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
                       />
+                      <input
+                        type="text"
+                        value={rowSearchRemark}
+                        onChange={(e) => setRowSearchRemark(e.target.value)}
+                        title="Comma-separate multiple words to match any of them"
+                        placeholder="Remark... (a, b, c)"
+                        className="w-[110px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={rowSearchSpecification}
+                        onChange={(e) => setRowSearchSpecification(e.target.value)}
+                        title="Comma-separate multiple words to match any of them"
+                        placeholder="Specification... (a, b, c)"
+                        className="w-[130px] bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      />
+                      <select
+                        value={rowSearchCart}
+                        onChange={(e) => setRowSearchCart(e.target.value as "all" | "cart" | "uncart")}
+                        title="Filter by cart status"
+                        className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-lg py-1.5 px-2.5 text-[11px] text-[var(--gem-text-primary)] font-semibold focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="all">Cart: All</option>
+                        <option value="cart">Cart: In Cart</option>
+                        <option value="uncart">Cart: Not in Cart</option>
+                      </select>
                       {anyRowSearchActive && (
                         <button
                           type="button"
