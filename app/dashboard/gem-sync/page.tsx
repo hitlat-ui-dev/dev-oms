@@ -3181,7 +3181,10 @@ export default function GeMSyncPage() {
   const [rowSearchSpecification, setRowSearchSpecification] = useState("");
   const [rowSearchCart, setRowSearchCart] = useState<"all" | "cart" | "uncart">("all");
 
-  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink || rowSearchRemark || rowSearchSpecification || rowSearchCart !== "all");
+  // Cart is deliberately excluded here - it resets on its own, by picking
+  // "Cart: All" back in its own dropdown, independent of the other text
+  // searches and their shared clear button below.
+  const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink || rowSearchRemark || rowSearchSpecification);
 
   // ---- Variant Groups ----
   // Selection is transient (never saved with the sheet) and keyed by row index
@@ -3405,6 +3408,8 @@ export default function GeMSyncPage() {
     ));
     clearRowSelection();
   };
+  // Clears only the text searches - Cart has its own independent reset (pick
+  // "Cart: All" in its own dropdown), so it's left untouched here.
   const clearRowSearches = () => {
     setRowSearchRequirement("");
     setRowSearchInventory("");
@@ -3413,7 +3418,6 @@ export default function GeMSyncPage() {
     setRowSearchGemLink("");
     setRowSearchRemark("");
     setRowSearchSpecification("");
-    setRowSearchCart("all");
   };
 
   const filteredUploadedRows = useMemo(() => {
@@ -4060,16 +4064,15 @@ export default function GeMSyncPage() {
                               </td>
 
                               <td className="py-2 px-2.5 text-center text-[var(--gem-text-secondary)] font-mono text-xs min-w-[32px]">
-                                <div className="flex flex-col items-center gap-0.5">
+                                <div className="flex flex-col items-center gap-1">
                                   <span>{row.index + 1}</span>
-                                  {row.addedToCart && (
-                                    <span
-                                      title="Added to cart on GeM (tick/untick from Preview)"
-                                      className="text-emerald-600 font-bold text-[10px] leading-none"
-                                    >
-                                      ✓
-                                    </span>
-                                  )}
+                                  <input
+                                    type="checkbox"
+                                    checked={!!row.addedToCart}
+                                    onChange={() => patchRow(row.index, { addedToCart: !row.addedToCart })}
+                                    title="Added to cart on GeM?"
+                                    className="w-2.5 h-2.5 accent-emerald-600 cursor-pointer"
+                                  />
                                 </div>
                               </td>
 
