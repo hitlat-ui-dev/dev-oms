@@ -3444,7 +3444,7 @@ export default function GeMSyncPage() {
   // Renders only this many rows at a time - a 200+ row sheet rendering all
   // at once (each with its own inventory-search datalist, Quick Fill chips,
   // etc.) is what made the Requirement Mapping Console slow to begin with.
-  const ROWS_PAGE_SIZE = 20;
+  const ROWS_PAGE_SIZE = 100;
   const [visibleRowCount, setVisibleRowCount] = useState(ROWS_PAGE_SIZE);
   useEffect(() => {
     setVisibleRowCount(ROWS_PAGE_SIZE);
