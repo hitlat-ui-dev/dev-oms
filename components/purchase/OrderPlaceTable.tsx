@@ -141,6 +141,22 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     }
   };
 
+  // jsPDF's standard fonts only support WinAnsi (roughly Latin-1) encoding.
+  // "Smart" Unicode punctuation - curly quotes, em/en dashes, ellipsis - is
+  // exactly what a Word/Excel paste into the manual Note tends to carry, and
+  // falls outside that table. That corrupts autoTable's per-character width
+  // measurement once the line has to wrap, which is what produced the
+  // garbled, letter-spaced rendering ("N o t e : T R A N S F O R M E R...")
+  // instead of an overflow - confirmed live, it self-corrected again as soon
+  // as the text ran back into plain ASCII.
+  const sanitizeForPdf = (text: string) =>
+    text
+      .replace(/[‘’‚‛]/g, "'")
+      .replace(/[“”„‟]/g, '"')
+      .replace(/[–—]/g, "-")
+      .replace(/…/g, "...")
+      .replace(/[^\x00-\xFF]/g, "");
+
   const downloadPDF = () => {
     const doc = new jsPDF('landscape');
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -148,7 +164,7 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     // Get Full Vendor Name
     const firstItem = filteredData[0];
     const fullVendorName = filterVendor && firstItem ? firstItem.vendor : "All Vendors";
-    const reportTitle = `${fullVendorName.toUpperCase()} - PURCHASE ORDER`;
+    const reportTitle = sanitizeForPdf(`${fullVendorName.toUpperCase()} - PURCHASE ORDER`);
     const fileNameDate = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
 
     // 1. Center Align Top Title & Generated Date (Prose remains centered)
@@ -169,10 +185,10 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
       : filteredData;
 
     const tableRows = dataToExport.map(item => [
-      item.orderNumber || "N/A",
+      sanitizeForPdf(item.orderNumber || "N/A"),
       new Date(item.orderedAt || item.createdAt).toLocaleDateString('en-GB'),
-      item.manualRemark ? `${item.itemName}\nNote: ${item.manualRemark}` : item.itemName,
-      `${item.orderQty} ${item.unit}`
+      sanitizeForPdf(item.manualRemark ? `${item.itemName}\nNote: ${item.manualRemark}` : item.itemName),
+      sanitizeForPdf(`${item.orderQty} ${item.unit}`)
     ]);
 
     // 3. Render Table - All Left Aligned
@@ -202,6 +218,48 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
         1: { halign: 'left', cellWidth: 28 },
         2: { halign: 'left', cellWidth: 'auto' },
         3: { halign: 'left', cellWidth: 28 }
+      },
+      // Item Name and its appended "Note: ..." line share one cell (see
+      // tableRows above), and autoTable only supports one textColor per
+      // cell - so the Note prints in the same dark color as the item name
+      // by default. This runs AFTER the default draw (which already
+      // painted everything dark), covers just the Note's line(s) in white,
+      // and redraws them in light green so only the note looks lighter.
+      // Baseline math mirrors jspdf-autotable's own autoTableText/getTextPos
+      // (default valign is 'top', not 'middle') - cell.contentHeight/lines
+      // overestimates line height because it includes cell padding, which
+      // is what threw the first attempt at this off (redrawn text landed
+      // below, not on top of, the original).
+      didDrawCell: (data) => {
+        if (data.section !== 'body' || data.column.index !== 2) return;
+        const item = dataToExport[data.row.index];
+        if (!item?.manualRemark) return;
+
+        const { cell, doc: pdfDoc } = data;
+        pdfDoc.setFont(cell.styles.font, cell.styles.fontStyle);
+        pdfDoc.setFontSize(cell.styles.fontSize);
+        const contentWidth = cell.width - cell.padding('left') - cell.padding('right');
+        const itemNameLines = pdfDoc.splitTextToSize(sanitizeForPdf(item.itemName), contentWidth);
+        const noteStartLine = itemNameLines.length;
+        const totalLines = cell.text.length;
+        if (noteStartLine >= totalLines) return;
+
+        const scaleFactor = pdfDoc.internal.scaleFactor;
+        const fontSize = pdfDoc.internal.getFontSize() / scaleFactor;
+        const lineHeightFactor = pdfDoc.getLineHeightFactor ? pdfDoc.getLineHeightFactor() : 1.15;
+        const lineHeight = fontSize * lineHeightFactor;
+        const firstLineBaselineY = cell.y + cell.padding('top') + fontSize * (2 - 1.15);
+
+        const noteLines = cell.text.slice(noteStartLine);
+        const noteBaselineY = firstLineBaselineY + noteStartLine * lineHeight;
+        const boxX = cell.x + cell.padding('left');
+        const boxY = noteBaselineY - fontSize * 0.85;
+        const boxHeight = noteLines.length * lineHeight + fontSize * 0.3;
+
+        pdfDoc.setFillColor(255, 255, 255);
+        pdfDoc.rect(boxX, boxY, contentWidth, boxHeight, 'F');
+        pdfDoc.setTextColor(76, 175, 80);
+        pdfDoc.text(noteLines, boxX, noteBaselineY);
       }
     });
 
