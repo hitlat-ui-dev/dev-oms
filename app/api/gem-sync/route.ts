@@ -548,6 +548,7 @@ export async function POST(req: Request) {
         }
         metadataSet.totalRows = sanitizedRows.length;
         metadataSet.completedRows = sanitizedRows.filter((r: any) => r.isCompleted).length;
+        metadataSet.linkIssueCount = sanitizedRows.filter((r: any) => r.linkIssueStatus === "flagged").length;
         metadataSet.r2Key = r2Key;
       }
 

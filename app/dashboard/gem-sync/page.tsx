@@ -23,6 +23,7 @@ import {
   FiCopy,
   FiInfo,
   FiChevronDown,
+  FiChevronUp,
   FiCheck,
   FiX,
   FiUser,
@@ -33,7 +34,8 @@ import {
   FiRotateCcw,
   FiEye,
   FiShoppingCart,
-  FiFilter
+  FiFilter,
+  FiMoreVertical
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import AddItemModal from "@/components/AddItemModal";
@@ -58,6 +60,8 @@ interface SavedSheet {
   originalExcelData?: any[];
   totalRows?: number;
   completedRows?: number;
+  // Rows currently flagged (not resolved) Link Issue - see linkIssueStatus.
+  linkIssueCount?: number;
   selectedBuyerId: string;
   isCompleted?: boolean;
   lastEditedBy?: string;
@@ -121,6 +125,14 @@ interface FirmItemListing {
   // app/api/gem-sync/route.ts).
   lastSyncError?: string | null;
   lastSyncErrorAt?: string | null;
+  // Manually marked dead on the live GeM portal (link 404s, delisted, etc) -
+  // nothing here can be verified automatically, so this is a human call.
+  // Once set, this listing is excluded from Quick Fill/Suggested chips
+  // everywhere so it can't get picked for a new item by mistake, and shows
+  // a "Delisted" badge on the Master List/GeM Catalogue.
+  delisted?: boolean;
+  delistedBy?: string;
+  delistedAt?: string;
 }
 
 interface RateHistory {
@@ -312,7 +324,7 @@ export default function GeMSyncPage() {
   const [masterRates, setMasterRates] = useState<MasterRateEntry[]>([]);
 
   // Page active tabs/modes
-  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "sheets" | "master">("master");
+  const [activeTab, setActiveTab] = useState<"upload" | "checklist" | "sheets" | "master">("upload");
   // Sync Checklist has two portions: "Stock Update" (the original per-firm
   // Pending-listings view, unchanged) and "New Upload Link" (brand-new items
   // with no GeM listing yet, from the "Add New Link" row action below).
@@ -738,8 +750,9 @@ export default function GeMSyncPage() {
           // already known from what was just saved.
           const totalRows = uploadedRows.length;
           const completedRows = uploadedRows.filter(r => r.isCompleted).length;
+          const linkIssueCount = uploadedRows.filter(r => r.linkIssueStatus === "flagged").length;
           setSheets(prev =>
-            prev.map(s => (s.id === activeSheetId ? { ...s, totalRows, completedRows, updatedAt: new Date().toISOString() } : s))
+            prev.map(s => (s.id === activeSheetId ? { ...s, totalRows, completedRows, linkIssueCount, updatedAt: new Date().toISOString() } : s))
           );
 
           // Keep this sheet's mapping-history in sync locally too, so "Quick
@@ -801,12 +814,13 @@ export default function GeMSyncPage() {
       }
       const totalRows = uploadedRows.length;
       const completedRows = uploadedRows.filter(r => r.isCompleted).length;
+      const linkIssueCount = uploadedRows.filter(r => r.linkIssueStatus === "flagged").length;
       setSheets(prev => {
         const exists = prev.some(s => s.id === activeSheetId);
         const updatedAt = new Date().toISOString();
         return exists
-          ? prev.map(s => (s.id === activeSheetId ? { ...s, fileName, totalRows, completedRows, selectedBuyerId, updatedAt } : s))
-          : [{ id: activeSheetId, fileName, totalRows, completedRows, selectedBuyerId, updatedAt, isCompleted: false }, ...prev];
+          ? prev.map(s => (s.id === activeSheetId ? { ...s, fileName, totalRows, completedRows, linkIssueCount, selectedBuyerId, updatedAt } : s))
+          : [{ id: activeSheetId, fileName, totalRows, completedRows, linkIssueCount, selectedBuyerId, updatedAt, isCompleted: false }, ...prev];
       });
       setSaveToLibraryStatus(`Saved (${totalRows} rows)`);
     } catch (err: any) {
@@ -895,6 +909,28 @@ export default function GeMSyncPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     }).catch(err => console.error("Failed to delete listing from MongoDB", err));
+  };
+
+  // Manually marks a Master List listing dead on the live GeM portal - a
+  // human call (nothing here can be checked automatically), gated behind a
+  // confirm since it changes what every future Quick Fill/Suggested chip for
+  // this firm+item shows. Scoped to the ONE listing behind whichever chip
+  // was clicked, not the row's own currently-filled GeM Link - a chip is an
+  // alternative firm/rate the row isn't necessarily using right now.
+  const toggleListingDelisted = (listing: FirmItemListing) => {
+    if (listing.delisted) {
+      const undone = { ...listing, delisted: false, delistedBy: undefined, delistedAt: undefined };
+      applyListingsLocally(listings.map(l => (l.id === listing.id ? undone : l)));
+      persistListingUpsert(undone);
+      return;
+    }
+    const confirmed = confirm(
+      `Mark this listing as Delisted (no longer live on GeM)?\n\nFirm: ${listing.firmCode}\nRate: ₹${listing.rate}\nLink: ${listing.gemLink || "(none)"}\n\nIt will stop showing up in Quick Fill/Suggested chips anywhere in the app.`
+    );
+    if (!confirmed) return;
+    const updated = { ...listing, delisted: true, delistedBy: currentUsername || "Unknown", delistedAt: new Date().toISOString() };
+    applyListingsLocally(listings.map(l => (l.id === listing.id ? updated : l)));
+    persistListingUpsert(updated);
   };
 
   const saveRateHistory = (updatedHistory: RateHistory[]) => {
@@ -3238,6 +3274,32 @@ export default function GeMSyncPage() {
   // own, by picking "All" back in their own dropdowns, independent of the
   // other text searches and their shared clear button below.
   const anyRowSearchActive = !!(rowSearchRequirement || rowSearchInventory || rowSearchFirm || rowSearchRate || rowSearchGemLink || rowSearchRemark || rowSearchSpecification);
+  const activeRowFilterCount = [
+    rowSearchRequirement, rowSearchInventory, rowSearchFirm, rowSearchRate, rowSearchGemLink, rowSearchRemark, rowSearchSpecification,
+  ].filter(Boolean).length + (rowSearchCart !== "all" ? 1 : 0) + (rowSearchLinkIssue !== "all" ? 1 : 0);
+
+  // Simplified-view controls: the Requirement Mapping Console got cluttered
+  // (7 search boxes, 15+ firm-total chips, per-row comment/quick-fill/last-
+  // quote all visible at once) - these three collapse the busiest parts
+  // behind a click, without removing any of the functionality.
+  const [showFilters, setShowFilters] = useState(false);
+  const [showFirmTotals, setShowFirmTotals] = useState(false);
+  const [rowDensity, setRowDensity] = useState<"compact" | "detailed">("compact");
+
+  // Per-row Actions kebab menu (Copy Link/OK Link/Update Stock/New Link/Not
+  // Available - all moved off the row itself into this one dropdown, keeping
+  // only the always-relevant status marker, if any, next to the trigger).
+  // Portaled + fixed-positioned for the same reason as the buyer popover
+  // above - the table's overflow-x-auto wrapper otherwise clips it.
+  const [openRowActionsMenu, setOpenRowActionsMenu] = useState<number | null>(null);
+  const [rowActionsMenuPos, setRowActionsMenuPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Sheet Options menu - Change Sheet/Build From Scratch/Save to Library/
+  // Clear Sheet, folded into one dropdown once a sheet is actually loaded
+  // (before that, "Choose Excel Sheet" is the only entry point and stays a
+  // plain button - there's nothing yet to fold it alongside).
+  const [showSheetOptionsMenu, setShowSheetOptionsMenu] = useState(false);
+  const [sheetOptionsMenuPos, setSheetOptionsMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   // ---- Variant Groups ----
   // Selection is transient (never saved with the sheet) and keyed by row index
@@ -3756,19 +3818,92 @@ export default function GeMSyncPage() {
                     ref={fileInputRef}
                   />
 
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
-                  >
-                    <FiUploadCloud size={13} /> {fileName ? "Change Sheet" : "Choose Excel Sheet"}
-                  </button>
+                  {!fileName && (
+                    <>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
+                      >
+                        <FiUploadCloud size={13} /> Choose Excel Sheet
+                      </button>
 
-                  <button
-                    onClick={() => setShowBuildSheetModal(true)}
-                    className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
-                  >
-                    <FiPlus size={13} /> Build From Scratch
-                  </button>
+                      <button
+                        onClick={() => setShowBuildSheetModal(true)}
+                        className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
+                      >
+                        <FiPlus size={13} /> Build From Scratch
+                      </button>
+                    </>
+                  )}
+
+                  {/* Once a sheet is loaded, Change Sheet/Build From Scratch/Save to
+                      Library/Clear Sheet fold into one dropdown - they're occasional
+                      maintenance actions, not the main per-row workflow, so they don't
+                      need to sit open as 4 separate buttons any more. Portaled + fixed-
+                      positioned same as the row Actions kebab menu. */}
+                  {fileName && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          if (showSheetOptionsMenu) {
+                            setShowSheetOptionsMenu(false);
+                            return;
+                          }
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setSheetOptionsMenuPos({ top: rect.bottom + 6, left: rect.left });
+                          setShowSheetOptionsMenu(true);
+                        }}
+                        className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] cursor-pointer"
+                      >
+                        Sheet Options {showSheetOptionsMenu ? <FiChevronUp size={12} /> : <FiChevronDown size={12} />}
+                      </button>
+
+                      {showSheetOptionsMenu && sheetOptionsMenuPos && createPortal(
+                        <>
+                          <div className="fixed inset-0 z-[90]" onClick={() => setShowSheetOptionsMenu(false)} />
+                          <div
+                            className="fixed z-[100] w-56 bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in"
+                            style={{ top: sheetOptionsMenuPos.top, left: sheetOptionsMenuPos.left }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => { fileInputRef.current?.click(); setShowSheetOptionsMenu(false); }}
+                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-header)] rounded-lg px-2.5 py-2 transition-colors"
+                            >
+                              <FiUploadCloud size={13} /> Change Sheet
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setShowBuildSheetModal(true); setShowSheetOptionsMenu(false); }}
+                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-[var(--gem-text-primary)] hover:bg-[var(--gem-table-header)] rounded-lg px-2.5 py-2 transition-colors"
+                            >
+                              <FiPlus size={13} /> Build From Scratch
+                            </button>
+                            {uploadedRows.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => { handleSaveToLibrary(); setShowSheetOptionsMenu(false); }}
+                                disabled={savingToLibrary}
+                                title="Save this upload to the Sheet Library right now, instead of waiting on auto-save"
+                                className="w-full flex items-center gap-2 text-left text-xs font-bold text-blue-700 hover:bg-blue-50 rounded-lg px-2.5 py-2 transition-colors disabled:opacity-50"
+                              >
+                                <FiUploadCloud size={13} /> {savingToLibrary ? "Saving..." : "Save to Library"}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { handleClearSheet(); setShowSheetOptionsMenu(false); }}
+                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg px-2.5 py-2 transition-colors"
+                            >
+                              Clear Sheet
+                            </button>
+                          </div>
+                        </>,
+                        document.body
+                      )}
+                    </div>
+                  )}
 
                   {fileName && uploadedRows.length > 0 && (
                     <div className="flex items-center gap-1 py-1 px-1.5 rounded-lg border border-[var(--gem-border)] bg-[var(--gem-table-header)]">
@@ -3808,26 +3943,6 @@ export default function GeMSyncPage() {
                   )}
 
                   {fileName && (
-                    <button
-                      onClick={handleClearSheet}
-                      className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-red-50 text-red-600 border-red-200 hover:bg-red-100 cursor-pointer"
-                    >
-                      Clear Sheet
-                    </button>
-                  )}
-
-                  {fileName && uploadedRows.length > 0 && (
-                    <button
-                      onClick={handleSaveToLibrary}
-                      disabled={savingToLibrary}
-                      title="Save this upload to the Sheet Library right now, instead of waiting on auto-save"
-                      className="w-full sm:w-auto flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg font-black text-[10px] uppercase tracking-wider transition-all border bg-blue-600 text-white border-blue-600 hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
-                    >
-                      <FiUploadCloud size={13} /> {savingToLibrary ? "Saving..." : "Save to Library"}
-                    </button>
-                  )}
-
-                  {fileName && (
                     <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 py-1 px-2.5 rounded-lg border border-emerald-200 truncate max-w-xs">
                       ✓ {fileName} ({uploadedRows.length} rows)
                     </span>
@@ -3844,11 +3959,38 @@ export default function GeMSyncPage() {
                       {saveToLibraryStatus}
                     </span>
                   )}
+
+                  {/* Toggles the per-firm chip list in the Firm Totals bar
+                      below - lives here instead of in that bar so it sits
+                      with the rest of this toolbar's controls. Same in both
+                      Compact and Detailed row density, since this bar isn't
+                      part of that toggle at all. */}
+                  {uploadedRows.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowFirmTotals(v => !v)}
+                      className="w-full sm:w-auto flex items-center justify-center gap-1 text-[10px] font-black uppercase tracking-wider py-2 px-3.5 rounded-lg bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] transition-all"
+                    >
+                      {showFirmTotals ? <FiChevronUp size={11} /> : <FiChevronDown size={11} />}
+                      Firm Totals ({firmWiseTotals.length})
+                    </button>
+                  )}
+
+                  {/* Grand Total always shows here, next to the toggle - so
+                      it's never lost even when the per-firm bar below is
+                      collapsed and not rendered at all. */}
+                  {uploadedRows.length > 0 && (
+                    <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 py-1 px-2.5 rounded-lg border border-emerald-200">
+                      Grand Total: ₹{sheetGrandTotal.toLocaleString("en-IN")}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {/* Firm-wise total value report for this sheet */}
-              {uploadedRows.length > 0 && (
+              {/* Firm-wise total value report for this sheet - only rendered
+                  at all once the Firm Totals toggle above is on, so there's
+                  no near-empty bar sitting on screen the rest of the time. */}
+              {uploadedRows.length > 0 && showFirmTotals && (
                 <div className="bg-[var(--gem-card)] p-2 rounded-xl border border-[var(--gem-border)] shadow-xl flex flex-wrap items-center gap-1.5 gem-sync-card">
                   {firmWiseTotals.map(f => (
                     <span
@@ -3863,9 +4005,6 @@ export default function GeMSyncPage() {
                       {f.firmCode}: ₹{f.total.toLocaleString("en-IN")}
                     </span>
                   ))}
-                  <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 py-1 px-2.5 rounded-lg border border-emerald-200 ml-auto">
-                    Grand Total: ₹{sheetGrandTotal.toLocaleString("en-IN")}
-                  </span>
                 </div>
               )}
 
@@ -3873,21 +4012,70 @@ export default function GeMSyncPage() {
               {uploadedRows.length > 0 && (
                 <div className="bg-[var(--gem-card)] rounded-xl border border-[var(--gem-border)] shadow-xl overflow-hidden gem-sync-card">
 
-                  {/* Table title bar */}
-                  <div className="p-3 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+                  {/* Table title bar - the search boxes, firm totals, and
+                      per-row extras (comment/quick-fill/last-quote) all used
+                      to sit open at once, which made the console feel busy.
+                      Filters and row density now collapse behind a click,
+                      default to the simpler state, and expand on demand. */}
+                  <div className="p-3 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] flex flex-col gap-2">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
                     <div>
                       <h3 className="font-black text-[11px] uppercase tracking-wider text-[var(--gem-text-primary)]">Requirement Mapping Console</h3>
                       <p className="text-[10px] text-[var(--gem-text-secondary)]">Map each row to inventory and pick which Firm handles it.</p>
                     </div>
 
-                    {/* One box per column, matching the table's own column
-                        order, so a search sits over the thing it searches.
-                        flex-1 + justify-center keeps this row centered in the
-                        toolbar whether or not the Preview/Download buttons
-                        are present alongside it (they only render for the
-                        "all" status filter - without flex-1 here, the search
-                        row got shoved to the far side on every other tab). */}
-                    <div className="flex-1 flex flex-wrap items-center justify-center gap-1.5">
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      {/* Detailed view always shows Filters open (see the panel
+                          below) - the toggle only makes sense in Compact view,
+                          where it's collapsed by default. */}
+                      {rowDensity === "compact" && (
+                        <button
+                          type="button"
+                          onClick={() => setShowFilters(v => !v)}
+                          title="Search/filter this table"
+                          className={`text-[10px] font-black uppercase tracking-wider py-1.5 px-3 rounded-lg border transition-all flex items-center gap-1.5 ${
+                            activeRowFilterCount > 0
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-[var(--gem-card)] hover:bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border-[var(--gem-border)]"
+                          }`}
+                        >
+                          {showFilters ? <FiChevronUp size={12} /> : <FiChevronDown size={12} />}
+                          Filters{activeRowFilterCount > 0 ? ` (${activeRowFilterCount})` : ""}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setRowDensity(d => d === "compact" ? "detailed" : "compact")}
+                        title="Toggle how much per-row detail is shown"
+                        className="bg-[var(--gem-card)] hover:bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all"
+                      >
+                        {rowDensity === "compact" ? "Show Full Detail" : "Compact View"}
+                      </button>
+                      {mappingStatusFilter === "all" && (
+                        <>
+                          <button
+                            onClick={handlePreviewFilledExcel}
+                            className="bg-[var(--gem-card)] hover:bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                          >
+                            <FiEye size={12} /> Preview
+                          </button>
+                          <button
+                            onClick={handleDownloadFilledExcel}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-lg"
+                          >
+                            <FiDownload size={12} /> Download Filled Excel
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* One box per column, matching the table's own column
+                      order, so a search sits over the thing it searches.
+                      Always open in "detailed" row density - only Compact
+                      keeps it collapsed behind the Filters toggle above. */}
+                  {(rowDensity === "detailed" || showFilters) && (
+                    <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2 border-t border-[var(--gem-border)]">
                       <input
                         type="text"
                         value={rowSearchRequirement}
@@ -3974,23 +4162,7 @@ export default function GeMSyncPage() {
                         </button>
                       )}
                     </div>
-
-                    {mappingStatusFilter === "all" && (
-                      <>
-                        <button
-                          onClick={handlePreviewFilledExcel}
-                          className="bg-[var(--gem-card)] hover:bg-[var(--gem-table-header)] text-[var(--gem-text-primary)] border border-[var(--gem-border)] font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5"
-                        >
-                          <FiEye size={12} /> Preview
-                        </button>
-                        <button
-                          onClick={handleDownloadFilledExcel}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-lg"
-                        >
-                          <FiDownload size={12} /> Download Filled Excel
-                        </button>
-                      </>
-                    )}
+                  )}
                   </div>
 
                   {/* Variant Group bar - only while rows are selected, so it
@@ -4084,7 +4256,7 @@ export default function GeMSyncPage() {
                               </button>
                             </div>
                           </th>
-                          <th className="py-2 px-2.5 text-center w-[165px] min-w-[165px]">Actions</th>
+                          <th className={`py-2 px-2.5 text-center ${rowDensity === "compact" ? "w-[70px] min-w-[70px]" : "w-[165px] min-w-[165px]"}`}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--gem-border)]/60">
@@ -4191,18 +4363,24 @@ export default function GeMSyncPage() {
                                 {specification && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}><b>Spec:</b> {specification}</span>}
                                 {remark && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}><b>Remark:</b> {remark}</span>}
                                 {row.rate > 0 && <span className={`text-[10px] block ${row.variantGroupId ? "text-slate-600" : "text-[var(--gem-text-secondary)]"}`}>Orig. Rate: ₹{row.rate}</span>}
-                                <input
-                                  type="text"
-                                  value={row.comment || ""}
-                                  onChange={(e) => patchRow(row.index, { comment: e.target.value })}
-                                  placeholder="Comment..."
-                                  title="Is item ke liye comment - Excel me apne alag Comment column me jayega"
-                                  className={`mt-1 w-full rounded py-1 px-1.5 text-[10px] focus:outline-none focus:border-blue-500 border ${
-                                    row.comment
-                                      ? "bg-amber-50 border-amber-300 text-slate-800 font-semibold"
-                                      : "bg-[var(--gem-table-header)] border-[var(--gem-border)] text-[var(--gem-text-primary)]"
-                                  }`}
-                                />
+                                {/* Compact view hides the empty comment box - it still shows
+                                    once a comment exists, so nothing already written gets lost
+                                    from view, but an empty box on every one of 400+ rows was
+                                    most of what made the console feel busy. */}
+                                {(rowDensity === "detailed" || row.comment) && (
+                                  <input
+                                    type="text"
+                                    value={row.comment || ""}
+                                    onChange={(e) => patchRow(row.index, { comment: e.target.value })}
+                                    placeholder="Comment..."
+                                    title="Is item ke liye comment - Excel me apne alag Comment column me jayega"
+                                    className={`mt-1 w-full rounded py-1 px-1.5 text-[10px] focus:outline-none focus:border-blue-500 border ${
+                                      row.comment
+                                        ? "bg-amber-50 border-amber-300 text-slate-800 font-semibold"
+                                        : "bg-[var(--gem-table-header)] border-[var(--gem-border)] text-[var(--gem-text-primary)]"
+                                    }`}
+                                  />
+                                )}
                               </td>
 
                               <td className="py-2 px-2.5 text-center font-mono font-bold text-[var(--gem-text-primary)] text-xs w-16 min-w-[64px]">
@@ -4371,31 +4549,49 @@ export default function GeMSyncPage() {
                                     );
                                   })()}
 
-                                  {/* Quick Fill Options from Master List - compact single-line chip row */}
-                                  {isMatched && (
+                                  {/* Quick Fill Options from Master List - compact single-line chip row.
+                                      Hidden in the "compact" row density - "Show Full Detail" brings it back.
+                                      Delisted listings are excluded (see toggleListingDelisted) - once marked
+                                      dead they stop being offered as a one-click fill here or anywhere else. */}
+                                  {rowDensity === "detailed" && isMatched && (
                                     (() => {
-                                      const previousListings = listings.filter(l => l.itemId === row.mappedItemId);
+                                      const previousListings = listings.filter(l => l.itemId === row.mappedItemId && !l.delisted);
                                       if (previousListings.length > 0) {
                                         return (
                                           <div className="flex items-center gap-1 flex-wrap">
                                             <span className="text-[9px] font-black text-amber-700 uppercase tracking-wider shrink-0">Quick Fill:</span>
                                             {previousListings.map(prev => (
-                                              <button
+                                              <span
                                                 key={prev.id}
-                                                type="button"
-                                                onClick={() => {
-                                                  patchRow(row.index, {
-                                                    firmCode: prev.firmCode,
-                                                    rate: prev.rate,
-                                                    availGemStock: prev.availGemStock || 0,
-                                                    minQty: prev.minQty || 1,
-                                                    gemLink: prev.gemLink || ""
-                                                  });
-                                                }}
-                                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 hover:border-blue-300 text-[9px] py-0.5 px-1.5 rounded font-bold transition-all"
+                                                className="inline-flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 hover:border-blue-300 rounded overflow-hidden transition-all"
                                               >
-                                                {prev.firmCode}: ₹{prev.rate}
-                                              </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    patchRow(row.index, {
+                                                      firmCode: prev.firmCode,
+                                                      rate: prev.rate,
+                                                      availGemStock: prev.availGemStock || 0,
+                                                      minQty: prev.minQty || 1,
+                                                      gemLink: prev.gemLink || ""
+                                                    });
+                                                  }}
+                                                  className="text-blue-700 text-[9px] py-0.5 pl-1.5 pr-1 font-bold"
+                                                >
+                                                  {prev.firmCode}: ₹{prev.rate}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleListingDelisted(prev);
+                                                  }}
+                                                  title="Mark this listing as Delisted (no longer live on GeM) - stops it appearing as a Quick Fill anywhere"
+                                                  className="text-blue-400 hover:text-rose-600 hover:bg-rose-100 pl-0.5 pr-1 py-0.5 transition-colors"
+                                                >
+                                                  <FiX size={9} />
+                                                </button>
+                                              </span>
                                             ))}
                                           </div>
                                         );
@@ -4404,8 +4600,8 @@ export default function GeMSyncPage() {
                                     })()
                                   )}
 
-                                  {/* Last Quoted Hint */}
-                                  {isMatched && lastQuoted && (
+                                  {/* Last Quoted Hint - also hidden in compact row density */}
+                                  {rowDensity === "detailed" && isMatched && lastQuoted && (
                                     <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200 display inline-block">
                                       Last Quote: ₹{lastQuoted.rate} (Min {lastQuoted.minQty}) on {lastQuoted.date}
                                     </span>
@@ -4581,64 +4777,156 @@ export default function GeMSyncPage() {
                                 )}
                               </td>
 
-                              <td className="py-2 px-1.5 w-[165px] min-w-[165px]">
-                                <div className="flex items-center justify-center gap-2 flex-wrap">
-                                  {row.gemLink && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(row.gemLink);
-                                        alert("✓ Link copied to clipboard!");
-                                      }}
-                                      className="w-7 h-7 flex items-center justify-center rounded bg-sky-50 hover:bg-sky-100 text-sky-600 border border-sky-200 hover:border-sky-300 transition-colors"
-                                      title="Copy GeM Link"
-                                    >
-                                      <FiCopy size={11} />
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOkLink(row)}
-                                    title="OK Link - mapping is correct, link & mark done"
-                                    className="w-7 h-7 flex items-center justify-center rounded bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
-                                  >
-                                    <FiCheck size={13} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateStock(row)}
-                                    title="Update Stock - push the current Rate/Stock/Min Qty for this item"
-                                    className="w-7 h-7 flex items-center justify-center rounded bg-amber-500 hover:bg-amber-600 text-white transition-colors"
-                                  >
-                                    <FiEdit size={12} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleAddNewLink(row)}
-                                    title="New Link - this item has no GeM listing for this firm yet"
-                                    className="w-7 h-7 flex items-center justify-center rounded bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-blue-600 border border-blue-300 transition-colors"
-                                  >
-                                    <FiPlus size={12} />
-                                  </button>
-                                  {row.notAvailable ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleRowNotAvailable(row.index)}
-                                      title="Marked GeM Link Not Available - click to undo"
-                                      className="w-7 h-7 flex items-center justify-center rounded bg-rose-100 text-rose-700 border border-rose-300 transition-colors"
-                                    >
-                                      <FiSlash size={12} />
-                                    </button>
+                              <td className={`py-2 px-1.5 ${rowDensity === "compact" ? "w-[70px] min-w-[70px]" : "w-[165px] min-w-[165px]"}`}>
+                                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                  {rowDensity === "compact" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          if (openRowActionsMenu === row.index) {
+                                            setOpenRowActionsMenu(null);
+                                            return;
+                                          }
+                                          const rect = e.currentTarget.getBoundingClientRect();
+                                          const menuWidth = 208;
+                                          const estimatedMenuHeight = 220;
+                                          const spaceBelow = window.innerHeight - rect.bottom;
+                                          const top = spaceBelow < estimatedMenuHeight
+                                            ? Math.max(8, rect.top - estimatedMenuHeight - 6)
+                                            : rect.bottom + 6;
+                                          const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
+                                          setRowActionsMenuPos({ top, left });
+                                          setOpenRowActionsMenu(row.index);
+                                        }}
+                                        title="Actions - Copy Link / OK Link / Update Stock / New Link / Not Available"
+                                        className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
+                                          openRowActionsMenu === row.index
+                                            ? "bg-blue-600 text-white border-blue-600"
+                                            : "bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-[var(--gem-text-primary)] border-[var(--gem-border)]"
+                                        }`}
+                                      >
+                                        <FiMoreVertical size={14} />
+                                      </button>
+
+                                      {/* Actions kebab menu - compact-density only. Portaled +
+                                          fixed-positioned for the same reason as the buyer popover
+                                          (the overflow-x-auto table wrapper otherwise clips it). */}
+                                      {openRowActionsMenu === row.index && rowActionsMenuPos && createPortal(
+                                        <>
+                                          <div className="fixed inset-0 z-[90]" onClick={() => setOpenRowActionsMenu(null)} />
+                                          <div
+                                            className="fixed z-[100] w-52 bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in"
+                                            style={{ top: rowActionsMenuPos.top, left: rowActionsMenuPos.left }}
+                                          >
+                                            {row.gemLink && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  navigator.clipboard.writeText(row.gemLink);
+                                                  alert("✓ Link copied to clipboard!");
+                                                  setOpenRowActionsMenu(null);
+                                                }}
+                                                className="w-full flex items-center gap-2 text-left text-xs font-bold text-sky-700 hover:bg-sky-50 rounded-lg px-2.5 py-2 transition-colors"
+                                              >
+                                                <FiCopy size={12} /> Copy GeM Link
+                                              </button>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={() => { handleOkLink(row); setOpenRowActionsMenu(null); }}
+                                              title="Mapping is correct, link & mark done"
+                                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-emerald-700 hover:bg-emerald-50 rounded-lg px-2.5 py-2 transition-colors"
+                                            >
+                                              <FiCheck size={12} /> OK Link
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => { handleUpdateStock(row); setOpenRowActionsMenu(null); }}
+                                              title="Push the current Rate/Stock/Min Qty for this item"
+                                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50 rounded-lg px-2.5 py-2 transition-colors"
+                                            >
+                                              <FiEdit size={12} /> Update Stock
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => { handleAddNewLink(row); setOpenRowActionsMenu(null); }}
+                                              title="This item has no GeM listing for this firm yet"
+                                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-blue-700 hover:bg-blue-50 rounded-lg px-2.5 py-2 transition-colors"
+                                            >
+                                              <FiPlus size={12} /> New Link
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => { toggleRowNotAvailable(row.index); setOpenRowActionsMenu(null); }}
+                                              title={row.notAvailable ? "Click to undo" : "This item can't be found on GeM"}
+                                              className="w-full flex items-center gap-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50 rounded-lg px-2.5 py-2 transition-colors"
+                                            >
+                                              <FiSlash size={12} /> {row.notAvailable ? "Undo Not Available" : "Mark Not Available"}
+                                            </button>
+                                          </div>
+                                        </>,
+                                        document.body
+                                      )}
+                                    </>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleRowNotAvailable(row.index)}
-                                      title="GeM Link Not Available - this item can't be found on GeM"
-                                      className="w-7 h-7 flex items-center justify-center rounded bg-[var(--gem-table-header)] hover:bg-rose-50 text-rose-600 border border-rose-300 transition-colors"
-                                    >
-                                      <FiSlash size={12} />
-                                    </button>
+                                    <>
+                                      {row.gemLink && (
+                                        <button
+                                          type="button"
+                                          onClick={() => window.open(row.gemLink, "_blank", "noopener,noreferrer")}
+                                          className="w-7 h-7 flex items-center justify-center rounded bg-sky-50 hover:bg-sky-100 text-sky-600 border border-sky-200 hover:border-sky-300 transition-colors"
+                                          title="Open GeM Link"
+                                        >
+                                          <FiExternalLink size={12} />
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOkLink(row)}
+                                        title="OK Link - mapping is correct, link & mark done"
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                                      >
+                                        <FiCheck size={13} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateStock(row)}
+                                        title="Update Stock - push the current Rate/Stock/Min Qty for this item"
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-amber-500 hover:bg-amber-600 text-white transition-colors"
+                                      >
+                                        <FiEdit size={12} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAddNewLink(row)}
+                                        title="New Link - this item has no GeM listing for this firm yet"
+                                        className="w-7 h-7 flex items-center justify-center rounded bg-[var(--gem-table-header)] hover:bg-[var(--gem-table-row-hover)] text-blue-600 border border-blue-300 transition-colors"
+                                      >
+                                        <FiPlus size={12} />
+                                      </button>
+                                      {row.notAvailable ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleRowNotAvailable(row.index)}
+                                          title="Marked GeM Link Not Available - click to undo"
+                                          className="w-7 h-7 flex items-center justify-center rounded bg-rose-100 text-rose-700 border border-rose-300 transition-colors"
+                                        >
+                                          <FiSlash size={12} />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleRowNotAvailable(row.index)}
+                                          title="GeM Link Not Available - this item can't be found on GeM"
+                                          className="w-7 h-7 flex items-center justify-center rounded bg-[var(--gem-table-header)] hover:bg-rose-50 text-rose-600 border border-rose-300 transition-colors"
+                                        >
+                                          <FiSlash size={12} />
+                                        </button>
+                                      )}
+                                    </>
                                   )}
+
                                   {/* An amber clock only while the Sync Checklist entry its
                                       action created still exists but isn't Synced yet. Delete
                                       that entry from Stock Update (or the New Upload Link
@@ -5232,6 +5520,12 @@ export default function GeMSyncPage() {
                         const totalRowsCount = sheet.totalRows ?? sheet.uploadedRows?.length ?? 0;
                         const completedRowsCountForSheet = sheet.completedRows ?? sheet.uploadedRows?.filter(r => r.isCompleted).length ?? 0;
                         const progressPct = totalRowsCount > 0 ? Math.round((completedRowsCountForSheet / totalRowsCount) * 100) : 0;
+                        // How many Sync Checklist entries this sheet is still owed - Stock
+                        // Update (existing listings awaiting a sync) and New Upload Link
+                        // (brand-new items with no GeM listing yet), same "Pending" status
+                        // the Sync Checklist tab itself filters on.
+                        const stockUpdatePendingCount = listings.filter(l => l.sheetId === sheet.id && l.status === "Pending").length;
+                        const newLinkPendingCount = newLinkChecklist.filter(e => e.sheetId === sheet.id && e.status === "Pending").length;
 
                         return (
                           <tr key={sheet.id} className="hover:bg-[var(--gem-table-row-hover)] transition-colors">
@@ -5257,6 +5551,33 @@ export default function GeMSyncPage() {
                                 {sheet.isCompleted && (
                                   <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                                     Completed
+                                  </span>
+                                )}
+
+                                {!!sheet.linkIssueCount && (
+                                  <span
+                                    title={`${sheet.linkIssueCount} row${sheet.linkIssueCount === 1 ? "" : "s"} flagged with a Link Issue in this sheet`}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-300"
+                                  >
+                                    <FiAlertTriangle size={10} /> {sheet.linkIssueCount} Link Issue{sheet.linkIssueCount === 1 ? "" : "s"}
+                                  </span>
+                                )}
+
+                                {!!stockUpdatePendingCount && (
+                                  <span
+                                    title={`${stockUpdatePendingCount} Stock Update entr${stockUpdatePendingCount === 1 ? "y" : "ies"} from this sheet still Pending sync`}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-300"
+                                  >
+                                    <FiEdit size={10} /> {stockUpdatePendingCount} Stock Update
+                                  </span>
+                                )}
+
+                                {!!newLinkPendingCount && (
+                                  <span
+                                    title={`${newLinkPendingCount} New Upload Link entr${newLinkPendingCount === 1 ? "y" : "ies"} from this sheet still Pending`}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-300"
+                                  >
+                                    <FiPlus size={10} /> {newLinkPendingCount} New Link
                                   </span>
                                 )}
                               </div>
@@ -5587,6 +5908,14 @@ export default function GeMSyncPage() {
                               <span className="bg-[var(--gem-table-header)] py-1 px-2.5 rounded-lg border border-[var(--gem-border)] text-[11px] font-bold text-[var(--gem-text-primary)]">
                                 {lst.firmCode}
                               </span>
+                              {lst.delisted && (
+                                <span
+                                  title={`Delisted${lst.delistedBy ? ` - by ${lst.delistedBy}` : ""}${lst.delistedAt ? ` on ${new Date(lst.delistedAt).toLocaleDateString("en-IN")}` : ""}`}
+                                  className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 py-0.5 px-1.5 rounded"
+                                >
+                                  Delisted
+                                </span>
+                              )}
                             </td>
                             <td className="py-4 px-6 text-center font-mono font-bold text-[var(--gem-text-primary)]">₹{lst.rate}</td>
                             <td className="py-4 px-6 text-center font-mono text-[var(--gem-text-primary)]">{lst.availGemStock || 0}</td>
@@ -5619,13 +5948,26 @@ export default function GeMSyncPage() {
                               )}
                             </td>
                             <td className="py-4 px-6 text-center">
-                              <button
-                                onClick={() => { setDeleteReasonTarget(lst); setDeleteReasonText(""); }}
-                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center mx-auto"
-                                title="Unlink / Delete Listing"
-                              >
-                                <FiTrash2 size={12} />
-                              </button>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  onClick={() => toggleListingDelisted(lst)}
+                                  className={`text-[10px] font-black tracking-wider uppercase py-1.5 px-2.5 rounded-lg transition-all flex items-center justify-center border ${
+                                    lst.delisted
+                                      ? "bg-rose-100 text-rose-700 border-rose-300"
+                                      : "bg-[var(--gem-table-header)] text-[var(--gem-text-secondary)] hover:text-rose-600 hover:bg-rose-50 border-[var(--gem-border)] hover:border-rose-300"
+                                  }`}
+                                  title={lst.delisted ? "Delisted - click to undo" : "Mark as Delisted (no longer live on GeM)"}
+                                >
+                                  <FiAlertTriangle size={12} />
+                                </button>
+                                <button
+                                  onClick={() => { setDeleteReasonTarget(lst); setDeleteReasonText(""); }}
+                                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 text-[10px] font-black tracking-wider uppercase py-1.5 px-3 rounded-lg transition-all flex items-center justify-center"
+                                  title="Unlink / Delete Listing"
+                                >
+                                  <FiTrash2 size={12} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
