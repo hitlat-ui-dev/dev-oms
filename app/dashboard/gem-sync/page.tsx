@@ -4294,8 +4294,7 @@ export default function GeMSyncPage() {
                             <tr
                               key={row.index}
                               className={`hover:bg-[var(--gem-table-row-hover)] transition-colors ${
-                                row.linkIssueStatus === "flagged" ? "outline outline-2 -outline-offset-1 outline-orange-400" :
-                                row.linkIssueStatus === "resolved" ? "outline outline-2 -outline-offset-1 outline-emerald-400" : ""
+                                row.linkIssueStatus === "flagged" ? "outline outline-2 -outline-offset-1 outline-orange-400" : ""
                               }`}
                             >
 
@@ -4754,8 +4753,6 @@ export default function GeMSyncPage() {
                                   className={`text-xs rounded-lg py-2 px-2 w-full focus:outline-none focus:border-blue-500 ${
                                     row.linkIssueStatus === "flagged"
                                       ? "bg-orange-50 border-2 border-orange-400 text-orange-900 font-semibold"
-                                      : row.linkIssueStatus === "resolved"
-                                      ? "bg-emerald-50 border-2 border-emerald-400 text-emerald-900 font-semibold"
                                       : "bg-[var(--gem-table-header)] border border-[var(--gem-border)] text-[var(--gem-text-primary)]"
                                   }`}
                                   placeholder="GeM Link..."
