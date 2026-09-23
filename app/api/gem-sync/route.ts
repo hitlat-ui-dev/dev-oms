@@ -4,21 +4,28 @@ import { uploadFileToR2, getFileFromR2, deleteFileFromR2 } from "@/lib/cloudflar
 
 const sheetR2Key = (id: string) => `gem-sync/sheets/${id}.json`;
 
-// Helper: Deduplicate listings array by (itemId/itemName + firmCode + GeM
+// Helper: finds duplicate listings by (itemId/itemName + firmCode + GeM
 // Link) - a Master List entry is a firm's item->GeM-link mapping, reusable
 // for any buyer's quote, so buyerId plays no part in a listing's identity.
 // Two listings differing only by which buyer's sheet first created them ARE
 // duplicates. GeM Link IS part of the key though - a firm can legitimately
 // carry more than one listing for the same item under different Product
-// IDs, so item+firm alone would misidentify those as duplicates and this
-// function (called from the destructive "Clean Duplicates" action, which
-// deletes every gem_listings doc and reinserts only what survives here)
-// would permanently delete the ones it kept out. Listings with no link at
-// all (pre-tracking data) still fall back to item+firm so those old
-// duplicates keep collapsing as before.
-function deduplicateListings(items: any[]) {
-  if (!Array.isArray(items)) return [];
+// IDs, so item+firm alone would misidentify those as duplicates. Listings
+// with no link at all (pre-tracking data) still fall back to item+firm so
+// those old duplicates keep collapsing as before.
+// This is READ-ONLY - it never deletes anything itself. It returns the
+// deduplicated (still _id-free) "kept" list, and "discarded": the full
+// losing-duplicate listings (each carrying which listing's id it would be
+// replaced by), for a caller to show the user before anything is actually
+// removed. Deletion only ever happens by explicit app-level `id`s a caller
+// passes back in - never a recomputed, un-reviewed deleteMany({}) - so
+// nothing is ever removed the user hasn't specifically seen and confirmed,
+// and a listing added/updated by someone else is never at risk of being
+// swept up in an unrelated cleanup.
+function deduplicateListings(items: any[]): { kept: any[]; discarded: any[] } {
+  if (!Array.isArray(items)) return { kept: [], discarded: [] };
   const seen = new Map<string, any>();
+  const discarded: any[] = [];
 
   for (const lst of items) {
     if (!lst) continue;
@@ -35,12 +42,18 @@ function deduplicateListings(items: any[]) {
       const hasMoreInfo = !existing.gemLink && lst.gemLink;
       const isNewer = new Date(lst.date || 0).getTime() > new Date(existing.date || 0).getTime();
       if (hasMoreInfo || isNewer) {
+        const { _id, ...rest } = existing;
+        discarded.push({ ...rest, keptId: lst.id });
         seen.set(key, lst);
+      } else {
+        const { _id, ...rest } = lst;
+        discarded.push({ ...rest, keptId: existing.id });
       }
     }
   }
 
-  return Array.from(seen.values());
+  const kept = Array.from(seen.values()).map(({ _id, ...rest }) => ({ ...rest }));
+  return { kept, discarded };
 }
 
 // A listing's firmCode/rate/availGemStock/minQty hold its last CONFIRMED-
@@ -124,11 +137,21 @@ export async function GET(req: Request) {
         db.collection("gem_listings").find({}).toArray(),
       ]);
       const cleanCatalogueLinks = catalogueLinks.map(({ _id, ...rest }) => ({ ...rest }));
-      const cleanListings = rawListings.map(({ _id, ...rest }) => ({ ...rest }));
+      // Read-only view (no delete here), so the raw docs (with _id) can go
+      // straight in - dedupeListings strips _id from what it returns anyway.
       return NextResponse.json({
         catalogueLinks: cleanCatalogueLinks,
-        listings: deduplicateListings(cleanListings),
+        listings: deduplicateListings(rawListings).kept,
       });
+    }
+
+    // Dry-run for the Master List's "Clean Duplicates" button - shows exactly
+    // which listings would be removed (and which one each is a duplicate of)
+    // before anything is actually deleted. Nothing here mutates the DB.
+    if (searchParams.get("previewDuplicates")) {
+      const rawListings = await db.collection("gem_listings").find({}).toArray();
+      const { discarded } = deduplicateListings(rawListings);
+      return NextResponse.json({ duplicates: discarded });
     }
 
     // Fetch history for the Catalogue page's History popup - one row per
@@ -200,20 +223,17 @@ export async function GET(req: Request) {
     const cleanNewLinkChecklist = newLinkChecklist.map(({ _id, ...rest }) => ({ ...rest }));
     const cleanMasterRates = masterRates.map(({ _id, ...rest }) => ({ ...rest }));
 
-    // Deduplicate listings
-    const deduplicatedListings = deduplicateListings(cleanListings);
-
-    // If duplicates were pruned, update MongoDB in background
-    if (deduplicatedListings.length < cleanListings.length) {
-      await db.collection("gem_listings").deleteMany({});
-      if (deduplicatedListings.length > 0) {
-        await db.collection("gem_listings").insertMany(deduplicatedListings);
-      }
-    }
+    // Listings are returned as-is, duplicates included - nothing gets
+    // silently removed just from loading this page any more. Master List's
+    // own display already collapses exact duplicates visually on its own
+    // (see filteredMasterListings in page.tsx); actually deleting one now
+    // only ever happens through the reviewable Clean Duplicates flow
+    // (?previewDuplicates=1 to see them, action=cleanup_duplicates with the
+    // specific ids the user confirmed to actually remove them).
 
     return NextResponse.json({
       buyers: cleanBuyers,
-      listings: deduplicatedListings,
+      listings: cleanListings,
       customItems: cleanCustomItems,
       sheets: cleanSheets,
       rowMappings: cleanRowMappings,
@@ -278,23 +298,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
+    // Deletes ONLY the specific listing ids the caller passed - always the
+    // ones the user actually reviewed via ?previewDuplicates=1 first (see
+    // deduplicateListings' comment on why an un-reviewed recompute-and-
+    // delete-everything here is unsafe). No ids means nothing is deleted.
     if (action === "cleanup_duplicates") {
-      const rawListings = await db.collection("gem_listings").find({}).toArray();
-      const cleanListings = rawListings.map(({ _id, ...rest }) => ({ ...rest }));
-      const deduplicated = deduplicateListings(cleanListings);
-      const removedCount = cleanListings.length - deduplicated.length;
-
-      await db.collection("gem_listings").deleteMany({});
-      if (deduplicated.length > 0) {
-        await db.collection("gem_listings").insertMany(deduplicated);
+      const ids: string[] = Array.isArray(body.ids)
+        ? body.ids.filter((x: any) => typeof x === "string" && x)
+        : [];
+      if (ids.length === 0) {
+        return NextResponse.json({ error: "No duplicate ids given to delete" }, { status: 400 });
       }
-
-      return NextResponse.json({
-        success: true,
-        removedCount,
-        remainingCount: deduplicated.length,
-        listings: deduplicated
-      });
+      await db.collection("gem_listings").deleteMany({ id: { $in: ids } });
+      return NextResponse.json({ success: true, removedCount: ids.length });
     }
 
     if (action === "save_history") {

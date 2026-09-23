@@ -492,28 +492,33 @@ export default function GeMSyncPage() {
     return { uploadedRows: data.uploadedRows || [], originalExcelData: data.originalExcelData || [] };
   };
 
-  // Load backend and MongoDB shared data
-  useEffect(() => {
-    // 1. Fetch Firms
+  // Extracted from the mount effect below so the "Refresh" button (there's
+  // no live polling/websocket in this app - another tab's/user's changes
+  // otherwise only ever show up after an actual page reload) can re-run the
+  // exact same fetches on demand. autoOpenLatestSheet is true only on the
+  // very first mount - a manual refresh must NOT force-switch whichever
+  // sheet the user currently has open (and its in-progress local edits)
+  // back to "whatever's most recently updated" out from under them.
+  const refreshCompanies = () => {
     fetch("/api/companies")
       .then(res => res.json())
       .then(data => setCompanies(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching companies", err));
-
-    // 2. Fetch Inventory Items
+  };
+  const refreshStockItems = () => {
     fetch("/api/stock")
       .then(res => res.json())
       .then(data => setStockItems(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching stock", err));
-
-    // 3. Fetch Sellers (Deliver / Buyer Directory)
+  };
+  const refreshSellers = () => {
     fetch("/api/sellers")
       .then(res => res.json())
       .then(data => setSellers(Array.isArray(data) ? data : []))
       .catch(err => console.error("Error fetching sellers", err));
-
-    // 4. Fetch Shared GeM Sync State from MongoDB (rate history excluded — see below)
-    fetch("/api/gem-sync")
+  };
+  const refreshGemSyncState = (autoOpenLatestSheet: boolean) => {
+    return fetch("/api/gem-sync")
       .then(res => res.json())
       .then(state => {
         if (state) {
@@ -526,8 +531,8 @@ export default function GeMSyncPage() {
           if (Array.isArray(state.sheets)) {
             setSheets(state.sheets);
             // Default load the latest active sheet
-            if (state.sheets.length > 0) {
-              const sorted = [...state.sheets].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+            if (autoOpenLatestSheet && state.sheets.length > 0) {
+              const sorted = [...state.sheets].sort((a: SavedSheet, b: SavedSheet) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
               const latest = sorted[0];
               // Same race as the Resume Mapping button below - must be set
               // BEFORE activeSheetId/fileName so the auto-save effect skips
@@ -550,7 +555,37 @@ export default function GeMSyncPage() {
         }
       })
       .catch(err => console.error("Error loading shared MongoDB state:", err));
+  };
+
+  // Load backend and MongoDB shared data
+  useEffect(() => {
+    refreshCompanies();
+    refreshStockItems();
+    refreshSellers();
+    refreshGemSyncState(true);
   }, []);
+
+  // Manual "Refresh" button state - see refreshAllSharedData below.
+  const [isRefreshingData, setIsRefreshingData] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState("");
+  const refreshAllSharedData = () => {
+    setIsRefreshingData(true);
+    setRefreshStatus("");
+    // Deliberately does NOT touch the currently open sheet's own content
+    // (uploadedRows/originalExcelData) - only the shared collections
+    // (buyers, Master List, Sync Checklist, Sheet Library's list, etc.) and
+    // companies/stock/sellers, so nothing already being edited locally gets
+    // silently discarded by a refresh.
+    refreshCompanies();
+    refreshStockItems();
+    refreshSellers();
+    refreshGemSyncState(false)
+      .then(() => setRefreshStatus("Refreshed"))
+      .finally(() => {
+        setIsRefreshingData(false);
+        setTimeout(() => setRefreshStatus(""), 2500);
+      });
+  };
 
   // Keyboard shortcut for "+ Add New Item" (Ctrl/Cmd+Shift+A) - same
   // addEventListener("keydown") pattern as the dashboard's Ctrl/Cmd+K
@@ -1646,20 +1681,51 @@ export default function GeMSyncPage() {
     return buyers.filter(b => b.name.toLowerCase().includes(buyerSearchQuery.toLowerCase()));
   }, [buyers, buyerSearchQuery]);
 
-  // Manual Cleanup Duplicates action handler
-  const handleCleanupDuplicates = async () => {
+  // Duplicate cleanup is now review-then-confirm, not a blind one-click
+  // delete: "Clean Duplicates" opens a preview of exactly which listings
+  // would go (and which one each is a duplicate of), and only the ids the
+  // user actually confirms in that modal ever get deleted.
+  const [showDuplicatesPreview, setShowDuplicatesPreview] = useState(false);
+  const [duplicatesPreview, setDuplicatesPreview] = useState<(FirmItemListing & { keptId: string })[]>([]);
+  const [loadingDuplicatesPreview, setLoadingDuplicatesPreview] = useState(false);
+  const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+
+  const handlePreviewDuplicates = async () => {
+    setLoadingDuplicatesPreview(true);
     try {
-      const res = await fetch("/api/gem-sync?action=cleanup_duplicates", { method: "POST" });
+      const res = await fetch("/api/gem-sync?previewDuplicates=1");
       const data = await res.json();
-      if (data.success) {
-        if (Array.isArray(data.listings)) {
-          setListings(data.listings);
-        }
-        alert(`✓ Cleaned up MongoDB! Removed ${data.removedCount || 0} duplicate listings.`);
-      }
+      setDuplicatesPreview(Array.isArray(data.duplicates) ? data.duplicates : []);
+      setShowDuplicatesPreview(true);
     } catch (err) {
-      console.error("Failed to cleanup duplicates:", err);
-      alert("Failed to cleanup duplicates. Check console for details.");
+      console.error("Failed to preview duplicates:", err);
+      alert("Failed to load duplicate preview. Check console for details.");
+    } finally {
+      setLoadingDuplicatesPreview(false);
+    }
+  };
+
+  const handleConfirmDeleteDuplicates = async () => {
+    if (duplicatesPreview.length === 0) return;
+    setDeletingDuplicates(true);
+    try {
+      const ids = duplicatesPreview.map(d => d.id);
+      const res = await fetch("/api/gem-sync?action=cleanup_duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Delete failed");
+      setListings(prev => prev.filter(l => !ids.includes(l.id)));
+      setShowDuplicatesPreview(false);
+      setDuplicatesPreview([]);
+      alert(`✓ Removed ${data.removedCount || ids.length} duplicate listing(s).`);
+    } catch (err) {
+      console.error("Failed to delete duplicates:", err);
+      alert("Failed to delete duplicates. Check console for details.");
+    } finally {
+      setDeletingDuplicates(false);
     }
   };
 
@@ -3642,6 +3708,19 @@ export default function GeMSyncPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {refreshStatus && (
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                  ✓ {refreshStatus}
+                </span>
+              )}
+              <button
+                onClick={refreshAllSharedData}
+                disabled={isRefreshingData}
+                title="No live sync between tabs/users in this app - pulls the latest Master List, Sync Checklist and Sheet Library without a full page reload. Leaves whichever sheet you're currently editing untouched."
+                className="flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-slate-50 hover:scale-105 active:scale-95 transition-all shadow-sm disabled:opacity-50 disabled:hover:scale-100"
+              >
+                <FiRefreshCw size={12} className={isRefreshingData ? "animate-spin" : ""} /> Refresh
+              </button>
               <button
                 onClick={openMasterRateModal}
                 className="flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-black uppercase text-[11px] hover:bg-slate-50 hover:scale-105 active:scale-95 transition-all shadow-sm"
@@ -5823,11 +5902,12 @@ export default function GeMSyncPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={handleCleanupDuplicates}
-                    className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 hover:border-amber-300 py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm"
-                    title="Clean up existing duplicate listings in MongoDB"
+                    onClick={handlePreviewDuplicates}
+                    disabled={loadingDuplicatesPreview}
+                    className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 hover:border-amber-300 py-2 px-4 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm disabled:opacity-50"
+                    title="Review duplicate listings before removing any of them"
                   >
-                    <FiTrash2 size={13} /> Clean Duplicates
+                    <FiTrash2 size={13} /> {loadingDuplicatesPreview ? "Checking..." : "Clean Duplicates"}
                   </button>
                 </div>
                 
@@ -6645,6 +6725,81 @@ export default function GeMSyncPage() {
                   >
                     Delete
                   </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* =================== CLEAN DUPLICATES PREVIEW MODAL ===================
+              Shows exactly which listings would be removed - and which listing each
+              is a duplicate of - before anything is actually deleted. Confirming
+              deletes ONLY these specific ids (see handleConfirmDeleteDuplicates). */}
+          {showDuplicatesPreview && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className="bg-[var(--gem-card)] border border-[var(--gem-border)] rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 gem-sync-card">
+
+                <div className="p-6 border-b border-[var(--gem-border)] bg-[var(--gem-table-header)] shrink-0">
+                  <h3 className="font-black text-sm text-[var(--gem-text-primary)] uppercase tracking-wider flex items-center gap-2">
+                    <FiTrash2 className="text-amber-500" /> Clean Duplicates - Review
+                  </h3>
+                  <p className="text-xs text-[var(--gem-text-secondary)] mt-1">
+                    {duplicatesPreview.length === 0
+                      ? "No duplicate listings found (same Item + Firm + GeM Link)."
+                      : `${duplicatesPreview.length} listing(s) below would be removed - nothing is deleted until you confirm.`}
+                  </p>
+                </div>
+
+                <div className="flex-1 overflow-auto">
+                  {duplicatesPreview.length > 0 && (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-[var(--gem-table-header)]">
+                        <tr className="text-[var(--gem-text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--gem-border)]">
+                          <th className="py-2.5 px-4">Item</th>
+                          <th className="py-2.5 px-4">Firm</th>
+                          <th className="py-2.5 px-4">GeM Link</th>
+                          <th className="py-2.5 px-4 text-center">Rate</th>
+                          <th className="py-2.5 px-4">Date</th>
+                          <th className="py-2.5 px-4">Kept Instead</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--gem-border)]/40">
+                        {duplicatesPreview.map(dup => {
+                          const keptListing = listings.find(l => l.id === dup.keptId);
+                          return (
+                            <tr key={dup.id}>
+                              <td className="py-2.5 px-4 font-bold text-[var(--gem-text-primary)]">{dup.itemName}</td>
+                              <td className="py-2.5 px-4 text-[var(--gem-text-secondary)]">{dup.firmCode}</td>
+                              <td className="py-2.5 px-4 text-[var(--gem-text-secondary)] truncate max-w-[160px]" title={dup.gemLink}>{dup.gemLink || "—"}</td>
+                              <td className="py-2.5 px-4 text-center font-mono">₹{dup.rate}</td>
+                              <td className="py-2.5 px-4 text-[var(--gem-text-secondary)]">{dup.date ? new Date(dup.date).toLocaleDateString("en-IN") : "—"}</td>
+                              <td className="py-2.5 px-4 text-emerald-700">
+                                {keptListing ? `${keptListing.firmCode} · ₹${keptListing.rate} (${keptListing.date ? new Date(keptListing.date).toLocaleDateString("en-IN") : "—"})` : dup.keptId}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                <div className="p-6 border-t border-[var(--gem-border)] bg-[var(--gem-table-header)]/20 flex justify-end gap-3 shrink-0">
+                  <button
+                    onClick={() => { setShowDuplicatesPreview(false); setDuplicatesPreview([]); }}
+                    className="px-5 py-2.5 rounded-lg border border-[var(--gem-border)] hover:bg-[var(--gem-table-row-hover)] text-xs uppercase font-bold"
+                  >
+                    Cancel
+                  </button>
+                  {duplicatesPreview.length > 0 && (
+                    <button
+                      onClick={handleConfirmDeleteDuplicates}
+                      disabled={deletingDuplicates}
+                      className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-lg text-xs uppercase font-black disabled:opacity-50"
+                    >
+                      {deletingDuplicates ? "Deleting..." : `Confirm & Delete ${duplicatesPreview.length}`}
+                    </button>
+                  )}
                 </div>
 
               </div>
