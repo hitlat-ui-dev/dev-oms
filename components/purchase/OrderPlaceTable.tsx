@@ -189,12 +189,19 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
       styles: {
         fontSize: 10,
         cellPadding: 4,
-        halign: 'left' // Body data already left-aligned
+        halign: 'left', // Body data already left-aligned
+        overflow: 'linebreak' // wrap long text instead of spilling past the page edge
       },
-      // Ensuring no overrides interfere
+      // Order ID/Date/Order Qty get fixed widths so Item Name (the one
+      // column that can carry a long manual Note) is forced to wrap within
+      // whatever's left, rather than autoTable sizing it to its longest
+      // unbroken content and running off the page - confirmed live: a long
+      // Note text was printing past the table border into the page margin.
       columnStyles: {
-        0: { halign: 'left' },
-        3: { halign: 'left' }
+        0: { halign: 'left', cellWidth: 25 },
+        1: { halign: 'left', cellWidth: 28 },
+        2: { halign: 'left', cellWidth: 'auto' },
+        3: { halign: 'left', cellWidth: 28 }
       }
     });
 
