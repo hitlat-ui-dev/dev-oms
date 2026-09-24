@@ -5558,13 +5558,23 @@ export default function GeMSyncPage() {
                   {/* Search bar inside Sheet Library */}
                   <div className="relative w-full sm:w-64">
                     <FiSearch className="absolute left-3.5 top-3 text-[var(--gem-text-secondary)] text-sm" />
-                    <input 
+                    <input
                       type="text"
                       placeholder="Search sheets library..."
-                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-4 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500 font-semibold"
+                      className="w-full bg-[var(--gem-table-header)] border border-[var(--gem-border)] rounded-xl py-2 pl-9 pr-8 text-xs text-[var(--gem-text-primary)] focus:outline-none focus:border-blue-500 font-semibold"
                       value={librarySearchQuery}
                       onChange={(e) => setLibrarySearchQuery(e.target.value)}
                     />
+                    {librarySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setLibrarySearchQuery("")}
+                        title="Clear search"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--gem-text-secondary)] hover:text-[var(--gem-text-primary)]"
+                      >
+                        <FiX size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
