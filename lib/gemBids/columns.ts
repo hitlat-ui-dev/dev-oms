@@ -6,33 +6,85 @@ export type FilterType = "text" | "dateRange" | "dropdown";
 
 export interface BidColumn {
   key: string;
-  header: string; // exact header text as written by the GeM Bid Exporter extension
+  header: string; // display label shown in the table header (not necessarily the extension's raw export header text — see buyerAddedBidSpecificAtcUrl)
   filterType: FilterType;
+  // True for a field that's still scraped/stored/diffed/editable as normal,
+  // just not rendered as its own table column — either dropped from view
+  // entirely (startDate) or folded into another column's cell instead
+  // (address/departmentNameAndAddress render stacked inside one merged
+  // "Address" column — see GemBidTable.tsx's ADDRESS_DEPARTMENT_KEY).
+  hiddenInTable?: boolean;
 }
 
-// Order matches the spec: Bid No first (pinned, key column), Tag rendered right after it
-// by the table component, then the remaining 15 source columns in original export order.
+// Display/table order (Bid No first — pinned, key column; Tag renders even
+// further left, before Bid No, per the table component).
+// "Document required from seller" is kept as the last column (wasn't in the
+// originally requested sequence, but dropping a stored/diffed field
+// silently seemed worse than just placing it last).
 export const BID_COLUMNS: BidColumn[] = [
   { key: "bidNo", header: "Bid No", filterType: "text" },
-  { key: "consigneeCity", header: "Consignee City", filterType: "dropdown" },
   { key: "bidLink", header: "Bid Link", filterType: "text" },
-  { key: "items", header: "Items", filterType: "text" },
-  { key: "quantityListing", header: "Quantity (Listing)", filterType: "text" },
-  { key: "departmentNameAndAddress", header: "Department Name And Address", filterType: "text" },
-  { key: "startDate", header: "Start Date", filterType: "dateRange" },
+  { key: "startDate", header: "Start Date", filterType: "dateRange", hiddenInTable: true },
   { key: "bidEndDateTime", header: "Bid End Date/Time", filterType: "dateRange" },
-  { key: "documentRequiredFromSeller", header: "Document required from seller", filterType: "text" },
-  { key: "bidToRaEnabled", header: "Bid to RA enabled", filterType: "dropdown" },
-  { key: "raQualificationRule", header: "RA Qualification Rule", filterType: "text" },
-  { key: "typeOfBid", header: "Type of Bid", filterType: "dropdown" },
-  { key: "evaluationMethod", header: "Evaluation Method", filterType: "dropdown" },
-  { key: "emdAmount", header: "EMD Amount", filterType: "text" },
-  // Note the exact source header is "Beneficiary :" (trailing space + colon) — verified
-  // against the extension's own export code, not assumed.
-  { key: "beneficiary", header: "Beneficiary :", filterType: "text" },
+  // Folded into the Address column's cell (stacked as the third line, under
+  // Department) and its filter dropdown stacked into that same header cell.
+  { key: "consigneeCity", header: "Consignee City", filterType: "dropdown", hiddenInTable: true },
+  { key: "items", header: "Items", filterType: "text" },
+  { key: "quantityListing", header: "QTY", filterType: "text" },
   { key: "address", header: "Address", filterType: "text" },
-  { key: "buyerAddedBidSpecificAtcUrl", header: "Buyer Added Bid Specific ATC", filterType: "text" },
+  { key: "departmentNameAndAddress", header: "Department Name And Address", filterType: "text", hiddenInTable: true },
+  { key: "bidToRaEnabled", header: "BID TO RA", filterType: "dropdown" },
+  // Folded into the BID TO RA column's cell (stacked below it) and its
+  // filter dropdown (was a text search box, now a select - request was for
+  // a scrollable pick-list instead of typing).
+  { key: "raQualificationRule", header: "RA", filterType: "dropdown", hiddenInTable: true },
+  { key: "typeOfBid", header: "Type of Bid", filterType: "dropdown" },
+  { key: "evaluationMethod", header: "Evaluation", filterType: "dropdown" },
+  // Folded into the Evaluation column's cell (stacked below it).
+  { key: "emdAmount", header: "EMD Amount", filterType: "text", hiddenInTable: true },
+  // Note the exact source header is "Beneficiary :" (trailing space + colon) — verified
+  // against the extension's own export code, not assumed. hiddenInTable per
+  // spec - still scraped/stored/diffed/editable, just not its own column.
+  { key: "beneficiary", header: "Beneficiary :", filterType: "text", hiddenInTable: true },
+  // Folded into the Document required from seller column's cell (stacked
+  // below it, as its own hyperlink line) and filter box.
+  { key: "buyerAddedBidSpecificAtcUrl", header: "ATC", filterType: "text", hiddenInTable: true },
+  { key: "documentRequiredFromSeller", header: "Document required from seller", filterType: "text" },
 ];
+
+// Some long/verbose scraped values are shown shortened in the table cell
+// only — the full original text is untouched in storage, in the Edit Bid
+// form, and in the cell's title tooltip (hover to see it in full).
+export const CELL_DISPLAY_FORMATTERS: Record<string, (value: string) => string> = {
+  raQualificationRule: (v) => {
+    const val = (v || "").trim();
+    if (!val) return val;
+    const pct = val.match(/^(\d+%)/);
+    if (pct) return pct[1];
+    const h = val.match(/^(H\d+)\b/i);
+    if (h) return h[1].toUpperCase();
+    return val;
+  },
+  typeOfBid: (v) => {
+    const val = (v || "").trim();
+    if (/^two\b/i.test(val)) return "TWO";
+    if (/^single\b/i.test(val)) return "SINGLE";
+    return val;
+  },
+  evaluationMethod: (v) => {
+    const val = (v || "").trim().toLowerCase();
+    if (val === "total value wise evaluation") return "TOTAL";
+    if (val === "item wise evaluation") return "ITEM WISE";
+    return v || "";
+  },
+};
+
+// Fields the Edit Bid modal offers - every data column except the identity
+// key (bidNo). Editing is allowed exactly once per bid (see the PATCH
+// handler in app/api/gem-bids/route.ts) - after that the button locks, so
+// this isn't meant as a repeatable correction tool, just a one-time
+// "fix what the scrape got wrong before this bid moves further" step.
+export const EDITABLE_FIELD_KEYS = BID_COLUMNS.filter((c) => c.key !== "bidNo").map((c) => c.key);
 
 export const DATA_FIELD_KEYS = BID_COLUMNS.filter((c) => c.key !== "bidNo").map((c) => c.key);
 

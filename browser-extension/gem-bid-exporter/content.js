@@ -884,7 +884,10 @@
         if (batch) {
           batch.running = false;
           await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
-          if (batch.omsRunId) await chrome.storage.local.remove(CLAIMED_RUN_KEY);
+          if (batch.omsRunId) {
+            await chrome.storage.local.remove(CLAIMED_RUN_KEY);
+            notify("GeM Bid Sync failed", msg);
+          }
         }
       } catch (_) {
         /* storage itself may be unavailable during a navigation - ignore */
@@ -920,12 +923,11 @@
     await chrome.storage.local.remove([OMS_BATCH_ROWS_KEY, CLAIMED_RUN_KEY]);
     if (applyResult && applyResult.ok) {
       await setStatus({ scanning: false, lastAction: "city_batch_done", omsApplied: true, omsRowCount: rows.length });
+      notify("GeM Bid Sync finished", `${rows.length} bid(s) sent to the OMS.`);
     } else {
-      await setStatus({
-        scanning: false,
-        lastAction: "city_batch_error",
-        errorMessage: (applyResult && applyResult.error) || "apply failed",
-      });
+      const errorMessage = (applyResult && applyResult.error) || "apply failed";
+      await setStatus({ scanning: false, lastAction: "city_batch_error", errorMessage });
+      notify("GeM Bid Sync failed", errorMessage);
     }
   }
 
@@ -978,6 +980,15 @@
         resolve(response);
       });
     });
+  }
+
+  // Fire-and-forget desktop notification via background.js (only it can
+  // call chrome.notifications) - so an OMS-triggered run finishing or
+  // failing is visible even with the GeM tab/window minimized or in the
+  // background. Not awaited by callers; a failure here shouldn't hold up
+  // anything else.
+  function notify(title, body) {
+    sendToBackground("GEM_BID_SYNC_NOTIFY", { title, body }).catch(() => {});
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

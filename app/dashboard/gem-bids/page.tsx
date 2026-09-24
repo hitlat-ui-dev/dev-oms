@@ -319,26 +319,23 @@ export default function GemBidsPage() {
         </div>
       }
     >
-      <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
-        <div className="max-w-[1600px] mx-auto flex flex-col gap-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <Link href="/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
-                <FiArrowLeft /> Back to Dashboard
+      <div className="p-3 md:p-5 bg-slate-50 min-h-screen">
+        <div className="max-w-[1600px] mx-auto flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <Link href="/dashboard" className="flex items-center gap-1 text-slate-500 hover:text-blue-600 text-xs transition-colors w-fit">
+                <FiArrowLeft />
               </Link>
-              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
-                <FiLayers className="text-blue-600" /> GeM Bids
+              <h1 className="text-base font-black uppercase tracking-tight text-slate-900 flex items-center gap-1.5">
+                <FiLayers className="text-blue-600" size={16} /> GeM Bids
               </h1>
-              <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
-                Fetch, Track & Work GeM Bid Listings
-              </p>
             </div>
             <div className="flex items-center gap-2">
               {syncRun?.status === "scraping" || syncRun?.status === "applying" ? (
                 <button
                   onClick={handleStopSync}
                   disabled={syncActionLoading}
-                  className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                  className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
                 >
                   Stop Sync
                 </button>
@@ -346,43 +343,44 @@ export default function GemBidsPage() {
                 <button
                   onClick={() => setStartSyncModalOpen(true)}
                   disabled={syncActionLoading}
-                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
                 >
                   Start Sync
                 </button>
               )}
               <Link
                 href="/dashboard/gem-bids/rate-variant-tool"
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
               >
                 <FiPercent size={13} /> Rate Variant Tool →
               </Link>
               <Link
                 href="/dashboard/gem-bids/document-maker"
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
               >
                 <FiFileText size={13} /> Open Document Maker →
               </Link>
             </div>
           </div>
 
-          {/* Dashboard / summary panel */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+          {/* Dashboard / summary panel - kept compact by request, this sits above
+              the table on every load and shouldn't push it down the page. */}
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2">
               {SECTIONS.map((s) => (
-                <div key={s.key} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">{s.label}</span>
-                  <span className="text-lg font-black text-slate-800 block mt-0.5">{sectionCounts[s.key] || 0}</span>
+                <div key={s.key} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider block">{s.label}</span>
+                  <span className="text-sm font-black text-slate-800 block">{sectionCounts[s.key] || 0}</span>
                 </div>
               ))}
             </div>
 
             {sectionCounts["submitted_bids"] > 0 && (
-              <div className="mb-4">
-                <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block mb-1.5">Submitted Bids — by status</span>
-                <div className="flex flex-wrap gap-2">
+              <div className="mb-2">
+                <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider block mb-1">Submitted Bids — by status</span>
+                <div className="flex flex-wrap gap-1.5">
                   {SUBMITTED_STATUSES.map((s) => (
-                    <span key={s} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[10px] font-bold text-slate-600">
+                    <span key={s} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-bold text-slate-600">
                       {s}: <span className="text-slate-900 font-black">{submittedStatusCounts[s] || 0}</span>
                     </span>
                   ))}
@@ -391,8 +389,8 @@ export default function GemBidsPage() {
             )}
 
             {(syncRun?.status === "scraping" || syncRun?.status === "applying") && (
-              <div className="mb-4 pt-3 border-t border-slate-100">
-                <div className="flex items-center justify-between mb-1.5">
+              <div className="mb-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider">
                     {syncRun.status === "applying" ? "Applying..." : "Syncing..."}
                   </span>
@@ -404,7 +402,7 @@ export default function GemBidsPage() {
                     style={{ width: `${syncRun.progressPercent ?? 0}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1.5">
+                <p className="text-[10px] text-slate-400 mt-1">
                   {syncRun.phase === "starting"
                     ? "Waiting for the GeM Bid Exporter extension to pick this up (checks about once a minute) — it'll open the GeM Advance Search page on its own and apply the filters you picked."
                     : syncRun.phase}
@@ -413,7 +411,7 @@ export default function GemBidsPage() {
             )}
 
             {lastRun && (
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-bold text-slate-500 pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-bold text-slate-500 pt-2 border-t border-slate-100">
                 <span>
                   Last sync: <span className="text-slate-800">{new Date(lastRun.runAt).toLocaleString()}</span>
                 </span>

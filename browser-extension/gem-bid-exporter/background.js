@@ -88,6 +88,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+
+  // content.js can't call chrome.notifications directly (that API isn't
+  // available to content scripts), so it asks this worker to show one -
+  // used for "your Start-Sync run finished/failed" so it's visible even if
+  // the GeM tab/window is minimized or you're working in a different one.
+  if (message.type === "GEM_BID_SYNC_NOTIFY") {
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: message.title || "GeM Bid Exporter",
+      message: message.body || "",
+      priority: 2,
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
 });
 
 // ===== Auto-open the GeM tab for an OMS-triggered Start Sync run =====

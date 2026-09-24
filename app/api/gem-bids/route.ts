@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { EDITABLE_FIELD_KEYS } from "@/lib/gemBids/columns";
 
 const DB_NAME = "dev_oms_db";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
@@ -38,6 +39,69 @@ export async function GET(req: Request) {
   } catch (error: any) {
     console.error("GeM bids GET error:", error);
     return NextResponse.json({ error: error.message || "Failed to fetch bids" }, { status: 500, headers: corsHeaders });
+  }
+}
+
+// PATCH: manually correct a bid's own fields — one time only per bid.
+// body: { bidNo, fields: Record<string,string>, editedBy? }
+// Once a bid has been manually edited this way, editedBy/editedAt/edited are
+// set and every future PATCH for that bidNo is rejected with 409 — this is a
+// single "fix what the scrape got wrong" pass, not an ongoing edit tool, per
+// spec. Only DATA_FIELD_KEYS-listed fields are writable; bidNo itself (the
+// identity key) and internal workflow fields (currentSection, tag, etc.)
+// can't be touched from here.
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const { bidNo, fields, editedBy } = body;
+    if (!bidNo || typeof bidNo !== "string") {
+      return NextResponse.json({ error: "bidNo is required" }, { status: 400, headers: corsHeaders });
+    }
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+      return NextResponse.json({ error: "fields must be an object" }, { status: 400, headers: corsHeaders });
+    }
+
+    const client = await clientPromise;
+    const db = client.db(DB_NAME);
+    const bidsCollection = db.collection("gem_bids");
+
+    const existing = await bidsCollection.findOne({ bidNo });
+    if (!existing) {
+      return NextResponse.json({ error: "Bid not found" }, { status: 404, headers: corsHeaders });
+    }
+    if (existing.manuallyEdited) {
+      return NextResponse.json(
+        { error: "This bid was already manually edited once and can't be edited again" },
+        { status: 409, headers: corsHeaders }
+      );
+    }
+
+    const setDoc: Record<string, string> = {};
+    for (const key of EDITABLE_FIELD_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(fields, key)) {
+        setDoc[key] = String(fields[key] ?? "").trim();
+      }
+    }
+
+    const now = new Date();
+    await bidsCollection.updateOne(
+      { bidNo },
+      {
+        $set: {
+          ...setDoc,
+          manuallyEdited: true,
+          manuallyEditedAt: now,
+          manuallyEditedBy: editedBy || "",
+          updatedAt: now,
+        },
+      }
+    );
+    const updated = await bidsCollection.findOne({ bidNo });
+
+    return NextResponse.json({ success: true, bid: updated }, { headers: corsHeaders });
+  } catch (error: any) {
+    console.error("GeM bid PATCH error:", error);
+    return NextResponse.json({ error: error.message || "Edit failed" }, { status: 500, headers: corsHeaders });
   }
 }
 
