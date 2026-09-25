@@ -36,6 +36,7 @@ export async function POST(req: Request) {
       sellerRegisterAddress: data.sellerRegisterAddress ? data.sellerRegisterAddress.trim() : "",
       dispatchAddress: data.dispatchAddress ? data.dispatchAddress.trim() : "",
       mobile: data.mobile ? data.mobile.trim() : "",
+      owner: data.owner ? data.owner.trim() : "",
       state: data.state ? data.state.trim() : "",
       gstin: gstin || null,
       pan: pan || null,

@@ -83,6 +83,8 @@ interface SummaryData {
     pendingOrderValue: number;
   };
   statusBreakdown: StatusRow[];
+  subPartyBreakdown: { subParty: string; count: number; value: number }[];
+  ownerBreakdown: { owner: string; count: number; value: number }[];
   purchase: {
     todayPurchaseValue: number;
     todayPurchaseCount: number;
@@ -445,6 +447,53 @@ export default function SummaryDashboardPage() {
                   </div>
                 )}
               </div>
+
+              {/* Sub-Party Order Totals (e.g. orders tagged "vinay" - handled by
+                  an outside party but billed under this firm's GST) */}
+              {data.subPartyBreakdown.length > 0 && (
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiUsers className="text-blue-600" size={14} /> Sub-Party Order Totals (All-Time)
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {data.subPartyBreakdown.map((s) => (
+                      <div
+                        key={s.subParty}
+                        className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2"
+                      >
+                        <span className="text-[11px] font-black text-slate-800 uppercase">{s.subParty}</span>
+                        <span className="text-[10px] font-bold text-purple-700">× {formatInt(s.count)}</span>
+                        <span className="text-[10px] font-bold text-slate-500">₹{formatMoney(s.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Firm Order Totals — By Owner (Registered Companies' "Owner" field) */}
+              {data.ownerBreakdown.length > 0 && (
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiUsers className="text-blue-600" size={14} /> Firm Order Totals — By Owner (All-Time)
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {data.ownerBreakdown.map((o) => (
+                      <div
+                        key={o.owner}
+                        className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2"
+                      >
+                        <span className="text-[11px] font-black text-slate-800 uppercase">{o.owner}</span>
+                        <span className="text-[10px] font-bold text-indigo-700">× {formatInt(o.count)}</span>
+                        <span className="text-[10px] font-bold text-slate-500">₹{formatMoney(o.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Bills Generated Today */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">

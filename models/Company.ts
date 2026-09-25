@@ -8,6 +8,7 @@ const CompanySchema = new Schema({
   // this is the dispatch/return address printed on shipping labels.
   dispatchAddress: { type: String, required: false, trim: true },
   mobile: { type: String, required: false, trim: true },
+  owner: { type: String, required: false, trim: true },
 
   // ---- Billing: Tax details ----
   // GSTIN is optional - some firms are unregistered. When absent, PAN is

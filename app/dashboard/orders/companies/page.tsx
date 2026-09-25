@@ -12,6 +12,7 @@ interface Company {
   sellerRegisterAddress?: string;
   dispatchAddress?: string;
   mobile?: string;
+  owner?: string;
   state?: string;
   gstin?: string | null;
   pan?: string | null;
@@ -29,6 +30,7 @@ const emptyForm = {
   sellerRegisterAddress: "",
   dispatchAddress: "",
   mobile: "",
+  owner: "",
   state: "",
   gstin: "",
   pan: "",
@@ -73,6 +75,7 @@ export default function CompaniesPage() {
       c.sellerRegisterAddress?.toLowerCase().includes(q) ||
       c.dispatchAddress?.toLowerCase().includes(q) ||
       c.mobile?.toLowerCase().includes(q) ||
+      c.owner?.toLowerCase().includes(q) ||
       c.gstin?.toLowerCase().includes(q) ||
       c.pan?.toLowerCase().includes(q) ||
       c.state?.toLowerCase().includes(q)
@@ -143,6 +146,7 @@ export default function CompaniesPage() {
       sellerRegisterAddress: company.sellerRegisterAddress || "",
       dispatchAddress: company.dispatchAddress || "",
       mobile: company.mobile || "",
+      owner: company.owner || "",
       state: company.state || "",
       gstin: company.gstin || "",
       pan: company.pan || "",
@@ -282,6 +286,20 @@ export default function CompaniesPage() {
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
                   placeholder="+91 00000 00000"
                   onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Owner</label>
+              <div className="relative">
+                <FiBriefcase className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={formData.owner}
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                  placeholder="Owner name"
+                  onChange={(e) => setFormData({ ...formData, owner: e.target.value })}
                 />
               </div>
             </div>
@@ -482,6 +500,7 @@ export default function CompaniesPage() {
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">GSTIN / PAN</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">State</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</th>
+                  <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Owner</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code</th>
                   <th className="p-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Edit</th>
                 </tr>
@@ -504,6 +523,7 @@ export default function CompaniesPage() {
                     </td>
                     <td className="p-5 font-medium text-slate-600 text-xs">{company.state || "---"}</td>
                     <td className="p-5 font-bold text-slate-600 text-xs">{company.mobile || "---"}</td>
+                    <td className="p-5 font-bold text-slate-600 text-xs">{company.owner || "---"}</td>
                     <td className="p-5">
                       <span className="bg-orange-50 text-orange-600 px-3 py-1 rounded-lg font-black text-xs tracking-widest border border-orange-100">
                         {company.firmCode}

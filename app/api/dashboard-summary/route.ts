@@ -99,6 +99,47 @@ export async function GET(req: Request) {
               },
               { $sort: { value: -1 } },
             ],
+            // Orders tagged with a subParty (e.g. "vinay") - an outside party
+            // that actually supplied/handled the order but it's billed under
+            // this firm's GST (see subParty's definition in models/SellerOrder.ts).
+            // All-time, grouped so any future subParty tag shows up here too,
+            // not just today's hardcoded one.
+            subPartyBreakdown: [
+              { $match: { subParty: { $exists: true, $nin: [null, ""] } } },
+              {
+                $group: {
+                  _id: "$subParty",
+                  count: { $sum: 1 },
+                  value: { $sum: { $ifNull: ["$totalAmount", 0] } },
+                },
+              },
+              { $sort: { value: -1 } },
+            ],
+            // Order totals for whichever firms have an "Owner" set on the
+            // Registered Companies page (models/Company.ts's `owner` field) -
+            // grouped by owner, so a firm's orders roll up under the person
+            // who owns that firm. Firms with no owner set are left out here
+            // entirely (they already show up in the overall totals above).
+            ownerBreakdown: [
+              {
+                $lookup: {
+                  from: "companies",
+                  localField: "firmCode",
+                  foreignField: "firmCode",
+                  as: "companyInfo",
+                },
+              },
+              { $unwind: { path: "$companyInfo", preserveNullAndEmptyArrays: true } },
+              { $match: { "companyInfo.owner": { $exists: true, $nin: [null, ""] } } },
+              {
+                $group: {
+                  _id: "$companyInfo.owner",
+                  count: { $sum: 1 },
+                  value: { $sum: { $ifNull: ["$totalAmount", 0] } },
+                },
+              },
+              { $sort: { value: -1 } },
+            ],
           },
         },
       ])
@@ -112,6 +153,16 @@ export async function GET(req: Request) {
       status: s._id || "Unknown",
       count: s.count,
       value: round2(s.value),
+    }));
+    const subPartyBreakdown = (facetResult.subPartyBreakdown || []).map((s: any) => ({
+      subParty: s._id,
+      count: s.count,
+      value: round2(s.value),
+    }));
+    const ownerBreakdown = (facetResult.ownerBreakdown || []).map((o: any) => ({
+      owner: o._id,
+      count: o.count,
+      value: round2(o.value),
     }));
 
     const pendingPaymentValue = Math.max(0, round2(totals.totalOrderValue - totals.totalReceived - totals.totalDeducted));
@@ -364,6 +415,8 @@ export async function GET(req: Request) {
         pendingOrderValue: round2(pending.pendingOrderValue),
       },
       statusBreakdown,
+      subPartyBreakdown,
+      ownerBreakdown,
       purchase: {
         todayPurchaseValue: round2(purchase.todayPurchaseValue || 0),
         todayPurchaseCount: purchase.todayPurchaseCount || 0,
