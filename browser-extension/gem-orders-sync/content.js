@@ -1,8 +1,10 @@
-// ===== GeM Orders -> Dev OMS Staging Sync =====
+// ===== GeM Orders -> Dev OMS Intake Sync =====
 // Runs on fulfilment.gem.gov.in's Orders tab. Scrapes contract cards and
 // hands them to the background service worker, which POSTs each one to
-// Dev OMS's /api/gem-orders staging endpoint (app/dashboard/orders/fetch-gem-orders
-// reviews them from there before they're moved into Main Orders).
+// Dev OMS's /api/gem-order-intake endpoint. app/dashboard/orders/fetch-gem-orders
+// has an "Intake" tab where a human picks the real orders and transfers
+// them into that same page's "Fetched Orders" tab, which reviews/verifies
+// them into Main Orders same as before.
 
 function log(msg) {
   console.log("[GeM Orders Sync]", msg);

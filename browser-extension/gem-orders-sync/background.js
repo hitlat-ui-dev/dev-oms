@@ -1,4 +1,4 @@
-// ===== Sends scraped GeM orders to the Dev OMS staging endpoint =====
+// ===== Sends scraped GeM orders to the Dev OMS intake endpoint =====
 // Runs in the background service worker so requests aren't blocked by the
 // GeM page's CORS policy (extensions bypass CORS for hosts listed in
 // "host_permissions" in manifest.json).
@@ -6,7 +6,9 @@
 // Points at the deployed OMS since that's what's used when testing the
 // extension on the live GeM site. Switch back to "http://localhost:3000"
 // only when running the OMS dev server locally
-// (localhost:3000/dashboard/orders/fetch-gem-orders):
+// (localhost:3000/dashboard/orders/fetch-gem-orders - Intake tab is where a
+// human picks the real orders and transfers them into the Fetched Orders
+// tab on that same page):
 const API_BASE = "https://dev-oms-blush.vercel.app";
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -41,16 +43,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Sends a single scraped order to the staging endpoint. Orders are sent one
-  // at a time (content.js loops and awaits each call) instead of one giant
-  // batch loop in here - MV3 service workers can get killed by Chrome after
-  // ~30s of no extension-API activity, which was silently swallowing the
-  // "done" response (and the final saved/duplicate summary) on bigger scans.
+  // Sends a single scraped order to the intake/triage endpoint (not straight
+  // into the Fetched GeM Orders review list anymore - a human first picks
+  // which of these are real orders on the GeM Order Intake page). Orders are
+  // sent one at a time (content.js loops and awaits each call) instead of
+  // one giant batch loop in here - MV3 service workers can get killed by
+  // Chrome after ~30s of no extension-API activity, which was silently
+  // swallowing the "done" response (and the final saved/duplicate summary)
+  // on bigger scans.
   if (message.type === "GEM_SEND_ONE_ORDER") {
     (async () => {
       const order = message.order;
       try {
-        const res = await fetch(`${API_BASE}/api/gem-orders`, {
+        const res = await fetch(`${API_BASE}/api/gem-order-intake`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

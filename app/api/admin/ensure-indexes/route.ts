@@ -187,6 +187,15 @@ export async function GET() {
     await rawGemOrders.createIndex({ contractNo: 1 }, { unique: true });
     indexResults["raw_gem_orders"] = ["{ contractNo: 1 } (unique)"];
 
+    // 20. gem_order_intake - triage collection in front of raw_gem_orders
+    // (app/dashboard/orders/gem-order-intake). Same unique-contractNo
+    // backstop, plus a "disabled" index since the page's default list view
+    // filters those out on every load.
+    const gemOrderIntake = db.collection("gem_order_intake");
+    await gemOrderIntake.createIndex({ contractNo: 1 }, { unique: true });
+    await gemOrderIntake.createIndex({ disabled: 1, createdAt: -1 });
+    indexResults["gem_order_intake"] = ["{ contractNo: 1 } (unique)", "{ disabled: 1, createdAt: -1 }"];
+
     return NextResponse.json({
       success: true,
       message: "Successfully ensured performance indexes across all MongoDB collections",

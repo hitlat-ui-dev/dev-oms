@@ -120,6 +120,21 @@ export default function FetchGeMOrdersPage() {
   const [matchResults, setMatchResults] = useState<Record<string, { instituteName?: string; itemId?: string; itemName?: string; remark?: string; hint?: string }>>({});
   const [matchingAll, setMatchingAll] = useState(false);
 
+  // GeM Order Intake tab - a lighter triage list in front of the Fetched
+  // Orders list above. The Chrome extension now posts scraped orders here
+  // first (app/api/gem-order-intake); a human bulk-transfers the real ones
+  // into raw_gem_orders (same list this page already reviews) or
+  // bulk-disables the rest so a re-scrape never re-imports them.
+  const [pageTab, setPageTab] = useState<"fetched" | "intake">("fetched");
+  const [intakeOrders, setIntakeOrders] = useState<RawGeMOrder[]>([]);
+  const [intakeLoading, setIntakeLoading] = useState(true);
+  const [intakeRefreshing, setIntakeRefreshing] = useState(false);
+  const [intakeSearchQuery, setIntakeSearchQuery] = useState("");
+  const [selectedIntakeIds, setSelectedIntakeIds] = useState<string[]>([]);
+  const [intakeFirmCode, setIntakeFirmCode] = useState("");
+  const [transferring, setTransferring] = useState(false);
+  const [disablingIntake, setDisablingIntake] = useState(false);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem("oms_user");
@@ -137,7 +152,16 @@ export default function FetchGeMOrdersPage() {
     fetchCompanies();
     fetchSheetsAndBuyers();
     fetchStockItems();
+    fetchIntakeOrders();
   }, []);
+
+  // Default the Intake tab's firm dropdown to the first company once
+  // companies load - same as the Verify modal does for selectedFirmCode.
+  useEffect(() => {
+    if (companies.length > 0 && !intakeFirmCode) {
+      setIntakeFirmCode(companies[0].firmCode);
+    }
+  }, [companies, intakeFirmCode]);
 
   // Esc closes the Item Name suggestion dropdown first (if open), otherwise
   // closes the Verify modal itself - mirrors the Cancel button, so it's a
@@ -155,6 +179,20 @@ export default function FetchGeMOrdersPage() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [selectedOrder, showItemSuggestions, verifying]);
+
+  // Ctrl+Shift+A opens "Add New Item" from anywhere on this page - global,
+  // not scoped to any modal, since the whole point is a quick shortcut that
+  // doesn't need clicking the button first.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "A" || e.key === "a")) {
+        e.preventDefault();
+        setIsAddItemModalOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Resolve the Sheet Library file(s) tied to a given buyer (matches by
   // buyer id or name, same dual-check the GeM Sync Console uses since
@@ -228,6 +266,22 @@ export default function FetchGeMOrdersPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const fetchIntakeOrders = async () => {
+    try {
+      setIntakeRefreshing(true);
+      const res = await fetch(`/api/gem-order-intake?t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setIntakeOrders(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error("Error fetching GeM order intake:", err);
+    } finally {
+      setIntakeLoading(false);
+      setIntakeRefreshing(false);
     }
   };
 
@@ -392,6 +446,12 @@ export default function FetchGeMOrdersPage() {
   };
 
   const openVerifyModal = (order: RawGeMOrder) => {
+    // Refreshes in the background (not awaited) so an item added via "Add
+    // New Item" on this page, or from Stock/Inventory in another tab, shows
+    // up in the Item Name search without needing a full page reload - stock
+    // items were otherwise only fetched once, on this page's initial mount.
+    fetchStockItems();
+
     setSelectedOrder(order);
     const firmMatch = order.firmCode && companies.some(c => c.firmCode === order.firmCode);
     setSelectedFirmCode(firmMatch ? order.firmCode! : (companies.length > 0 ? companies[0].firmCode : "GeM"));
@@ -512,6 +572,86 @@ export default function FetchGeMOrdersPage() {
     );
   }, [rawOrders, searchQuery]);
 
+  const filteredIntakeOrders = useMemo(() => {
+    if (!intakeSearchQuery.trim()) return intakeOrders;
+    const q = intakeSearchQuery.toLowerCase().trim();
+    return intakeOrders.filter(o =>
+      (o.contractNo || "").toLowerCase().includes(q) ||
+      (o.instituteName || "").toLowerCase().includes(q) ||
+      (o.itemName || "").toLowerCase().includes(q) ||
+      (o.firmCode || "").toLowerCase().includes(q)
+    );
+  }, [intakeOrders, intakeSearchQuery]);
+
+  const toggleSelectAllIntake = (checked: boolean) => {
+    setSelectedIntakeIds(checked ? filteredIntakeOrders.map(o => o._id) : []);
+  };
+
+  const toggleSelectIntakeOne = (id: string, checked: boolean) => {
+    setSelectedIntakeIds(prev => (checked ? [...prev, id] : prev.filter(x => x !== id)));
+  };
+
+  const handleBulkTransfer = async () => {
+    if (selectedIntakeIds.length === 0) return;
+    if (!intakeFirmCode) {
+      alert("Pehle ek firm select karo");
+      return;
+    }
+    if (!confirm(`${selectedIntakeIds.length} order(s) ko "${intakeFirmCode}" firm ke saath Fetched GeM Orders me transfer karein?`)) return;
+
+    setTransferring(true);
+    try {
+      const res = await fetch(`/api/gem-order-intake/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIntakeIds, firmCode: intakeFirmCode }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setIntakeOrders(prev => prev.filter(o => !selectedIntakeIds.includes(o._id)));
+        setSelectedIntakeIds([]);
+        fetchRawOrders(); // pull the newly transferred rows into the Fetched Orders tab
+        if (result.skipped?.length > 0) {
+          alert(`${result.transferred} transferred. ${result.skipped.length} skipped (already existed elsewhere).`);
+        } else {
+          alert(`✓ ${result.transferred} order(s) transferred to Fetched GeM Orders.`);
+        }
+      } else {
+        const err = await res.json();
+        alert(err.error || "Transfer failed");
+      }
+    } catch (err) {
+      alert("Error transferring orders");
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  const handleBulkDisableIntake = async () => {
+    if (selectedIntakeIds.length === 0) return;
+    if (!confirm(`${selectedIntakeIds.length} order(s) ko permanently disable karein? Ye list se hat jayenge aur dobara fetch nahi honge.`)) return;
+
+    setDisablingIntake(true);
+    try {
+      const res = await fetch(`/api/gem-order-intake/disable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIntakeIds }),
+      });
+      if (res.ok) {
+        setIntakeOrders(prev => prev.filter(o => !selectedIntakeIds.includes(o._id)));
+        setSelectedIntakeIds([]);
+      } else {
+        const err = await res.json();
+        alert(err.error || "Disable failed");
+      }
+    } catch (err) {
+      alert("Error disabling orders");
+    } finally {
+      setDisablingIntake(false);
+    }
+  };
+
   const sortedOrders = useMemo(() => {
     if (!sortConfig) return filteredOrders;
     const items = [...filteredOrders];
@@ -545,166 +685,324 @@ export default function FetchGeMOrdersPage() {
     <div className="p-4 md:p-10 max-w-[1600px] mx-auto font-sans">
       {/* Top Header Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <button
-          onClick={() => router.push("/dashboard/orders")}
-          className="flex items-center gap-2 text-slate-500 hover:text-blue-600 font-bold text-xs uppercase tracking-widest transition-colors"
-        >
-          <FiArrowLeft size={16} /> Back to Orders Dashboard
-        </button>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setIsAddItemModalOpen(true)}
-            title="Add a new stock item without leaving this page - useful when a row below shows No match"
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+            onClick={() => router.push("/dashboard/orders")}
+            title="Back to Orders Dashboard"
+            className="flex items-center text-slate-500 hover:text-blue-600 transition-colors"
           >
-            <FiPlus size={14} /> Add New Item
+            <FiArrowLeft size={20} />
           </button>
+          <h1 className="text-xl font-black uppercase tracking-tight text-slate-800">Fetched GeM Order</h1>
+        </div>
+        <div className="flex items-center gap-3">
+          {pageTab === "fetched" && (
+            <>
+              <button
+                onClick={() => setIsAddItemModalOpen(true)}
+                title="Add a new stock item without leaving this page - useful when a row below shows No match (shortcut: Ctrl+Shift+A)"
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+              >
+                <FiPlus size={14} /> Add New Item
+              </button>
+              <button
+                onClick={openFetchHistory}
+                title="Har firm ke GeM orders last kab fetch hue the"
+                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+              >
+                <FiClock size={14} /> History
+              </button>
+              <button
+                onClick={runBulkAutoMatch}
+                disabled={matchingAll || rawOrders.length === 0}
+                title="Match Institute + Item from the Sheet Library for all pending orders below"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
+              >
+                <FiZap className={matchingAll ? "animate-pulse" : ""} size={14} /> {matchingAll ? "Matching..." : "Auto-Match Items"}
+              </button>
+            </>
+          )}
           <button
-            onClick={openFetchHistory}
-            title="Har firm ke GeM orders last kab fetch hue the"
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
-          >
-            <FiClock size={14} /> History
-          </button>
-          <button
-            onClick={runBulkAutoMatch}
-            disabled={matchingAll || rawOrders.length === 0}
-            title="Match Institute + Item from the Sheet Library for all pending orders below"
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
-          >
-            <FiZap className={matchingAll ? "animate-pulse" : ""} size={14} /> {matchingAll ? "Matching..." : "Auto-Match Items"}
-          </button>
-          <button
-            onClick={fetchRawOrders}
-            disabled={refreshing}
+            onClick={() => (pageTab === "fetched" ? fetchRawOrders() : fetchIntakeOrders())}
+            disabled={pageTab === "fetched" ? refreshing : intakeRefreshing}
             className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
           >
-            <FiRefreshCw className={refreshing ? "animate-spin" : ""} size={14} /> Refresh
+            <FiRefreshCw className={(pageTab === "fetched" ? refreshing : intakeRefreshing) ? "animate-spin" : ""} size={14} /> Refresh
           </button>
         </div>
       </div>
 
-      {/* Page Title */}
-      <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white px-4 py-3 md:px-5 md:py-3.5 rounded-xl shadow-md mb-5 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <div className="flex items-center gap-2 text-amber-400 text-[10px] font-black uppercase tracking-[0.2em]">
-          <FiClock size={13} /> Staging
-        </div>
-        <h1 className="text-base md:text-lg font-black uppercase tracking-tight">Fetched GeM Orders</h1>
-        <p className="text-slate-300 text-[11px] font-medium">
-          Review, verify and approve raw orders before moving them into Main Sales Orders.
-        </p>
+      {/* Tab Switcher */}
+      <div className="flex gap-2 mb-5">
+        <button
+          onClick={() => setPageTab("fetched")}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${pageTab === "fetched" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"}`}
+        >
+          Fetched Orders ({rawOrders.length})
+        </button>
+        <button
+          onClick={() => setPageTab("intake")}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${pageTab === "intake" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"}`}
+        >
+          Intake ({intakeOrders.length})
+        </button>
       </div>
 
-      {/* Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
-        <div className="relative flex-1 min-w-[260px]">
-          <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search contract no, buyer, or item name..."
-            className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-medium"
-          />
-        </div>
-        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-          Total Pending: <span className="text-blue-600 font-black">{filteredOrders.length}</span>
-        </div>
-      </div>
+      {pageTab === "fetched" && (
+        <>
+          {/* Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
+            <div className="relative flex-1 min-w-[260px]">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search contract no, buyer, or item name..."
+                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-medium"
+              />
+            </div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Total Pending: <span className="text-blue-600 font-black">{filteredOrders.length}</span>
+            </div>
+          </div>
 
-      {/* Orders List */}
-      {loading ? (
-        <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
-          <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-3" size={28} />
-          <p className="text-slate-500 font-bold text-sm">Loading fetched orders...</p>
-        </div>
-      ) : filteredOrders.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
-          <FiAlertCircle className="text-slate-400 mx-auto mb-3" size={36} />
-          <h3 className="text-lg font-black text-slate-700 uppercase">No Pending GeM Orders</h3>
-          <p className="text-slate-400 text-xs mt-1">
-            Fetch orders using the Chrome Extension on GeM marketplace to verify them here.
-          </p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-[900px]">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
-                <SortHeader label="Firm" sortKey="firmCode" />
-                <SortHeader label="Buyer" sortKey="instituteName" />
-                <th className="px-3 py-3">Cat.</th>
-                <SortHeader label="Item Details" sortKey="itemName" />
-                <th className="px-3 py-3">Contract</th>
-                <th className="px-3 py-3 text-center">O-Qty</th>
-                <th className="px-3 py-3 text-right">Rate</th>
-                <th className="px-3 py-3 text-right">Total</th>
-                <th className="px-3 py-3 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sortedOrders.map((order) => {
-                const matchedBuyer = guessBuyerForOrder(order);
-                return (
-                <tr key={order._id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
-                  <td className="px-3 py-3 max-w-56">
-                    <div className="font-bold text-slate-800 truncate" title={order.instituteName}>{order.instituteName}</div>
-                    {matchedBuyer ? (
-                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchedBuyer.name}>
-                        <FiCheck size={11} /> {matchedBuyer.name}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-amber-600 font-semibold">No match</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-slate-400">—</td>
-                  <td className="px-3 py-3 max-w-72">
-                    <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
-                    {matchResults[order._id]?.itemName && (
-                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchResults[order._id]!.itemName}>
-                        <FiCheck size={11} /> {matchResults[order._id]!.itemName}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-3">
-                    <a
-                      href={order.contractUrl || "#"}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold"
-                    >
-                      {order.contractNo}
-                      {order.contractUrl && <FiExternalLink size={11} />}
-                    </a>
-                    {order.contractDate && <div className="text-[10px] text-slate-400 font-semibold">{order.contractDate}</div>}
-                  </td>
-                  <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
-                  <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
-                  <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => openVerifyModal(order)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all"
-                      >
-                        <FiCheckCircle size={13} /> Verify
-                      </button>
-                      <button
-                        onClick={() => handleDelete(order._id, order.contractNo)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Reject Order"
-                      >
-                        <FiTrash2 size={15} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+          {/* Orders List */}
+          {loading ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-3" size={28} />
+              <p className="text-slate-500 font-bold text-sm">Loading fetched orders...</p>
+            </div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiAlertCircle className="text-slate-400 mx-auto mb-3" size={36} />
+              <h3 className="text-lg font-black text-slate-700 uppercase">No Pending GeM Orders</h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Transfer orders in from the Intake tab above to verify them here.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
+                    <SortHeader label="Firm" sortKey="firmCode" />
+                    <SortHeader label="Buyer" sortKey="instituteName" />
+                    <th className="px-3 py-3">Cat.</th>
+                    <SortHeader label="Item Details" sortKey="itemName" />
+                    <th className="px-3 py-3">Contract</th>
+                    <th className="px-3 py-3 text-center">O-Qty</th>
+                    <th className="px-3 py-3 text-right">Rate</th>
+                    <th className="px-3 py-3 text-right">Total</th>
+                    <th className="px-3 py-3 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedOrders.map((order) => {
+                    const matchedBuyer = guessBuyerForOrder(order);
+                    return (
+                    <tr key={order._id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
+                      <td className="px-3 py-3 max-w-56">
+                        <div className="font-bold text-slate-800 truncate" title={order.instituteName}>{order.instituteName}</div>
+                        {matchedBuyer ? (
+                          <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchedBuyer.name}>
+                            <FiCheck size={11} /> {matchedBuyer.name}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-amber-600 font-semibold">No match</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-slate-400">—</td>
+                      <td className="px-3 py-3 max-w-72">
+                        <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
+                        {matchResults[order._id]?.itemName && (
+                          <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchResults[order._id]!.itemName}>
+                            <FiCheck size={11} /> {matchResults[order._id]!.itemName}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <a
+                          href={order.contractUrl || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold"
+                        >
+                          {order.contractNo}
+                          {order.contractUrl && <FiExternalLink size={11} />}
+                        </a>
+                        {order.contractDate && <div className="text-[10px] text-slate-400 font-semibold">{order.contractDate}</div>}
+                      </td>
+                      <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
+                      <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
+                      <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => openVerifyModal(order)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all"
+                          >
+                            <FiCheckCircle size={13} /> Verify
+                          </button>
+                          <button
+                            onClick={() => handleDelete(order._id, order.contractNo)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Reject Order"
+                          >
+                            <FiTrash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {pageTab === "intake" && (
+        <>
+          {/* Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
+            <div className="relative flex-1 min-w-[260px]">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input
+                type="text"
+                value={intakeSearchQuery}
+                onChange={(e) => setIntakeSearchQuery(e.target.value)}
+                placeholder="Search contract no, buyer, item, or firm..."
+                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-medium"
+              />
+            </div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Total Pending: <span className="text-blue-600 font-black">{filteredIntakeOrders.length}</span>
+            </div>
+          </div>
+
+          {/* Bulk Action Bar */}
+          {selectedIntakeIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6">
+              <span className="text-xs font-black text-blue-800 uppercase tracking-wider">{selectedIntakeIds.length} Selected</span>
+              <select
+                value={intakeFirmCode}
+                onChange={(e) => setIntakeFirmCode(e.target.value)}
+                className="p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500"
+              >
+                {companies.length > 0 ? (
+                  companies.map(c => (
+                    <option key={c._id} value={c.firmCode}>{c.firmName} ({c.firmCode})</option>
+                  ))
+                ) : (
+                  <option value="">No firms found</option>
+                )}
+              </select>
+              <button
+                onClick={handleBulkTransfer}
+                disabled={transferring}
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-50"
+              >
+                <FiCheckCircle size={13} /> {transferring ? "Transferring..." : `Transfer to Orders (${selectedIntakeIds.length})`}
+              </button>
+              <button
+                onClick={handleBulkDisableIntake}
+                disabled={disablingIntake}
+                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-50"
+              >
+                <FiTrash2 size={13} /> {disablingIntake ? "Disabling..." : `Disable (${selectedIntakeIds.length})`}
+              </button>
+            </div>
+          )}
+
+          {/* Intake List */}
+          {intakeLoading ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-3" size={28} />
+              <p className="text-slate-500 font-bold text-sm">Loading intake...</p>
+            </div>
+          ) : filteredIntakeOrders.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiAlertCircle className="text-slate-400 mx-auto mb-3" size={36} />
+              <h3 className="text-lg font-black text-slate-700 uppercase">No Pending Intake</h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Fetch orders using the Chrome Extension - new ones will land here for triage first.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
+                    <th className="px-3 py-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                        checked={filteredIntakeOrders.length > 0 && filteredIntakeOrders.every(o => selectedIntakeIds.includes(o._id))}
+                        onChange={(e) => toggleSelectAllIntake(e.target.checked)}
+                      />
+                    </th>
+                    <th className="px-3 py-3">Firm</th>
+                    <th className="px-3 py-3">Buyer</th>
+                    <th className="px-3 py-3">Item Details</th>
+                    <th className="px-3 py-3">Contract</th>
+                    <th className="px-3 py-3 text-center">O-Qty</th>
+                    <th className="px-3 py-3 text-right">Rate</th>
+                    <th className="px-3 py-3 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredIntakeOrders.map((order) => {
+                    const matchedBuyer = guessBuyerForOrder(order);
+                    return (
+                    <tr key={order._id} className={`hover:bg-slate-50 transition-colors ${selectedIntakeIds.includes(order._id) ? "bg-blue-50/50" : ""}`}>
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                          checked={selectedIntakeIds.includes(order._id)}
+                          onChange={(e) => toggleSelectIntakeOne(order._id, e.target.checked)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
+                      <td className="px-3 py-3 max-w-56">
+                        <div className="font-bold text-slate-800 truncate" title={order.instituteName}>{order.instituteName}</div>
+                        {matchedBuyer ? (
+                          <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchedBuyer.name}>
+                            <FiCheck size={11} /> {matchedBuyer.name}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-amber-600 font-semibold">No match</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 max-w-72">
+                        <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <a
+                          href={order.contractUrl || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold"
+                        >
+                          {order.contractNo}
+                          {order.contractUrl && <FiExternalLink size={11} />}
+                        </a>
+                        {order.contractDate && <div className="text-[10px] text-slate-400 font-semibold">{order.contractDate}</div>}
+                      </td>
+                      <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
+                      <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
+                      <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* Verification Modal */}
