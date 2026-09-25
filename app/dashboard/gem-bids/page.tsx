@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { FiArrowLeft, FiX, FiLayers, FiFileText, FiPercent } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
@@ -54,6 +54,42 @@ export default function GemBidsPage() {
   const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
   const [syncActionLoading, setSyncActionLoading] = useState(false);
   const [resumePrompt, setResumePrompt] = useState<SyncRun | null>(null);
+  // Section counts / last-sync info panel - collapsed by default to save
+  // space; a live sync's progress bar still shows regardless (see below).
+  const [showSummary, setShowSummary] = useState(false);
+
+  // Sticky chrome: the global <header> (see components/Header.tsx, already
+  // sticky top-0) plus this page's own title/tabs row need their combined
+  // rendered height so the filter panel further down (inside GemBidTable)
+  // knows how far below the viewport top it should stick, instead of
+  // sitting underneath them. Measured live via ResizeObserver rather than
+  // hardcoded, since both rows wrap differently across breakpoints.
+  const chromeRef = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const [stickyTop, setStickyTop] = useState(0);
+
+  useEffect(() => {
+    const headerEl = document.querySelector("header");
+    const chromeEl = chromeRef.current;
+    if (!headerEl || !chromeEl) return;
+
+    const recompute = () => {
+      const hH = headerEl.getBoundingClientRect().height;
+      const cH = chromeEl.getBoundingClientRect().height;
+      setHeaderHeight(hH);
+      setStickyTop(hH + cH);
+    };
+    recompute();
+
+    const ro = new ResizeObserver(recompute);
+    ro.observe(headerEl);
+    ro.observe(chromeEl);
+    window.addEventListener("resize", recompute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, []);
 
   // Filters picked in the Start Sync modal below, sent to /sync/start and
   // read back by the extension's background worker to drive GeM's own
@@ -321,50 +357,105 @@ export default function GemBidsPage() {
     >
       <div className="p-3 md:p-5 bg-slate-50 min-h-screen">
         <div className="max-w-[1600px] mx-auto flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-3">
-              <Link href="/dashboard" className="flex items-center gap-1 text-slate-500 hover:text-blue-600 text-xs transition-colors w-fit">
-                <FiArrowLeft />
-              </Link>
-              <h1 className="text-base font-black uppercase tracking-tight text-slate-900 flex items-center gap-1.5">
-                <FiLayers className="text-blue-600" size={16} /> GeM Bids
-              </h1>
+          {/* Sticky chrome: title/buttons row, the stats toggle, and the section
+              tabs all stay pinned right below the global header while the table
+              scrolls underneath. Height is measured live (see the ResizeObserver
+              effect above) so the filter panel further down (inside GemBidTable)
+              knows exactly how far below the viewport top to stick itself. */}
+          <div ref={chromeRef} className="sticky z-40 bg-slate-50 flex flex-col gap-3 pb-2" style={{ top: headerHeight }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <Link href="/dashboard" className="flex items-center gap-1 text-slate-500 hover:text-blue-600 text-xs transition-colors w-fit">
+                  <FiArrowLeft />
+                </Link>
+                <h1 className="text-base font-black uppercase tracking-tight text-slate-900 flex items-center gap-1.5">
+                  <FiLayers className="text-blue-600" size={16} /> GeM Bids
+                </h1>
+              </div>
+              <div className="flex items-center gap-2">
+                {syncRun?.status === "scraping" || syncRun?.status === "applying" ? (
+                  <button
+                    onClick={handleStopSync}
+                    disabled={syncActionLoading}
+                    className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                  >
+                    Stop Sync
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setStartSyncModalOpen(true)}
+                    disabled={syncActionLoading}
+                    className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                  >
+                    Start Sync
+                  </button>
+                )}
+                <Link
+                  href="/dashboard/gem-bids/rate-variant-tool"
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                >
+                  <FiPercent size={13} /> Rate Variant Tool →
+                </Link>
+                <Link
+                  href="/dashboard/gem-bids/document-maker"
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                >
+                  <FiFileText size={13} /> Open Document Maker →
+                </Link>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {syncRun?.status === "scraping" || syncRun?.status === "applying" ? (
+
+            <button
+              onClick={() => setShowSummary((v) => !v)}
+              className="flex items-center gap-1.5 text-[10px] font-black uppercase text-slate-500 hover:text-blue-600 tracking-wide w-fit"
+            >
+              {showSummary ? "− Hide stats" : "+ Show stats (section counts, last sync)"}
+            </button>
+
+            <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit">
+              {SECTIONS.map((s) => (
                 <button
-                  onClick={handleStopSync}
-                  disabled={syncActionLoading}
-                  className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                  key={s.key}
+                  onClick={() => setActiveSection(s.key)}
+                  className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
+                    activeSection === s.key ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                  }`}
                 >
-                  Stop Sync
+                  {s.label} <span className="ml-1 opacity-70">({sectionCounts[s.key] || 0})</span>
                 </button>
-              ) : (
-                <button
-                  onClick={() => setStartSyncModalOpen(true)}
-                  disabled={syncActionLoading}
-                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
-                >
-                  Start Sync
-                </button>
-              )}
-              <Link
-                href="/dashboard/gem-bids/rate-variant-tool"
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
-              >
-                <FiPercent size={13} /> Rate Variant Tool →
-              </Link>
-              <Link
-                href="/dashboard/gem-bids/document-maker"
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
-              >
-                <FiFileText size={13} /> Open Document Maker →
-              </Link>
+              ))}
             </div>
           </div>
 
-          {/* Dashboard / summary panel - kept compact by request, this sits above
-              the table on every load and shouldn't push it down the page. */}
+          {/* A running sync's progress always shows - it's transient, actionable
+              state, not something to bury behind a toggle. Everything else
+              (section counts, last-sync info) is collapsed by default and
+              only takes up space once asked for, via the toggle above - both
+              scroll away normally rather than staying pinned, so they don't
+              eat into the sticky chrome's height. */}
+          {(syncRun?.status === "scraping" || syncRun?.status === "applying") && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider">
+                  {syncRun.status === "applying" ? "Applying..." : "Syncing..."}
+                </span>
+                <span className="text-[10px] font-bold text-slate-500">{syncRun.progressPercent ?? 0}%</span>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-all"
+                  style={{ width: `${syncRun.progressPercent ?? 0}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                {syncRun.phase === "starting"
+                  ? "Waiting for the GeM Bid Exporter extension to pick this up (checks about once a minute) — it'll open the GeM Advance Search page on its own and apply the filters you picked."
+                  : syncRun.phase}
+              </p>
+            </div>
+          )}
+
+          {showSummary && (
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-3">
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2">
               {SECTIONS.map((s) => (
@@ -388,28 +479,6 @@ export default function GemBidsPage() {
               </div>
             )}
 
-            {(syncRun?.status === "scraping" || syncRun?.status === "applying") && (
-              <div className="mb-2 pt-2 border-t border-slate-100">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider">
-                    {syncRun.status === "applying" ? "Applying..." : "Syncing..."}
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-500">{syncRun.progressPercent ?? 0}%</span>
-                </div>
-                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-600 transition-all"
-                    style={{ width: `${syncRun.progressPercent ?? 0}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  {syncRun.phase === "starting"
-                    ? "Waiting for the GeM Bid Exporter extension to pick this up (checks about once a minute) — it'll open the GeM Advance Search page on its own and apply the filters you picked."
-                    : syncRun.phase}
-                </p>
-              </div>
-            )}
-
             {lastRun && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-bold text-slate-500 pt-2 border-t border-slate-100">
                 <span>
@@ -427,27 +496,20 @@ export default function GemBidsPage() {
               </div>
             )}
           </div>
-
-          <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit">
-            {SECTIONS.map((s) => (
-              <button
-                key={s.key}
-                onClick={() => setActiveSection(s.key)}
-                className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
-                  activeSection === s.key ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                {s.label} <span className="ml-1 opacity-70">({sectionCounts[s.key] || 0})</span>
-              </button>
-            ))}
-          </div>
+          )}
 
           {loading ? (
             <div className="flex justify-center items-center py-16">
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
             </div>
           ) : (
-            <GemBidTable bids={bidsInActiveSection} currentUsername={currentUsername} onBidsUpdated={setBids} onViewHistory={openHistory} />
+            <GemBidTable
+              bids={bidsInActiveSection}
+              currentUsername={currentUsername}
+              onBidsUpdated={setBids}
+              onViewHistory={openHistory}
+              stickyTop={stickyTop}
+            />
           )}
         </div>
       </div>

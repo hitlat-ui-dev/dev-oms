@@ -75,6 +75,7 @@ export const CELL_DISPLAY_FORMATTERS: Record<string, (value: string) => string> 
     const val = (v || "").trim().toLowerCase();
     if (val === "total value wise evaluation") return "TOTAL";
     if (val === "item wise evaluation") return "ITEM WISE";
+    if (val === "item wise consignee wise evaluation") return "ITEM-CON";
     return v || "";
   },
 };

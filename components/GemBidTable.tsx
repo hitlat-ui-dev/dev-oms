@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, type ReactNode } from "react";
 import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX } from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
 
@@ -32,12 +32,24 @@ interface Props {
   // with a full-page spinner on every single action.
   onBidsUpdated: (updater: (prev: GemBid[]) => GemBid[]) => void;
   onViewHistory: (bidNo: string) => void;
+  // Pixel offset (global header + page's own sticky title/tabs row) that the
+  // filter panel below should stick under - passed down from GemBidsPage,
+  // which measures it live via ResizeObserver. Defaults to 0 (sticks to the
+  // very top) if not given.
+  stickyTop?: number;
 }
 
 const TAG_STYLES: Record<string, string> = {
   "New Published": "bg-blue-50 border-blue-200 text-blue-700",
   Old: "bg-slate-50 border-slate-200 text-slate-500",
   "Updated/Extended": "bg-amber-50 border-amber-200 text-amber-700",
+};
+
+// Short badge text by request - hover (the button's title attribute) still
+// shows the full tag name. "Old" is already short, left as-is.
+const TAG_SHORT_LABELS: Record<string, string> = {
+  "New Published": "N",
+  "Updated/Extended": "U/E",
 };
 
 const LINK_COLUMNS = new Set(["bidLink", "buyerAddedBidSpecificAtcUrl"]);
@@ -62,26 +74,15 @@ const STACKED_GROUPS: Record<string, string[]> = {
   documentRequiredFromSeller: ["documentRequiredFromSeller", "buyerAddedBidSpecificAtcUrl"],
 };
 
-// Columns whose filter-row cell is either handled by one of the merged
-// blocks above (so the generic text/dropdown renderer below must skip it,
-// or it'd duplicate the control) or has no search box at all by request
-// (Bid Link is just a "Link" hyperlink - nothing to text-search; QTY is
-// short numbers).
-const MERGED_OR_UNSEARCHABLE_COLUMNS = new Set([
-  "address",
-  "bidToRaEnabled",
-  "evaluationMethod",
-  "documentRequiredFromSeller",
-  "bidLink",
-  "quantityListing",
-]);
-
-export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onViewHistory }: Props) {
+export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onViewHistory, stickyTop = 0 }: Props) {
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [displayLimit, setDisplayLimit] = useState(50);
   const [busy, setBusy] = useState(false);
+  // Bid To RA/RA/Type of Bid/Evaluation aren't searched often enough to earn
+  // permanent space - collapsed by default, a button reveals them.
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollByPage = (dir: 1 | -1) => {
@@ -139,6 +140,15 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
 
   const filtered = useMemo(() => {
     let list = bids.filter((b) => {
+      // One combined search box covers both Address and Department (they
+      // share one stacked cell/one filter box now) - matches if either
+      // field contains the term, not both.
+      const addressOrDeptTerm = String(filters.addressOrDept || "").toLowerCase();
+      if (addressOrDeptTerm) {
+        const addressHit = String(b.address || "").toLowerCase().includes(addressOrDeptTerm);
+        const deptHit = String(b.departmentNameAndAddress || "").toLowerCase().includes(addressOrDeptTerm);
+        if (!addressHit && !deptHit) return false;
+      }
       for (const col of BID_COLUMNS) {
         const f = filters[col.key];
         if (!f) continue;
@@ -288,10 +298,21 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
 
   const selectedList = [...selected];
 
+  const filterField = (label: string, node: ReactNode) => (
+    <div key={label}>
+      <label className="text-[8px] font-black uppercase text-slate-400 tracking-wider block mb-1">{label}</label>
+      {node}
+    </div>
+  );
+
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+    // No overflow-hidden here (used to clip corners around the filter panel/
+    // table below) - position: sticky further down only works relative to
+    // the viewport if nothing between it and the page has overflow other
+    // than visible, so the corner-rounding below is done per-block instead.
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
       {selectedList.length > 0 && (
-        <div className="p-3 bg-blue-50 border-b border-blue-100 flex flex-wrap items-center gap-2">
+        <div className="p-3 bg-blue-50 border-b border-blue-100 rounded-t-2xl flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-black text-blue-700 uppercase">{selectedList.length} selected</span>
           <span className="text-[10px] text-blue-400 font-bold uppercase">Send to:</span>
           {otherSections.map((s) => (
@@ -323,7 +344,156 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
         </div>
       )}
 
-      <div className="relative">
+      {/* Filters live here, outside the table, so they stay put and legible
+          regardless of how far the table itself is scrolled horizontally -
+          they used to be a second header row inside the table and scrolled
+          out of view/misaligned with their own column along with everything
+          else. Also sticky (stacked right under the page's own sticky
+          title/tabs chrome, see stickyTop) so it stays put on the page's
+          vertical scroll too, while only the actual bid rows scroll past. */}
+      <div className="sticky z-30 p-3 border-b border-slate-100 bg-slate-50/95 backdrop-blur-sm rounded-t-2xl" style={{ top: stickyTop }}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          {filterField(
+            "Bid No",
+            <input
+              value={filters.bidNo || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, bidNo: e.target.value }))}
+              placeholder="Search..."
+              className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+            />
+          )}
+          {filterField(
+            "Bid End Date/Time",
+            <div className="flex gap-1">
+              <input
+                type="date"
+                value={filters.bidEndDateTime?.from || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, bidEndDateTime: { ...(f.bidEndDateTime || {}), from: e.target.value } }))}
+                className="w-full bg-white border border-slate-200 rounded px-1 py-1 text-[9px]"
+              />
+              <input
+                type="date"
+                value={filters.bidEndDateTime?.to || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, bidEndDateTime: { ...(f.bidEndDateTime || {}), to: e.target.value } }))}
+                className="w-full bg-white border border-slate-200 rounded px-1 py-1 text-[9px]"
+              />
+            </div>
+          )}
+          {filterField(
+            "Items",
+            <input
+              value={filters.items || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, items: e.target.value }))}
+              placeholder="Search..."
+              className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+            />
+          )}
+          {filterField(
+            "Address / Department",
+            <input
+              value={filters.addressOrDept || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, addressOrDept: e.target.value }))}
+              placeholder="Search either..."
+              className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+            />
+          )}
+          {filterField(
+            "Consignee City",
+            <select
+              value={filters.consigneeCity || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, consigneeCity: e.target.value }))}
+              className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+            >
+              <option value="">All</option>
+              {(dropdownOptions.consigneeCity || []).map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* Bid To RA / RA / Type of Bid / Evaluation are rarely filtered on -
+            collapsed behind a toggle instead of always taking up a row.
+            Document Required / EMD Amount / ATC search boxes were dropped
+            entirely by request (their column still shows the data, just
+            isn't searchable from here). */}
+        <button
+          type="button"
+          onClick={() => setShowMoreFilters((v) => !v)}
+          className="mt-2 text-[10px] font-black uppercase text-blue-600 hover:text-blue-800 tracking-wide"
+        >
+          {showMoreFilters ? "− Hide more filters" : "+ More filters (Bid To RA, RA, Type of Bid, Evaluation)"}
+        </button>
+
+        {showMoreFilters && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 mt-2">
+            {filterField(
+              "Bid To RA",
+              <select
+                value={filters.bidToRaEnabled || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, bidToRaEnabled: e.target.value }))}
+                className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+              >
+                <option value="">All</option>
+                {(dropdownOptions.bidToRaEnabled || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            )}
+            {filterField(
+              "RA",
+              <select
+                value={filters.raQualificationRule || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, raQualificationRule: e.target.value }))}
+                className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+              >
+                <option value="">All</option>
+                {(dropdownOptions.raQualificationRule || []).map((v) => (
+                  <option key={v} value={v}>
+                    {CELL_DISPLAY_FORMATTERS.raQualificationRule ? CELL_DISPLAY_FORMATTERS.raQualificationRule(v) : v}
+                  </option>
+                ))}
+              </select>
+            )}
+            {filterField(
+              "Type of Bid",
+              <select
+                value={filters.typeOfBid || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, typeOfBid: e.target.value }))}
+                className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+              >
+                <option value="">All</option>
+                {(dropdownOptions.typeOfBid || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            )}
+            {filterField(
+              "Evaluation",
+              <select
+                value={filters.evaluationMethod || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, evaluationMethod: e.target.value }))}
+                className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+              >
+                <option value="">All</option>
+                {(dropdownOptions.evaluationMethod || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="relative overflow-hidden rounded-b-2xl">
         <button
           type="button"
           onClick={() => scrollByPage(-1)}
@@ -364,164 +534,6 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
               ))}
               <th className="py-2 px-2">Actions</th>
             </tr>
-            <tr className="bg-white border-b border-slate-200">
-              <th className="py-1.5 px-2"></th>
-              <th className="py-1.5 px-2"></th>
-              <th className="py-1.5 px-2">
-                <input
-                  value={filters.bidNo || ""}
-                  onChange={(e) => setFilters((f) => ({ ...f, bidNo: e.target.value }))}
-                  placeholder="Search..."
-                  className="w-full min-w-[110px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                />
-              </th>
-              {currentSectionKey === "submitted_bids" && <th className="py-1.5 px-2"></th>}
-              {otherColumns.map((col) => (
-                <th key={col.key} className="py-1.5 px-2">
-                  {col.key === "address" && (
-                    <div className="flex flex-col gap-1">
-                      <input
-                        value={filters.address || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, address: e.target.value }))}
-                        placeholder="Search address..."
-                        className="w-full min-w-[140px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                      <input
-                        value={filters.departmentNameAndAddress || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, departmentNameAndAddress: e.target.value }))}
-                        placeholder="Search department..."
-                        className="w-full min-w-[140px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                      <select
-                        value={filters.consigneeCity || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, consigneeCity: e.target.value }))}
-                        className="w-full min-w-[140px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      >
-                        <option value="">City: All</option>
-                        {(dropdownOptions.consigneeCity || []).map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {/* Bid To RA's own Yes/No/All dropdown, with RA's dropdown (was a
-                      text box - now a scrollable pick-list per request) stacked below it. */}
-                  {col.key === "bidToRaEnabled" && (
-                    <div className="flex flex-col gap-1">
-                      <select
-                        value={filters.bidToRaEnabled || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, bidToRaEnabled: e.target.value }))}
-                        className="w-full min-w-[80px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      >
-                        <option value="">All</option>
-                        {(dropdownOptions.bidToRaEnabled || []).map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={filters.raQualificationRule || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, raQualificationRule: e.target.value }))}
-                        className="w-full min-w-[80px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      >
-                        <option value="">RA: All</option>
-                        {(dropdownOptions.raQualificationRule || []).map((v) => (
-                          <option key={v} value={v}>
-                            {CELL_DISPLAY_FORMATTERS.raQualificationRule ? CELL_DISPLAY_FORMATTERS.raQualificationRule(v) : v}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {/* Evaluation's own dropdown, with EMD Amount's text search stacked below it. */}
-                  {col.key === "evaluationMethod" && (
-                    <div className="flex flex-col gap-1">
-                      <select
-                        value={filters.evaluationMethod || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, evaluationMethod: e.target.value }))}
-                        className="w-full min-w-[80px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      >
-                        <option value="">All</option>
-                        {(dropdownOptions.evaluationMethod || []).map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        value={filters.emdAmount || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, emdAmount: e.target.value }))}
-                        placeholder="Search EMD..."
-                        className="w-full min-w-[80px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                    </div>
-                  )}
-                  {/* Document required from seller's own text search, with ATC's
-                      (also just text-search on its URL) stacked below it. */}
-                  {col.key === "documentRequiredFromSeller" && (
-                    <div className="flex flex-col gap-1">
-                      <input
-                        value={filters.documentRequiredFromSeller || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, documentRequiredFromSeller: e.target.value }))}
-                        placeholder="Search..."
-                        className="w-full min-w-[100px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                      <input
-                        value={filters.buyerAddedBidSpecificAtcUrl || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, buyerAddedBidSpecificAtcUrl: e.target.value }))}
-                        placeholder="Search ATC..."
-                        className="w-full min-w-[100px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                    </div>
-                  )}
-                  {/* Bid Link and QTY have no search box by request - Bid Link is just a
-                      "Link" hyperlink (nothing to text-search), QTY is short numbers. */}
-                  {col.filterType === "text" &&
-                    !MERGED_OR_UNSEARCHABLE_COLUMNS.has(col.key) && (
-                      <input
-                        value={filters[col.key] || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, [col.key]: e.target.value }))}
-                        placeholder="Search..."
-                        className="w-full min-w-[100px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                      />
-                    )}
-                  {col.filterType === "dropdown" && !MERGED_OR_UNSEARCHABLE_COLUMNS.has(col.key) && (
-                    <select
-                      value={filters[col.key] || ""}
-                      onChange={(e) => setFilters((f) => ({ ...f, [col.key]: e.target.value }))}
-                      className="w-full min-w-[100px] bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px]"
-                    >
-                      <option value="">All</option>
-                      {(dropdownOptions[col.key] || []).map((v) => (
-                        <option key={v} value={v}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {col.filterType === "dateRange" && (
-                    <div className="flex flex-col gap-1">
-                      <input
-                        type="date"
-                        value={filters[col.key]?.from || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, [col.key]: { ...(f[col.key] || {}), from: e.target.value } }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded px-1 py-1 text-[9px]"
-                      />
-                      <input
-                        type="date"
-                        value={filters[col.key]?.to || ""}
-                        onChange={(e) => setFilters((f) => ({ ...f, [col.key]: { ...(f[col.key] || {}), to: e.target.value } }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded px-1 py-1 text-[9px]"
-                      />
-                    </div>
-                  )}
-                </th>
-              ))}
-              <th className="py-1.5 px-2"></th>
-            </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visible.length === 0 ? (
@@ -550,7 +562,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                       title={b.tag}
                       className={`border text-[9px] font-black uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${TAG_STYLES[b.tag]}`}
                     >
-                      {b.tag === "New Published" ? "N" : b.tag}
+                      {TAG_SHORT_LABELS[b.tag] || b.tag}
                     </button>
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-slate-700 whitespace-nowrap">
@@ -683,7 +695,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
       </div>
 
       {filtered.length > displayLimit && (
-        <div className="p-3 text-center border-t border-slate-100 flex items-center justify-center gap-4">
+        <div className="p-3 text-center border-t border-slate-100 rounded-b-2xl flex items-center justify-center gap-4">
           <button onClick={() => setDisplayLimit((l) => l + 50)} className="text-[11px] font-black uppercase text-blue-600 hover:text-blue-800">
             Load More ({filtered.length - displayLimit} remaining)
           </button>
