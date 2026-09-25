@@ -42,14 +42,14 @@ export async function GET(req: Request) {
   }
 }
 
-// PATCH: manually correct a bid's own fields — one time only per bid.
-// body: { bidNo, fields: Record<string,string>, editedBy? }
-// Once a bid has been manually edited this way, editedBy/editedAt/edited are
-// set and every future PATCH for that bidNo is rejected with 409 — this is a
-// single "fix what the scrape got wrong" pass, not an ongoing edit tool, per
-// spec. Only DATA_FIELD_KEYS-listed fields are writable; bidNo itself (the
-// identity key) and internal workflow fields (currentSection, tag, etc.)
-// can't be touched from here.
+// PATCH: manually correct a bid's own fields. body: { bidNo, fields: Record<string,string>, editedBy? }
+// Freely repeatable - manuallyEdited/editedAt/editedBy are recorded as an
+// audit trail (who last touched it, when), not a one-time lock. Only
+// EDITABLE_FIELD_KEYS-listed fields are writable; bidNo (the identity key),
+// the locked fields (Bid Link, Bid End Date/Time, Items, QTY, Evaluation
+// Method, Bid To RA, RA Qualification Rule - the scrape gets these right and
+// other logic depends on them), and internal workflow fields (currentSection,
+// tag, etc.) can't be touched from here even if sent.
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
@@ -68,12 +68,6 @@ export async function PATCH(req: Request) {
     const existing = await bidsCollection.findOne({ bidNo });
     if (!existing) {
       return NextResponse.json({ error: "Bid not found" }, { status: 404, headers: corsHeaders });
-    }
-    if (existing.manuallyEdited) {
-      return NextResponse.json(
-        { error: "This bid was already manually edited once and can't be edited again" },
-        { status: 409, headers: corsHeaders }
-      );
     }
 
     const setDoc: Record<string, string> = {};

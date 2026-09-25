@@ -80,12 +80,28 @@ export const CELL_DISPLAY_FORMATTERS: Record<string, (value: string) => string> 
   },
 };
 
+// Fields the scrape gets reliably right (or that other automated logic
+// depends on staying exactly as scraped) - locked out of the Edit Bid
+// modal entirely. Everything else is freely, repeatedly editable - there's
+// no longer a one-time limit (the PATCH handler in app/api/gem-bids/route.ts
+// just records who/when on every edit instead of rejecting a second one).
+export const LOCKED_FIELD_KEYS = [
+  "bidLink",
+  "startDate",
+  "bidEndDateTime",
+  "items",
+  "quantityListing",
+  "consigneeCity",
+  "evaluationMethod",
+  "bidToRaEnabled",
+  "raQualificationRule",
+];
+
 // Fields the Edit Bid modal offers - every data column except the identity
-// key (bidNo). Editing is allowed exactly once per bid (see the PATCH
-// handler in app/api/gem-bids/route.ts) - after that the button locks, so
-// this isn't meant as a repeatable correction tool, just a one-time
-// "fix what the scrape got wrong before this bid moves further" step.
-export const EDITABLE_FIELD_KEYS = BID_COLUMNS.filter((c) => c.key !== "bidNo").map((c) => c.key);
+// key (bidNo) and the locked ones above.
+export const EDITABLE_FIELD_KEYS = BID_COLUMNS.filter(
+  (c) => c.key !== "bidNo" && !LOCKED_FIELD_KEYS.includes(c.key)
+).map((c) => c.key);
 
 export const DATA_FIELD_KEYS = BID_COLUMNS.filter((c) => c.key !== "bidNo").map((c) => c.key);
 

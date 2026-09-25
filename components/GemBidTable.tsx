@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useRef, type ReactNode } from "react";
+import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
 import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX } from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
 
@@ -93,11 +93,66 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [editSaving, setEditSaving] = useState(false);
 
+  // Shared master list of document-type names (also used by Document
+  // Maker's per-firm vault, see /api/gem-bids/document-types) that backs
+  // the "Document required from seller" multi-select below.
+  const [documentTypes, setDocumentTypes] = useState<string[]>([]);
+  const [newDocTypeInput, setNewDocTypeInput] = useState("");
+
+  useEffect(() => {
+    if (!editingBid) return;
+    fetch("/api/gem-bids/document-types")
+      .then((res) => res.json())
+      .then((data) => setDocumentTypes(Array.isArray(data?.documentTypes) ? data.documentTypes : []))
+      .catch((err) => console.error("Failed to load document types", err));
+  }, [editingBid]);
+
   const openEdit = (bid: GemBid) => {
     const values: Record<string, string> = {};
     EDITABLE_FIELD_KEYS.forEach((key) => (values[key] = String(bid[key] ?? "")));
     setEditValues(values);
     setEditingBid(bid);
+  };
+
+  const selectedDocTypes = new Set(
+    (editValues.documentRequiredFromSeller || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+  const toggleDocType = (type: string) => {
+    const next = new Set(selectedDocTypes);
+    if (next.has(type)) next.delete(type);
+    else next.add(type);
+    setEditValues((v) => ({ ...v, documentRequiredFromSeller: Array.from(next).join(", ") }));
+  };
+
+  const addDocType = async () => {
+    const name = newDocTypeInput.trim();
+    if (!name) return;
+    setNewDocTypeInput("");
+    // Select it on this bid right away rather than waiting on the network
+    // round-trip - the persisted-list save below is best-effort for making
+    // it available to future edits/Document Maker, not a prerequisite for
+    // using it on this bid right now.
+    const next = new Set(selectedDocTypes);
+    next.add(name);
+    setEditValues((v) => ({ ...v, documentRequiredFromSeller: Array.from(next).join(", ") }));
+    if (!documentTypes.some((t) => t.toLowerCase() === name.toLowerCase())) {
+      setDocumentTypes((prev) => [...prev, name]);
+    }
+    try {
+      const res = await fetch("/api/gem-bids/document-types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ add: name }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data?.documentTypes)) setDocumentTypes(data.documentTypes);
+    } catch (err) {
+      console.error("Failed to save new document type", err);
+    }
   };
 
   const saveEdit = async () => {
@@ -149,6 +204,10 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
         const deptHit = String(b.departmentNameAndAddress || "").toLowerCase().includes(addressOrDeptTerm);
         if (!addressHit && !deptHit) return false;
       }
+      // Tag isn't a BID_COLUMNS entry (it's a workflow field rendered
+      // specially by this table, not scraped data), so it's filtered here
+      // rather than in the generic loop below.
+      if (filters.tag && b.tag !== filters.tag) return false;
       for (const col of BID_COLUMNS) {
         const f = filters[col.key];
         if (!f) continue;
@@ -353,6 +412,21 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
           vertical scroll too, while only the actual bid rows scroll past. */}
       <div className="sticky z-30 p-3 border-b border-slate-100 bg-slate-50/95 backdrop-blur-sm rounded-t-2xl" style={{ top: stickyTop }}>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          {filterField(
+            "Tag",
+            <select
+              value={filters.tag || ""}
+              onChange={(e) => setFilters((f) => ({ ...f, tag: e.target.value }))}
+              className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+            >
+              <option value="">All</option>
+              {Object.keys(TAG_STYLES).map((t) => (
+                <option key={t} value={t}>
+                  {TAG_SHORT_LABELS[t] || t} — {t}
+                </option>
+              ))}
+            </select>
+          )}
           {filterField(
             "Bid No",
             <input
@@ -565,10 +639,14 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                       {TAG_SHORT_LABELS[b.tag] || b.tag}
                     </button>
                   </td>
-                  <td className="py-2 px-2 font-mono font-bold text-slate-700 whitespace-nowrap">
-                    {b.bidNo}
+                  <td className="py-2 px-2 font-mono font-bold text-slate-700">
+                    <div className="whitespace-nowrap">{b.bidNo}</div>
+                    {/* Any per-bid badge (not just "Updated") belongs here,
+                        stacked under the Bid No, rather than inline beside
+                        it - inline badges were widening this column and
+                        misaligning the row whenever one showed up. */}
                     {b.hasPendingUpdate && (
-                      <span className="ml-1.5 bg-purple-50 border border-purple-200 text-purple-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full">
+                      <span className="inline-block mt-1 bg-purple-50 border border-purple-200 text-purple-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full whitespace-nowrap">
                         Updated
                       </span>
                     )}
@@ -657,9 +735,9 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                     <div className="flex items-center gap-1">
                       {EDITABLE_SECTIONS.has(currentSectionKey) && (
                         <button
-                          disabled={busy || b.manuallyEdited}
+                          disabled={busy}
                           onClick={() => openEdit(b)}
-                          title={b.manuallyEdited ? "Already edited once — locked" : "Edit Bid"}
+                          title="Edit Bid"
                           className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors disabled:opacity-40"
                         >
                           <FiEdit2 size={12} />
@@ -711,23 +789,81 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">Edit Bid — {editingBid.bidNo}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">This bid can only be edited once — check everything before saving.</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Bid No, Bid Link, Start Date, Bid End Date/Time, Items, QTY, Consignee City, Evaluation, and Bid To
+                  RA/RA aren&apos;t editable here.
+                </p>
               </div>
               <button onClick={() => setEditingBid(null)} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
                 <FiX size={18} />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {BID_COLUMNS.filter((c) => c.key !== "bidNo").map((col) => (
-                <div key={col.key}>
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">{col.header}</label>
-                  <input
-                    value={editValues[col.key] ?? ""}
-                    onChange={(e) => setEditValues((v) => ({ ...v, [col.key]: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              ))}
+              {BID_COLUMNS.filter((c) => EDITABLE_FIELD_KEYS.includes(c.key)).map((col) =>
+                col.key === "documentRequiredFromSeller" ? (
+                  <div key={col.key} className="sm:col-span-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">
+                      Document required from seller
+                    </label>
+                    <div className="border border-slate-200 rounded-lg p-2.5">
+                      <div className="max-h-32 overflow-y-auto flex flex-wrap gap-1.5 mb-2">
+                        {documentTypes.length === 0 ? (
+                          <span className="text-[11px] text-slate-400">No document types saved yet — add one below.</span>
+                        ) : (
+                          documentTypes.map((type) => (
+                            <label
+                              key={type}
+                              className={`flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full border cursor-pointer ${
+                                selectedDocTypes.has(type)
+                                  ? "bg-blue-50 border-blue-300 text-blue-700"
+                                  : "bg-slate-50 border-slate-200 text-slate-600"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="hidden"
+                                checked={selectedDocTypes.has(type)}
+                                onChange={() => toggleDocType(type)}
+                              />
+                              {type}
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          value={newDocTypeInput}
+                          onChange={(e) => setNewDocTypeInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addDocType();
+                            }
+                          }}
+                          placeholder="Add a new document type…"
+                          className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={addDocType}
+                          className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={col.key}>
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">{col.header}</label>
+                    <input
+                      value={editValues[col.key] ?? ""}
+                      onChange={(e) => setEditValues((v) => ({ ...v, [col.key]: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )
+              )}
             </div>
             <div className="p-5 border-t border-slate-100 flex justify-end gap-2">
               <button
@@ -741,7 +877,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                 disabled={editSaving}
                 className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors"
               >
-                Save (one-time)
+                Save
               </button>
             </div>
           </div>

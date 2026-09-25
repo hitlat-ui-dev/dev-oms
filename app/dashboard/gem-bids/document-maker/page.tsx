@@ -57,6 +57,10 @@ export default function DocumentMakerPage() {
   const [uploading, setUploading] = useState(false);
 
   const [newFieldName, setNewFieldName] = useState("");
+  // Shared with the GeM Bids Edit Bid modal's "Document required from
+  // seller" multi-select (see /api/gem-bids/document-types) - so a document
+  // name typed here is available to pick from there, and vice versa.
+  const [documentTypes, setDocumentTypes] = useState<string[]>([]);
   const customFileRef = useRef<HTMLInputElement>(null);
   const letterheadFileRef = useRef<HTMLInputElement>(null);
   const signFileRef = useRef<HTMLInputElement>(null);
@@ -81,6 +85,10 @@ export default function DocumentMakerPage() {
       .then((res) => res.json())
       .then((data) => setBids(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load bids", err));
+    fetch("/api/gem-bids/document-types")
+      .then((res) => res.json())
+      .then((data) => setDocumentTypes(Array.isArray(data?.documentTypes) ? data.documentTypes : []))
+      .catch((err) => console.error("Failed to load document types", err));
   }, []);
 
   const fetchVault = useCallback((id: string) => {
@@ -116,7 +124,23 @@ export default function DocumentMakerPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Upload failed");
       setVault(data);
-      if (kind === "custom") setNewFieldName("");
+      if (kind === "custom") {
+        setNewFieldName("");
+        // Best-effort: keep the shared document-type list (also used by GeM
+        // Bids' Edit Bid modal) in sync with whatever gets typed here.
+        if (fieldName && !documentTypes.some((t) => t.toLowerCase() === fieldName.toLowerCase())) {
+          fetch("/api/gem-bids/document-types", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ add: fieldName }),
+          })
+            .then((r) => r.json())
+            .then((d) => {
+              if (Array.isArray(d?.documentTypes)) setDocumentTypes(d.documentTypes);
+            })
+            .catch((err) => console.error("Failed to save new document type", err));
+        }
+      }
     } catch (err: any) {
       alert(err.message || "Upload failed");
     } finally {
@@ -307,11 +331,17 @@ export default function DocumentMakerPage() {
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
+                      list="documentTypeOptions"
                       placeholder="Field name (e.g. PAN Card)"
                       value={newFieldName}
                       onChange={(e) => setNewFieldName(e.target.value)}
                       className="bg-slate-50 border border-slate-200 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-blue-500 w-52"
                     />
+                    <datalist id="documentTypeOptions">
+                      {documentTypes.map((t) => (
+                        <option key={t} value={t} />
+                      ))}
+                    </datalist>
                     <input
                       ref={customFileRef}
                       type="file"
