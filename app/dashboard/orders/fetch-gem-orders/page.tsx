@@ -155,14 +155,6 @@ export default function FetchGeMOrdersPage() {
     fetchIntakeOrders();
   }, []);
 
-  // Default the Intake tab's firm dropdown to the first company once
-  // companies load - same as the Verify modal does for selectedFirmCode.
-  useEffect(() => {
-    if (companies.length > 0 && !intakeFirmCode) {
-      setIntakeFirmCode(companies[0].firmCode);
-    }
-  }, [companies, intakeFirmCode]);
-
   // Esc closes the Item Name suggestion dropdown first (if open), otherwise
   // closes the Verify modal itself - mirrors the Cancel button, so it's a
   // no-op while a submit is in flight.
@@ -593,11 +585,10 @@ export default function FetchGeMOrdersPage() {
 
   const handleBulkTransfer = async () => {
     if (selectedIntakeIds.length === 0) return;
-    if (!intakeFirmCode) {
-      alert("Pehle ek firm select karo");
-      return;
-    }
-    if (!confirm(`${selectedIntakeIds.length} order(s) ko "${intakeFirmCode}" firm ke saath Fetched GeM Orders me transfer karein?`)) return;
+    const confirmMsg = intakeFirmCode
+      ? `${selectedIntakeIds.length} order(s) ko "${intakeFirmCode}" firm ke saath Fetched GeM Orders me transfer karein? (In sabki apni fetch-time-select-ki-hui firm override ho jayegi)`
+      : `${selectedIntakeIds.length} order(s) ko unki apni-apni (fetch ke time select ki hui) firm ke saath Fetched GeM Orders me transfer karein?`;
+    if (!confirm(confirmMsg)) return;
 
     setTransferring(true);
     try {
@@ -608,11 +599,15 @@ export default function FetchGeMOrdersPage() {
       });
       if (res.ok) {
         const result = await res.json();
-        setIntakeOrders(prev => prev.filter(o => !selectedIntakeIds.includes(o._id)));
         setSelectedIntakeIds([]);
         fetchRawOrders(); // pull the newly transferred rows into the Fetched Orders tab
+        // Re-fetch instead of locally filtering all selectedIntakeIds out -
+        // a "no firm tagged" skip is deliberately left in gem_order_intake
+        // (not deleted) so it can be retried, unlike a duplicate skip.
+        fetchIntakeOrders();
         if (result.skipped?.length > 0) {
-          alert(`${result.transferred} transferred. ${result.skipped.length} skipped (already existed elsewhere).`);
+          const reasons = result.skipped.map((s: { contractNo: string; reason: string }) => `${s.contractNo}: ${s.reason}`).join("\n");
+          alert(`${result.transferred} transferred.\n${result.skipped.length} skipped:\n${reasons}`);
         } else {
           alert(`✓ ${result.transferred} order(s) transferred to Fetched GeM Orders.`);
         }
@@ -890,15 +885,13 @@ export default function FetchGeMOrdersPage() {
               <select
                 value={intakeFirmCode}
                 onChange={(e) => setIntakeFirmCode(e.target.value)}
+                title="Default: har order apni fetch-time-select-ki-hui firm ke saath hi transfer hoga. Yahan se sirf tab kuch chuno jab jaan-bujhke sabko ek hi firm me force karna ho."
                 className="p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500"
               >
-                {companies.length > 0 ? (
-                  companies.map(c => (
-                    <option key={c._id} value={c.firmCode}>{c.firmName} ({c.firmCode})</option>
-                  ))
-                ) : (
-                  <option value="">No firms found</option>
-                )}
+                <option value="">Keep Original Firm (per order)</option>
+                {companies.map(c => (
+                  <option key={c._id} value={c.firmCode}>Force: {c.firmName} ({c.firmCode})</option>
+                ))}
               </select>
               <button
                 onClick={handleBulkTransfer}

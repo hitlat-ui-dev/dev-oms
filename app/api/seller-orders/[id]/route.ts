@@ -133,7 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           sellerId: updateData.sellerId || originalOrder.sellerId,
           instituteName: updateData.instituteName || originalOrder.instituteName,
           contractDate: updateData.contractDate !== undefined ? updateData.contractDate : originalOrder.contractDate,
-          contractNo: updateData.contractNo !== undefined ? updateData.contractNo : originalOrder.contractNo,
+          contractNo: updateData.contractNo !== undefined ? (updateData.contractNo || "").trim() : originalOrder.contractNo,
           contractUrl: updateData.contractUrl !== undefined ? updateData.contractUrl : originalOrder.contractUrl,
           remark: updateData.remark !== undefined ? updateData.remark : originalOrder.remark,
         },

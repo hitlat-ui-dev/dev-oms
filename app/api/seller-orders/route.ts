@@ -96,7 +96,7 @@ export async function POST(req: Request) {
         unit: data.unit || "nos",
         sku: itemSku,
         contractDate: data.contractDate || "",
-        contractNo: data.contractNo || "",
+        contractNo: (data.contractNo || "").trim(),
         contractUrl: data.contractUrl || data.pdfLink || "",
         reQty: orderQty,
         rate: rate,
@@ -127,6 +127,11 @@ export async function POST(req: Request) {
       reQty: orderQty,
       totalAmount,
       sku: itemSku,
+      // Trimmed separately from the dup-check above (which already trims)
+      // so a leading/trailing space pasted into the form can't slip through
+      // untrimmed and silently break exact-contractNo duplicate detection
+      // elsewhere (GeM Order Intake, this same check on the next order).
+      contractNo: (data.contractNo || "").trim(),
       instituteName: await resolveCanonicalInstituteName(db, data.sellerId, data.instituteName),
       status: data.status || "TO CHECK",
     });

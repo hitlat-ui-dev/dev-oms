@@ -221,7 +221,31 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   };
 
+  // A copied GeM contract link's anchor text sometimes contains its own
+  // label twice (e.g. a visually-hidden accessibility duplicate) - collapse
+  // an exact self-repeated string ("GEMC-XGEMC-X" -> "GEMC-X") so that never
+  // lands in contractNo. This previously created a handful of orders whose
+  // contractNo silently doubled, which broke duplicate-contract detection
+  // (both direct order entry and GeM Order Intake) since it never matched
+  // the real, single contract number scraped later.
+  const dedupeRepeatedString = (s: string) => {
+    const trimmed = (s || "").trim();
+    const len = trimmed.length;
+    if (len > 0 && len % 2 === 0) {
+      const half = len / 2;
+      if (trimmed.slice(0, half) === trimmed.slice(half)) return trimmed.slice(0, half);
+    }
+    return trimmed;
+  };
+
   const handleContractPaste = (e: React.ClipboardEvent) => {
+    // Always take over the paste ourselves - previously this only called
+    // preventDefault() when an <a> tag was found in the pasted HTML, so a
+    // paste with HTML clipboard data but no link (e.g. pasting into a
+    // field that already had a value, cursor at the end) let the browser's
+    // native paste insert into the DOM *in addition to* the setFormData
+    // below, doubling the visible text.
+    e.preventDefault();
     const html = e.clipboardData.getData("text/html");
     const plainText = e.clipboardData.getData("text/plain");
     if (html) {
@@ -229,12 +253,11 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       const doc = parser.parseFromString(html, "text/html");
       const link = doc.querySelector("a");
       if (link) {
-        e.preventDefault();
-        setFormData({ ...formData, contractNo: link.textContent || plainText, contractUrl: link.href });
+        setFormData({ ...formData, contractNo: dedupeRepeatedString(link.textContent || plainText), contractUrl: link.href });
         return;
       }
     }
-    setFormData({ ...formData, contractNo: plainText });
+    setFormData({ ...formData, contractNo: dedupeRepeatedString(plainText) });
   };
 
   // const handleSubmit = async (e: React.FormEvent) => {

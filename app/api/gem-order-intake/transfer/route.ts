@@ -14,9 +14,13 @@ export async function OPTIONS() {
 
 // POST: Bulk-move selected intake rows into raw_gem_orders - the exact
 // collection the existing Fetched GeM Orders page already reads from, so
-// that page needs zero changes. Every transferred row is tagged with
-// whatever firm was picked on the intake page (overriding anything the
-// extension guessed at scrape time).
+// that page needs zero changes. By default every row keeps its OWN
+// firmCode (whatever the extension's firm picker was set to at scrape
+// time, per order) - `firmCode` in the body is only an explicit override
+// applied uniformly to every selected row, and must be opted into (an
+// earlier version always required one and applied it to the whole batch,
+// which silently overwrote a correctly-tagged firm with whatever firm the
+// dropdown happened to be on - e.g. NAND orders landing as VINAY).
 export async function POST(req: Request) {
   try {
     const client = await clientPromise;
@@ -24,13 +28,10 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
-    const firmCode = (body.firmCode || "").toString().trim().toUpperCase();
+    const overrideFirmCode = (body.firmCode || "").toString().trim().toUpperCase();
 
     if (ids.length === 0) {
       return NextResponse.json({ error: "No orders selected" }, { status: 400, headers: corsHeaders });
-    }
-    if (!firmCode) {
-      return NextResponse.json({ error: "Firm is required" }, { status: 400, headers: corsHeaders });
     }
 
     const objectIds = ids.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
@@ -40,6 +41,14 @@ export async function POST(req: Request) {
     const skipped: { contractNo: string; reason: string }[] = [];
 
     for (const row of rows) {
+      const firmCode = overrideFirmCode || (row.firmCode || "").toString().trim().toUpperCase();
+      if (!firmCode) {
+        // Left in intake (not deleted) so it can be retried once a firm is
+        // picked - unlike the duplicate cases below, this isn't resolved.
+        skipped.push({ contractNo: row.contractNo, reason: "No firm tagged at fetch time - pick an override firm and retry" });
+        continue;
+      }
+
       // Same duplicate guard as the direct extension path - a row can only
       // reach here once, but re-running a transfer (e.g. a double click)
       // must not create a second copy in raw_gem_orders.
