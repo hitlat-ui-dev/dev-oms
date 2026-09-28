@@ -1,20 +1,13 @@
 "use client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiArrowLeft, FiPlusCircle, FiBookOpen, FiAlertTriangle, FiLink, FiDollarSign, FiSettings } from "react-icons/fi";
+import { FiArrowLeft, FiBookOpen, FiAlertTriangle, FiLink, FiDollarSign, FiSettings } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
 export default function DDTrackingPage() {
   const router = useRouter();
 
   const menuItems = [
-    {
-      name: "New DD Entry",
-      path: "/dashboard/account/dd-tracking/new",
-      sub: "SCAN & ADD DEMAND DRAFT",
-      icon: <FiPlusCircle />,
-      color: "bg-[#0f172a]",
-    },
     {
       name: "DD Ledger",
       path: "/dashboard/account/dd-tracking/ledger",

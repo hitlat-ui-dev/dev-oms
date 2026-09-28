@@ -18,6 +18,10 @@ const DDEntrySchema = new Schema(
 
     firmBankAccount: { type: Schema.Types.ObjectId, ref: "FirmBankAccount", required: true },
 
+    // Which institute (buyer) this DD was issued for — lets the ledger be
+    // filtered/grouped by institute the same way it already is by firm.
+    seller: { type: Schema.Types.ObjectId, ref: "Seller", default: null },
+
     tenderReference: { type: String, required: true, trim: true },
     purpose: { type: String, enum: DD_PURPOSES, default: "EMD" },
 
@@ -57,6 +61,7 @@ DDEntrySchema.set("toJSON", { virtuals: true });
 DDEntrySchema.set("toObject", { virtuals: true });
 
 DDEntrySchema.index({ firmBankAccount: 1, status: 1 });
+DDEntrySchema.index({ seller: 1 });
 DDEntrySchema.index({ tenderStatus: 1, status: 1 });
 DDEntrySchema.index({ ddNumber: 1 });
 

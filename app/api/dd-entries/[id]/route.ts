@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { ObjectId } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 import DDEntry, { TENDER_STATUSES } from "@/models/DDEntry";
+import Seller from "@/models/Seller";
 
 async function connectMongoose() {
   await clientPromise;
@@ -30,7 +31,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!ObjectId.isValid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     await connectMongoose();
 
-    const entry = await DDEntry.findById(id).populate("firmBankAccount").lean();
+    const entry = await DDEntry.findById(id).populate("firmBankAccount").populate("seller", "instituteName").lean();
     if (!entry) return NextResponse.json({ error: "DD entry not found" }, { status: 404 });
     return NextResponse.json(entry);
   } catch (error: any) {
@@ -58,10 +59,19 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (body.ddDate !== undefined) update.ddDate = new Date(body.ddDate);
     if (body.amount !== undefined) update.amount = Number(body.amount);
     if (body.payeeName !== undefined) update.payeeName = String(body.payeeName).trim();
+    if (body.firmBankAccount !== undefined) update.firmBankAccount = body.firmBankAccount;
+    if (body.seller !== undefined) {
+      if (body.seller) {
+        const institute = await Seller.findById(body.seller);
+        if (!institute) return NextResponse.json({ error: "seller (institute) not found." }, { status: 404 });
+      }
+      update.seller = body.seller || null;
+    }
     if (body.tenderReference !== undefined) update.tenderReference = String(body.tenderReference).trim();
     if (body.purpose !== undefined) update.purpose = body.purpose;
     if (body.issuanceCharge !== undefined) update.issuanceCharge = Number(body.issuanceCharge) || 0;
     if (body.notes !== undefined) update.notes = body.notes;
+    if (body.scannedDocumentUrl !== undefined) update.scannedDocumentUrl = body.scannedDocumentUrl;
     if (body.courierSentDate !== undefined) update.courierSentDate = body.courierSentDate ? new Date(body.courierSentDate) : null;
     if (body.courierTrackingNumber !== undefined) update.courierTrackingNumber = body.courierTrackingNumber;
 

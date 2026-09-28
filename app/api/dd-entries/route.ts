@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import clientPromise from "@/lib/mongodb";
 import DDEntry, { DD_PURPOSES } from "@/models/DDEntry";
 import FirmBankAccount from "@/models/FirmBankAccount";
+import Seller from "@/models/Seller";
 
 async function connectMongoose() {
   await clientPromise;
@@ -38,7 +39,11 @@ export async function GET(req: Request) {
       if (to) filter.ddDate.$lte = new Date(`${to}T23:59:59`);
     }
 
-    const entries = await DDEntry.find(filter).populate("firmBankAccount").sort({ ddDate: -1, createdAt: -1 }).lean();
+    const entries = await DDEntry.find(filter)
+      .populate("firmBankAccount")
+      .populate("seller", "instituteName")
+      .sort({ ddDate: -1, createdAt: -1 })
+      .lean();
     return NextResponse.json(entries);
   } catch (error: any) {
     console.error("DD entries GET error:", error);
@@ -53,7 +58,7 @@ export async function POST(req: Request) {
     await connectMongoose();
     const body = await req.json();
     const {
-      ddNumber, ddDate, amount, payeeName, firmBankAccount,
+      ddNumber, ddDate, amount, payeeName, firmBankAccount, seller,
       tenderReference, purpose, scannedDocumentUrl, issuanceCharge, notes, createdBy,
     } = body;
 
@@ -70,6 +75,12 @@ export async function POST(req: Request) {
     if (!bankAccount) {
       return NextResponse.json({ error: "firmBankAccount not found." }, { status: 404 });
     }
+    if (seller) {
+      const institute = await Seller.findById(seller);
+      if (!institute) {
+        return NextResponse.json({ error: "seller (institute) not found." }, { status: 404 });
+      }
+    }
 
     const entry = await DDEntry.create({
       ddNumber: String(ddNumber).trim(),
@@ -77,6 +88,7 @@ export async function POST(req: Request) {
       amount: Number(amount),
       payeeName: String(payeeName).trim(),
       firmBankAccount,
+      seller: seller || null,
       tenderReference: String(tenderReference).trim(),
       purpose: purpose || "EMD",
       scannedDocumentUrl: scannedDocumentUrl || "",
