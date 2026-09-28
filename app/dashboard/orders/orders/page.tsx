@@ -1,6 +1,7 @@
 "use client";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import SellerOrderForm from "@/components/SellerOrderForm";
+import AddItemModal from "@/components/AddItemModal";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
@@ -15,6 +16,19 @@ import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 const TABS = [
   "ALL", "TO CHECK", "READY TO SHIP", "DELIVERY", "CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED", "FULFILLED", "HISAB"
 ];
+
+// contractDate is stored as "yyyy-mm-dd" for manually-added orders but as
+// "dd/mm/yyyy" for orders verified from Fetched GeM Orders. new Date() reads
+// the slash form as mm/dd/yyyy - "Invalid Date" when the day is > 12, and a
+// silently swapped day/month when it's <= 12 - so parse that form by hand.
+const formatContractDate = (d: any): string => {
+  if (!d) return "N/A";
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(d).trim());
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const parsed = new Date(d);
+  if (isNaN(parsed.getTime())) return "N/A";
+  return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-');
+};
 
 // Module level cache for static directories so navigation stays instant
 let sellersCache: any[] | null = null;
@@ -68,6 +82,7 @@ export default function OrdersListPage() {
   const [sellers, setSellers] = useState<any[]>([]);
 
   const [stock, setStock] = useState<StockItem[]>([]);
+  const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
@@ -114,6 +129,19 @@ export default function OrdersListPage() {
 
   useEffect(() => {
     fetchOrders();
+  }, []);
+
+  // Ctrl+Shift+A opens "Add New Item" from anywhere on this page - same
+  // shortcut as the Fetch GeM Orders page's Add New Item.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "A" || e.key === "a")) {
+        e.preventDefault();
+        setIsAddItemModalOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const sortedStock = useMemo(() => {
@@ -1355,6 +1383,13 @@ const shippingLock = useRef(false);
               className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-amber-200"
             >Check Advance Matches</button>
             <button
+              onClick={() => setIsAddItemModalOpen(true)}
+              title="Add a new stock item without leaving this page (shortcut: Ctrl+Shift+A)"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all border border-slate-200 flex items-center gap-1.5"
+            >
+              <FiPlus size={13} /> Add New Item
+            </button>
+            <button
               onClick={() => setIsRequestModalOpen(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
             >Add Purchase Req</button>
@@ -1715,13 +1750,7 @@ const shippingLock = useRef(false);
                     {order.contractUrl && <a href={order.contractUrl} target="_blank" className="text-blue-500 inline-block ml-1"><FiExternalLink size={11} /></a>}
                   </div>
                   <div className="text-[9px] text-slate-800">
-                    {order.contractDate
-                      ? new Date(order.contractDate).toLocaleDateString('en-GB', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric'
-                      }).replace(/\//g, '-')
-                      : "N/A"}
+                    {formatContractDate(order.contractDate)}
                   </div>
                 </td>
 
@@ -2307,7 +2336,7 @@ const shippingLock = useRef(false);
                       {group.pairs.map((pair: any) => {
                         const pairKey = `${pair.advanceOrder._id}_${pair.regularOrder._id}`;
                         const qtyMatches = Number(pair.advanceOrder.reQty) === Number(pair.regularOrder.reQty);
-                        const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-') : "N/A";
+                        const fmtDate = formatContractDate;
                         return (
                           <div key={pairKey} className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
                             <div className="flex items-center justify-between gap-2 mb-3">
@@ -2364,6 +2393,11 @@ const shippingLock = useRef(false);
           setIsRequestModalOpen(false);
           fetchTabData();
         }}
+      />
+
+      <AddItemModal
+        isOpen={isAddItemModalOpen}
+        onClose={() => setIsAddItemModalOpen(false)}
       />
       </div>
     </BlockGuard>
