@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 import GemCredentialsPanel from "@/components/GemCredentialsPanel";
+import AttendanceReminder from "@/components/AttendanceReminder";
 
 export default function Header() {
   const router = useRouter();
@@ -482,6 +483,8 @@ export default function Header() {
         </div>
       </div>
     )}
+
+    {isOwner && <AttendanceReminder username={user?.username || ""} />}
     </>
   );
 }
