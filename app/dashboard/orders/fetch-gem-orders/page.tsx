@@ -79,6 +79,21 @@ interface StockItemOption {
   variantLabel?: string;
 }
 
+// One line item within the Verify modal - a single GeM contract can
+// legitimately bundle several different items (a merge/multi-item PO), so
+// the modal holds a list of these instead of one flat set of fields.
+interface VerifyItemRow {
+  key: string;
+  itemQuery: string;
+  selectedStockItem: StockItemOption | null;
+  showSuggestions: boolean;
+  highlightedIndex: number;
+  variantSiblings: StockItemOption[];
+  qty: number;
+  rate: number;
+  remark: string;
+}
+
 export default function FetchGeMOrdersPage() {
   const router = useRouter();
 
@@ -102,21 +117,14 @@ export default function FetchGeMOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<RawGeMOrder | null>(null);
   const [selectedFirmCode, setSelectedFirmCode] = useState("");
   const [customInstituteName, setCustomInstituteName] = useState("");
-  const [customItemName, setCustomItemName] = useState("");
-  const [itemQuery, setItemQuery] = useState("");
-  const [showItemSuggestions, setShowItemSuggestions] = useState(false);
-  // Keyboard nav (Up/Down/Enter) through the Item Name suggestion list -
-  // -1 means nothing highlighted yet.
-  const [highlightedItemIndex, setHighlightedItemIndex] = useState(-1);
-  const itemSuggestionRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [selectedStockItem, setSelectedStockItem] = useState<StockItemOption | null>(null);
-  // Populated when the picked item belongs to a variant group (e.g. "White
-  // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
-  // its own stock, this just lets the user switch to the right one by label.
-  const [variantSiblings, setVariantSiblings] = useState<StockItemOption[]>([]);
-  const [customQty, setCustomQty] = useState<number>(1);
-  const [customRate, setCustomRate] = useState<number>(0);
-  const [customRemark, setCustomRemark] = useState("");
+  // One row per item on this contract - see VerifyItemRow. Each row keeps
+  // its own Item Name search/suggestions/variant state, same behavior the
+  // single-item version had, just scoped per row now.
+  const [verifyItems, setVerifyItems] = useState<VerifyItemRow[]>([]);
+  const verifyItemKeyRef = useRef(0);
+  // Keyboard nav (Up/Down/Enter) through a row's Item Name suggestion list -
+  // refs keyed by row key so scrollIntoView still works per row.
+  const itemSuggestionRefsByRow = useRef<Record<string, (HTMLButtonElement | null)[]>>({});
   const [autoFillHint, setAutoFillHint] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [currentUsername, setCurrentUsername] = useState("");
@@ -169,15 +177,16 @@ export default function FetchGeMOrdersPage() {
     if (!selectedOrder) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (showItemSuggestions) {
-        setShowItemSuggestions(false);
+      const anyOpen = verifyItems.some((r) => r.showSuggestions);
+      if (anyOpen) {
+        setVerifyItems((prev) => prev.map((r) => ({ ...r, showSuggestions: false })));
       } else if (!verifying) {
         setSelectedOrder(null);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedOrder, showItemSuggestions, verifying]);
+  }, [selectedOrder, verifyItems, verifying]);
 
   // Ctrl+Shift+A opens "Add New Item" from anywhere on this page - global,
   // not scoped to any modal, since the whole point is a quick shortcut that
@@ -473,6 +482,18 @@ export default function FetchGeMOrdersPage() {
     }
   };
 
+  const makeEmptyVerifyItemRow = (): VerifyItemRow => ({
+    key: `item-${++verifyItemKeyRef.current}`,
+    itemQuery: "",
+    selectedStockItem: null,
+    showSuggestions: false,
+    highlightedIndex: -1,
+    variantSiblings: [],
+    qty: 1,
+    rate: 0,
+    remark: "",
+  });
+
   const openVerifyModal = (order: RawGeMOrder) => {
     // Refreshes in the background (not awaited) so an item added via "Add
     // New Item" on this page, or from Stock/Inventory in another tab, shows
@@ -492,62 +513,68 @@ export default function FetchGeMOrdersPage() {
     setCustomInstituteName(match?.instituteName || (guessedBuyer ? guessedBuyer.name : ""));
 
     const matchedStockItem = match?.itemId ? stockItems.find(s => s._id === match.itemId) : null;
+    const firstRow = makeEmptyVerifyItemRow();
     if (matchedStockItem) {
-      setSelectedStockItem(matchedStockItem);
-      setCustomItemName(matchedStockItem.itemName);
-      setItemQuery(matchedStockItem.itemName);
-      setVariantSiblings(
-        matchedStockItem.variantGroup
-          ? stockItems.filter((s) => s.variantGroup === matchedStockItem.variantGroup)
-          : []
-      );
+      firstRow.selectedStockItem = matchedStockItem;
+      firstRow.itemQuery = matchedStockItem.itemName;
+      firstRow.variantSiblings = matchedStockItem.variantGroup
+        ? stockItems.filter((s) => s.variantGroup === matchedStockItem.variantGroup)
+        : [];
     } else {
-      setSelectedStockItem(null);
-      setCustomItemName(order.itemName);
-      setItemQuery(order.itemName || "");
-      setVariantSiblings([]);
+      firstRow.itemQuery = order.itemName || "";
     }
-    setShowItemSuggestions(false);
-    setCustomQty(order.qty || 1);
-    setCustomRate(order.rate || 0);
-    setCustomRemark(match?.remark || "");
+    firstRow.qty = order.qty || 1;
+    firstRow.rate = order.rate || 0;
+    firstRow.remark = match?.remark || "";
+    setVerifyItems([firstRow]);
     setAutoFillHint(match?.hint || null);
   };
 
-  const handleSelectStockItem = (item: StockItemOption) => {
-    setSelectedStockItem(item);
-    setCustomItemName(item.itemName);
-    setItemQuery(item.itemName);
-    setShowItemSuggestions(false);
+  const addVerifyItemRow = () => {
+    setVerifyItems((prev) => [...prev, makeEmptyVerifyItemRow()]);
+  };
+
+  const removeVerifyItemRow = (index: number) => {
+    setVerifyItems((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  };
+
+  const updateVerifyItemRow = (index: number, patch: Partial<VerifyItemRow>) => {
+    setVerifyItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const handleSelectStockItemForRow = (index: number, item: StockItemOption) => {
     // If this item has color/size siblings, offer them below - matched on
     // variantGroup (a real shared field), never on name, since a hidden
     // duplicate can share the exact same itemName as its active replacement.
-    setVariantSiblings(
-      item.variantGroup
-        ? stockItems.filter((s) => s.variantGroup === item.variantGroup)
-        : []
-    );
+    updateVerifyItemRow(index, {
+      selectedStockItem: item,
+      itemQuery: item.itemName,
+      showSuggestions: false,
+      variantSiblings: item.variantGroup ? stockItems.filter((s) => s.variantGroup === item.variantGroup) : [],
+    });
   };
 
-  const itemSuggestions = useMemo(() => {
-    const q = itemQuery.toLowerCase().trim();
-    const pool = q ? stockItems.filter(s => s.itemName.toLowerCase().includes(q)) : stockItems;
+  const getItemSuggestions = (query: string) => {
+    const q = query.toLowerCase().trim();
+    const pool = q ? stockItems.filter((s) => s.itemName.toLowerCase().includes(q)) : stockItems;
     return pool.slice(0, 50);
-  }, [itemQuery, stockItems]);
+  };
 
   const handleVerifySubmit = async () => {
     if (!selectedOrder) return;
 
-    // Institute must come from the dropdown (Seller Directory) and item must
-    // come from the stock suggestions below the search box — the raw text
-    // GeM's page scraped in (order.instituteName / order.itemName) is never
-    // allowed to fall through into a saved order unconfirmed.
+    // Institute must come from the dropdown (Seller Directory) and every
+    // item row must come from the stock suggestions below its search box —
+    // the raw text GeM's page scraped in (order.instituteName /
+    // order.itemName) is never allowed to fall through into a saved order
+    // unconfirmed.
     if (!customInstituteName.trim()) {
       alert("Buyer / Institute list se select karo — GeM se aaya raw text seedha order me save nahi ho sakta.");
       return;
     }
-    if (!selectedStockItem) {
-      alert("Item Name ke suggestions me se ek real stock item select karo — GeM se aaya raw item name seedha order me save nahi ho sakta.");
+    const missingIndex = verifyItems.findIndex((row) => !row.selectedStockItem);
+    if (missingIndex !== -1) {
+      alert(`Item #${missingIndex + 1} ke suggestions me se ek real stock item select karo — GeM se aaya raw item name seedha order me save nahi ho sakta.`);
       return;
     }
 
@@ -560,22 +587,29 @@ export default function FetchGeMOrdersPage() {
         body: JSON.stringify({
           firmCode: selectedFirmCode,
           instituteName: customInstituteName,
-          itemId: selectedStockItem?._id,
-          itemName: customItemName,
-          category: selectedStockItem?.category,
-          unit: selectedStockItem?.unit,
-          sku: selectedStockItem?.sku,
-          qty: customQty,
-          rate: customRate,
-          totalAmount: customQty * customRate,
-          remark: customRemark,
           createdBy: currentUsername,
+          items: verifyItems.map((row) => ({
+            itemId: row.selectedStockItem?._id,
+            itemName: row.selectedStockItem?.itemName,
+            category: row.selectedStockItem?.category,
+            unit: row.selectedStockItem?.unit,
+            sku: row.selectedStockItem?.sku,
+            qty: row.qty,
+            rate: row.rate,
+            totalAmount: row.qty * row.rate,
+            remark: row.remark,
+          })),
         })
       });
 
       if (res.ok) {
         const result = await res.json();
-        alert(`✅ Order Verified Successfully! Saved to Main Orders as ${result.orderNo}`);
+        const orderNos: string[] = result.orderNos || (result.orderNo ? [result.orderNo] : []);
+        alert(
+          orderNos.length > 1
+            ? `✅ ${orderNos.length} Orders Verified Successfully! Saved to Main Orders as ${orderNos.join(", ")}`
+            : `✅ Order Verified Successfully! Saved to Main Orders as ${orderNos[0]}`
+        );
         setRawOrders(prev => prev.filter(o => o._id !== selectedOrder._id));
         setSelectedOrder(null);
       } else {
@@ -1037,7 +1071,7 @@ export default function FetchGeMOrdersPage() {
       {/* Verification Modal */}
       {selectedOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-100">
+          <div className={`bg-white rounded-2xl w-full shadow-2xl overflow-hidden border border-slate-100 transition-all ${verifyItems.length > 1 ? "max-w-4xl" : "max-w-lg"}`}>
             <div className="bg-slate-900 text-white p-6">
               <h3 className="text-lg font-black uppercase tracking-tight">Verify GeM Order</h3>
               <p className="text-slate-400 text-xs font-medium mt-1">
@@ -1045,7 +1079,7 @@ export default function FetchGeMOrdersPage() {
               </p>
             </div>
 
-            <div className="p-6 space-y-4 text-xs font-medium">
+            <div className="p-6 space-y-3 text-xs font-medium max-h-[78vh] overflow-y-auto">
               <div>
                 <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
                   Assign Firm (Company)
@@ -1096,140 +1130,320 @@ export default function FetchGeMOrdersPage() {
                 )}
               </div>
 
-              <div className="relative">
-                <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                  Item Name {selectedStockItem && <span className="text-emerald-600 normal-case font-semibold">(SKU: {selectedStockItem.sku})</span>}
-                </label>
-                <input
-                  type="text"
-                  value={itemQuery}
-                  onChange={(e) => {
-                    setItemQuery(e.target.value);
-                    setCustomItemName(e.target.value);
-                    setSelectedStockItem(null);
-                    setShowItemSuggestions(true);
-                    setHighlightedItemIndex(-1);
-                  }}
-                  onFocus={() => setShowItemSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowItemSuggestions(false), 150)}
-                  onKeyDown={(e) => {
-                    if (!showItemSuggestions || itemSuggestions.length === 0) return;
-                    if (e.key === "ArrowDown") {
-                      e.preventDefault();
-                      setHighlightedItemIndex((prev) => {
-                        const next = prev < itemSuggestions.length - 1 ? prev + 1 : 0;
-                        itemSuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
-                        return next;
-                      });
-                    } else if (e.key === "ArrowUp") {
-                      e.preventDefault();
-                      setHighlightedItemIndex((prev) => {
-                        const next = prev > 0 ? prev - 1 : itemSuggestions.length - 1;
-                        itemSuggestionRefs.current[next]?.scrollIntoView({ block: "nearest" });
-                        return next;
-                      });
-                    } else if (e.key === "Enter") {
-                      if (highlightedItemIndex >= 0 && itemSuggestions[highlightedItemIndex]) {
-                        e.preventDefault();
-                        handleSelectStockItem(itemSuggestions[highlightedItemIndex]);
-                      }
-                    }
-                  }}
-                  placeholder="Search stock item..."
-                  className={`w-full p-2.5 bg-slate-50 border rounded-lg text-slate-800 font-semibold focus:outline-none ${selectedStockItem ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
-                />
-                {!selectedStockItem && (
-                  <p className="text-[10px] text-red-600 font-semibold mt-1">
-                    Suggestions me se ek real stock item select karo (required) — GeM ka raw naam seedha save nahi hoga.
-                  </p>
-                )}
-                {autoFillHint && (
-                  <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ {autoFillHint}</p>
-                )}
-                {showItemSuggestions && itemSuggestions.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
-                    {itemSuggestions.map((item, idx) => (
-                      <button
-                        type="button"
-                        key={item._id}
-                        ref={(el) => { itemSuggestionRefs.current[idx] = el; }}
-                        onMouseEnter={() => setHighlightedItemIndex(idx)}
-                        onMouseDown={() => handleSelectStockItem(item)}
-                        className={`w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 ${
-                          idx === highlightedItemIndex ? "bg-blue-50" : "hover:bg-blue-50"
-                        }`}
-                      >
-                        <div className="font-bold text-slate-800">{item.itemName}</div>
-                        <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
-                      </button>
-                    ))}
+              {autoFillHint && (
+                <p className="text-[10px] text-emerald-600 font-bold">✓ {autoFillHint}</p>
+              )}
+
+              {verifyItems.length === 1 ? (
+                // Exactly one item - the common case - looks like the
+                // original single-item Verify form (full-width, labelled
+                // fields). Switches to the compact multi-row layout below
+                // the moment a second item is added.
+                (() => {
+                  const row = verifyItems[0];
+                  const itemSuggestions = getItemSuggestions(row.itemQuery);
+                  return (
+                    <>
+                      <div className="relative">
+                        <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                          Item Name {row.selectedStockItem && <span className="text-emerald-600 normal-case font-semibold">(SKU: {row.selectedStockItem.sku})</span>}
+                        </label>
+                        <input
+                          type="text"
+                          value={row.itemQuery}
+                          onChange={(e) => {
+                            updateVerifyItemRow(0, {
+                              itemQuery: e.target.value,
+                              selectedStockItem: null,
+                              showSuggestions: true,
+                              highlightedIndex: -1,
+                            });
+                          }}
+                          onFocus={() => updateVerifyItemRow(0, { showSuggestions: true })}
+                          onBlur={() => setTimeout(() => updateVerifyItemRow(0, { showSuggestions: false }), 150)}
+                          onKeyDown={(e) => {
+                            if (!row.showSuggestions || itemSuggestions.length === 0) return;
+                            if (e.key === "ArrowDown") {
+                              e.preventDefault();
+                              const next = row.highlightedIndex < itemSuggestions.length - 1 ? row.highlightedIndex + 1 : 0;
+                              updateVerifyItemRow(0, { highlightedIndex: next });
+                              itemSuggestionRefsByRow.current[row.key]?.[next]?.scrollIntoView({ block: "nearest" });
+                            } else if (e.key === "ArrowUp") {
+                              e.preventDefault();
+                              const next = row.highlightedIndex > 0 ? row.highlightedIndex - 1 : itemSuggestions.length - 1;
+                              updateVerifyItemRow(0, { highlightedIndex: next });
+                              itemSuggestionRefsByRow.current[row.key]?.[next]?.scrollIntoView({ block: "nearest" });
+                            } else if (e.key === "Enter") {
+                              if (row.highlightedIndex >= 0 && itemSuggestions[row.highlightedIndex]) {
+                                e.preventDefault();
+                                handleSelectStockItemForRow(0, itemSuggestions[row.highlightedIndex]);
+                              }
+                            }
+                          }}
+                          placeholder="Search stock item..."
+                          className={`w-full p-2.5 bg-slate-50 border rounded-lg text-slate-800 font-semibold focus:outline-none ${row.selectedStockItem ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
+                        />
+                        {!row.selectedStockItem && (
+                          <p className="text-[10px] text-red-600 font-semibold mt-1">
+                            Suggestions me se ek real stock item select karo (required) — GeM ka raw naam seedha save nahi hoga.
+                          </p>
+                        )}
+                        {row.showSuggestions && itemSuggestions.length > 0 && (
+                          <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                            {itemSuggestions.map((item, idx) => (
+                              <button
+                                type="button"
+                                key={item._id}
+                                ref={(el) => {
+                                  if (!itemSuggestionRefsByRow.current[row.key]) itemSuggestionRefsByRow.current[row.key] = [];
+                                  itemSuggestionRefsByRow.current[row.key][idx] = el;
+                                }}
+                                onMouseEnter={() => updateVerifyItemRow(0, { highlightedIndex: idx })}
+                                onMouseDown={() => handleSelectStockItemForRow(0, item)}
+                                className={`w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 ${
+                                  idx === row.highlightedIndex ? "bg-blue-50" : "hover:bg-blue-50"
+                                }`}
+                              >
+                                <div className="font-bold text-slate-800">{item.itemName}</div>
+                                <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {row.variantSiblings.length > 1 && (
+                          <div className="mt-2">
+                            <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">Variant</label>
+                            <select
+                              value={row.selectedStockItem?._id || ""}
+                              onChange={(e) => {
+                                const chosen = row.variantSiblings.find((v) => v._id === e.target.value);
+                                if (chosen) handleSelectStockItemForRow(0, chosen);
+                              }}
+                              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                            >
+                              {row.variantSiblings.map((v) => (
+                                <option key={v._id} value={v._id}>{v.variantLabel || v.sku}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                            Quantity
+                          </label>
+                          <input
+                            type="number"
+                            value={row.qty}
+                            onChange={(e) => updateVerifyItemRow(0, { qty: Number(e.target.value) })}
+                            className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                            Rate (₹)
+                          </label>
+                          <input
+                            type="number"
+                            value={row.rate}
+                            onChange={(e) => updateVerifyItemRow(0, { rate: Number(e.target.value) })}
+                            className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                          Remark / Note
+                        </label>
+                        <input
+                          type="text"
+                          value={row.remark}
+                          onChange={(e) => updateVerifyItemRow(0, { remark: e.target.value })}
+                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-black font-semibold focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                          Total Amount (₹)
+                        </label>
+                        <div className="p-2.5 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm">
+                          ₹{row.qty * row.rate}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()
+              ) : (
+                // Two or more items - a single GeM contract can bundle
+                // several different items (merge order) - the compact
+                // per-row layout, column labels shown once above the list.
+                <>
+                  <div className="flex items-center gap-2 px-0.5">
+                    <div className="flex-1 text-slate-500 font-bold uppercase tracking-wider text-[10px]">Item Name</div>
+                    <div className="w-16 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Qty</div>
+                    <div className="w-20 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Rate ₹</div>
+                    <div className="w-24 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Total ₹</div>
+                    <div className="w-40 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px]">Remark</div>
+                    <div className="w-4 shrink-0" />
                   </div>
-                )}
 
-                {variantSiblings.length > 1 && (
-                  <div className="mt-2">
-                    <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">Variant</label>
-                    <select
-                      value={selectedStockItem?._id || ""}
-                      onChange={(e) => {
-                        const chosen = variantSiblings.find((v) => v._id === e.target.value);
-                        if (chosen) handleSelectStockItem(chosen);
-                      }}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
-                    >
-                      {variantSiblings.map((v) => (
-                        <option key={v._id} value={v._id}>{v.variantLabel || v.sku}</option>
-                      ))}
-                    </select>
+                  <div className="divide-y divide-slate-100">
+                  {verifyItems.map((row, index) => {
+                    const itemSuggestions = getItemSuggestions(row.itemQuery);
+                    return (
+                      <div key={row.key} className="py-1.5 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0 relative">
+                            <input
+                              type="text"
+                              value={row.itemQuery}
+                              onChange={(e) => {
+                                updateVerifyItemRow(index, {
+                                  itemQuery: e.target.value,
+                                  selectedStockItem: null,
+                                  showSuggestions: true,
+                                  highlightedIndex: -1,
+                                });
+                              }}
+                              onFocus={() => updateVerifyItemRow(index, { showSuggestions: true })}
+                              onBlur={() => setTimeout(() => updateVerifyItemRow(index, { showSuggestions: false }), 150)}
+                              onKeyDown={(e) => {
+                                if (!row.showSuggestions || itemSuggestions.length === 0) return;
+                                if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  const next = row.highlightedIndex < itemSuggestions.length - 1 ? row.highlightedIndex + 1 : 0;
+                                  updateVerifyItemRow(index, { highlightedIndex: next });
+                                  itemSuggestionRefsByRow.current[row.key]?.[next]?.scrollIntoView({ block: "nearest" });
+                                } else if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  const next = row.highlightedIndex > 0 ? row.highlightedIndex - 1 : itemSuggestions.length - 1;
+                                  updateVerifyItemRow(index, { highlightedIndex: next });
+                                  itemSuggestionRefsByRow.current[row.key]?.[next]?.scrollIntoView({ block: "nearest" });
+                                } else if (e.key === "Enter") {
+                                  if (row.highlightedIndex >= 0 && itemSuggestions[row.highlightedIndex]) {
+                                    e.preventDefault();
+                                    handleSelectStockItemForRow(index, itemSuggestions[row.highlightedIndex]);
+                                  }
+                                }
+                              }}
+                              placeholder="Search stock item..."
+                              className={`w-full p-2 bg-white border rounded-lg text-slate-800 font-semibold focus:outline-none ${row.selectedStockItem ? "border-slate-200 focus:border-blue-500" : "border-red-400 focus:border-red-500"}`}
+                            />
+                            {row.showSuggestions && itemSuggestions.length > 0 && (
+                              <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                                {itemSuggestions.map((item, idx) => (
+                                  <button
+                                    type="button"
+                                    key={item._id}
+                                    ref={(el) => {
+                                      if (!itemSuggestionRefsByRow.current[row.key]) itemSuggestionRefsByRow.current[row.key] = [];
+                                      itemSuggestionRefsByRow.current[row.key][idx] = el;
+                                    }}
+                                    onMouseEnter={() => updateVerifyItemRow(index, { highlightedIndex: idx })}
+                                    onMouseDown={() => handleSelectStockItemForRow(index, item)}
+                                    className={`w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 ${
+                                      idx === row.highlightedIndex ? "bg-blue-50" : "hover:bg-blue-50"
+                                    }`}
+                                  >
+                                    <div className="font-bold text-slate-800">{item.itemName}</div>
+                                    <div className="text-[10px] text-slate-400">SKU: {item.sku} · {item.category}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="w-16 shrink-0">
+                            <input
+                              type="number"
+                              value={row.qty}
+                              onChange={(e) => updateVerifyItemRow(index, { qty: Number(e.target.value) })}
+                              className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold text-center focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="w-20 shrink-0">
+                            <input
+                              type="number"
+                              value={row.rate}
+                              onChange={(e) => updateVerifyItemRow(index, { rate: Number(e.target.value) })}
+                              className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold text-center focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="w-24 shrink-0 p-2 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm text-center">
+                            ₹{row.qty * row.rate}
+                          </div>
+                          <div className="w-40 shrink-0">
+                            <input
+                              type="text"
+                              value={row.remark}
+                              onChange={(e) => updateVerifyItemRow(index, { remark: e.target.value })}
+                              placeholder="Remark / note..."
+                              className="w-full p-2 bg-white border border-slate-200 rounded-lg text-black font-semibold text-[11px] focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeVerifyItemRow(index)}
+                            title="Remove this item"
+                            className="shrink-0 text-red-400 hover:text-red-600 transition-colors"
+                          >
+                            <FiTrash2 size={14} />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap pl-0.5">
+                          {row.selectedStockItem && (
+                            <span className="text-emerald-600 font-semibold text-[10px]">SKU: {row.selectedStockItem.sku}</span>
+                          )}
+                          {!row.selectedStockItem && (
+                            <span className="text-red-600 font-semibold text-[10px]">
+                              Suggestions me se ek real stock item select karo (required).
+                            </span>
+                          )}
+                        </div>
+
+                        {row.variantSiblings.length > 1 && (
+                          <select
+                            value={row.selectedStockItem?._id || ""}
+                            onChange={(e) => {
+                              const chosen = row.variantSiblings.find((v) => v._id === e.target.value);
+                              if (chosen) handleSelectStockItemForRow(index, chosen);
+                            }}
+                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
+                          >
+                            {row.variantSiblings.map((v) => (
+                              <option key={v._id} value={v._id}>{v.variantLabel || v.sku}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    );
+                  })}
                   </div>
-                )}
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                    Quantity
-                  </label>
-                  <input
-                    type="number"
-                    value={customQty}
-                    onChange={(e) => setCustomQty(Number(e.target.value))}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                    Rate (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={customRate}
-                    onChange={(e) => setCustomRate(Number(e.target.value))}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
+                  <div>
+                    <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
+                      Grand Total (₹)
+                    </label>
+                    <div className="p-3 bg-emerald-100 text-emerald-900 font-black rounded-lg text-base">
+                      ₹{verifyItems.reduce((sum, row) => sum + row.qty * row.rate, 0)}
+                    </div>
+                  </div>
+                </>
+              )}
 
-              <div>
-                <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                  Total Amount (₹)
-                </label>
-                <div className="p-2.5 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm">
-                  ₹{customQty * customRate}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold uppercase tracking-wider mb-1">
-                  Remark / Note
-                </label>
-                <input
-                  type="text"
-                  value={customRemark}
-                  onChange={(e) => setCustomRemark(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-black font-semibold focus:outline-none focus:border-blue-500"
-                />
-              </div>
+              <button
+                type="button"
+                onClick={addVerifyItemRow}
+                className="flex items-center justify-center gap-1.5 w-full py-2.5 border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 rounded-lg font-bold uppercase text-[10px] tracking-wider transition-colors"
+              >
+                <FiPlus size={13} /> Add Another Item
+              </button>
             </div>
 
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
@@ -1245,7 +1459,7 @@ export default function FetchGeMOrdersPage() {
                 disabled={verifying}
                 className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold uppercase text-xs tracking-wider transition-all shadow-md"
               >
-                {verifying ? "Verifying..." : "Approve & Move Order"}
+                {verifying ? "Verifying..." : verifyItems.length > 1 ? `Approve & Move ${verifyItems.length} Orders` : "Approve & Move Order"}
               </button>
             </div>
           </div>
