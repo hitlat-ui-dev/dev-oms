@@ -63,6 +63,12 @@ interface SheetRecord {
   uploadedRows: UploadedSheetRow[];
 }
 
+interface GemListing {
+  firmCode: string;
+  itemId?: string;
+  gemLink?: string;
+}
+
 interface StockItemOption {
   _id: string;
   sku: string;
@@ -80,6 +86,7 @@ export default function FetchGeMOrdersPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [buyerOptions, setBuyerOptions] = useState<BuyerOption[]>([]);
   const [sheets, setSheets] = useState<SheetRecord[]>([]);
+  const [gemListings, setGemListings] = useState<GemListing[]>([]);
   const [stockItems, setStockItems] = useState<StockItemOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -199,9 +206,28 @@ export default function FetchGeMOrdersPage() {
     });
   };
 
+  // A Sheet Library row only proves the buyer ordered at that rate/qty - it
+  // says nothing about which firm actually sells the item, so rate+qty alone
+  // can match a row that belongs to a completely different firm's catalogue.
+  // Master List (gem_listings) is the firm-aware source of truth (it's keyed
+  // by firmCode + gemLink/itemId), so a row only counts as a real match if
+  // this order's own firm has a live listing for that same item/link.
+  const rowBelongsToFirm = (row: UploadedSheetRow, firmCode?: string): boolean => {
+    const fc = (firmCode || "").trim().toUpperCase();
+    if (!fc) return false;
+    return gemListings.some((l) => {
+      if ((l.firmCode || "").trim().toUpperCase() !== fc) return false;
+      if (row.mappedItemId && l.itemId && String(l.itemId) === String(row.mappedItemId)) return true;
+      if (row.gemLink && l.gemLink && row.gemLink.trim() === l.gemLink.trim()) return true;
+      return false;
+    });
+  };
+
   // Sheet Library match lookup: given a buyer and an order, find the row in
   // that buyer's uploaded rate sheet whose Rate/Qty matches what the order
-  // actually placed on GeM at (the buyer ordered at the quoted rate/qty).
+  // actually placed on GeM at (the buyer ordered at the quoted rate/qty),
+  // restricted to rows this order's own firm actually has a Master List
+  // listing for (see rowBelongsToFirm above).
   // /api/gem-sync's bulk response never carries uploadedRows (moved to R2,
   // loaded lazily per-sheet - see route.ts) so each candidate sheet's rows
   // are fetched on demand here via ?sheetContent=, through sheetRowsCache so
@@ -234,9 +260,10 @@ export default function FetchGeMOrdersPage() {
 
       for (const row of rows) {
         if (Number(row.rate) !== orderRate) continue;
+        if (!rowBelongsToFirm(row, order.firmCode)) continue;
         if (Number(row.qty) === orderQty) {
           rateOnlyMatch = { row, sheet };
-          break outer; // exact rate+qty match - best case, stop here
+          break outer; // exact rate+qty+firm match - best case, stop here
         }
         if (!rateOnlyMatch) rateOnlyMatch = { row, sheet };
       }
@@ -317,6 +344,7 @@ export default function FetchGeMOrdersPage() {
       if (gemSyncRes.ok) {
         const data = await gemSyncRes.json();
         setSheets(Array.isArray(data.sheets) ? data.sheets : []);
+        setGemListings(Array.isArray(data.listings) ? data.listings : []);
         (data.buyers || []).forEach((b: any) => {
           const name = (b.name || "").trim();
           if (name) merged.set(name.toLowerCase(), { id: b.id, name });
@@ -409,7 +437,7 @@ export default function FetchGeMOrdersPage() {
           itemId: stockItem?._id,
           itemName: stockItem?.itemName,
           remark: row.originalName || "",
-          hint: `Auto-matched from Sheet Library "${sheet.fileName}" (rate ₹${row.rate}, qty ${row.qty})`
+          hint: `Auto-matched from Sheet Library "${sheet.fileName}" (rate ₹${row.rate}, qty ${row.qty}, firm ${order.firmCode} confirmed in Master List)`
         };
       }
       setMatchResults(results);
