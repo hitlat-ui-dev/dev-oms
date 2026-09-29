@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import BlockGuard from "@/components/BlockGuard";
+import PinGate from "@/components/PinGate";
 import {
   FiArrowLeft,
   FiUserCheck,
@@ -701,6 +702,7 @@ export default function AttendancePage() {
         </div>
       }
     >
+      <PinGate page="attendance">
       <div className="p-4 md:p-8 bg-[#f3f6f9] min-h-screen">
         <div className="max-w-7xl mx-auto flex flex-col gap-6">
 
@@ -1644,6 +1646,7 @@ export default function AttendancePage() {
 
         </div>
       </div>
+      </PinGate>
     </BlockGuard>
   );
 }
