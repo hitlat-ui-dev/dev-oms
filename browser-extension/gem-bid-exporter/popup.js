@@ -12,13 +12,15 @@
   // server everyone actually uses without needing to know to change it.
   const DEFAULT_OMS_URL = "https://dev-oms-blush.vercel.app";
   const STATE_KEY = "gemConsigneeState";
-  // Item-keyword filters - applied to every row before it's saved anywhere
-  // (manual scan, city batch, AND the automated Start-Sync flow triggered
-  // from the OMS), via filterRowsByItemKeywords() in content.js. Separate
-  // from the OMS's own server-side category exclusion list, which still
-  // applies afterwards on top of whatever gets sent.
+  // Item include-keyword filter - applied to every row before it's saved
+  // anywhere (manual scan, city batch, AND the automated Start-Sync flow
+  // triggered from the OMS), via filterRowsByItemKeywords() in content.js.
+  // Separate from the OMS's own server-side category exclusion list, which
+  // still applies afterwards on top of whatever gets sent. There used to be
+  // a matching exclude-keyword field here too - removed by request, since
+  // it silently dropped scraped rows before they ever reached the OMS with
+  // no visible trace, making bids go unexpectedly missing.
   const INCLUDE_KEYWORDS_KEY = "gemItemIncludeKeywords";
-  const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
   // Best-effort Bid Start Date range filter for the consignee search - see
   // the honesty note on applyBidStartDateFilter() in content.js. Blank by
   // default (skipped entirely), so an install that never touches these two
@@ -97,7 +99,6 @@
   const consigneeStateEl = document.getElementById("consigneeState");
   const cityListEl = document.getElementById("cityList");
   const includeKeywordsEl = document.getElementById("includeKeywords");
-  const excludeKeywordsEl = document.getElementById("excludeKeywords");
   const bidStartDateFromEl = document.getElementById("bidStartDateFrom");
   const bidStartDateToEl = document.getElementById("bidStartDateTo");
 
@@ -113,7 +114,6 @@
       OMS_USER_KEY,
       STATE_KEY,
       INCLUDE_KEYWORDS_KEY,
-      EXCLUDE_KEYWORDS_KEY,
       DATE_FROM_KEY,
       DATE_TO_KEY,
     ]);
@@ -121,15 +121,14 @@
     omsUserNameEl.value = data[OMS_USER_KEY] || "";
     consigneeStateEl.value = data[STATE_KEY] || "Gujarat";
     includeKeywordsEl.value = data[INCLUDE_KEYWORDS_KEY] || "";
-    excludeKeywordsEl.value = data[EXCLUDE_KEYWORDS_KEY] || "";
     bidStartDateFromEl.value = data[DATE_FROM_KEY] || "";
     bidStartDateToEl.value = data[DATE_TO_KEY] || "";
   }
   // Popups can be dismissed (click elsewhere, click the toolbar icon again,
   // Esc) without the field ever losing focus first - and a "change" event
   // only fires on blur. That silently dropped whatever was just typed every
-  // time (most noticeably the exclude/include keyword boxes, since those
-  // get edited and then the popup just gets closed, not tabbed away from).
+  // time (most noticeably the include keyword box, since it gets edited and
+  // then the popup just gets closed, not tabbed away from).
   // Saving on every "input" keystroke instead - no debounce - means
   // whatever's in the field is already in storage by the time any close
   // path can tear the popup down, at the cost of one small storage write
@@ -144,7 +143,6 @@
   persistOnInput(omsUserNameEl, OMS_USER_KEY);
   persistOnInput(consigneeStateEl, STATE_KEY);
   persistOnInput(includeKeywordsEl, INCLUDE_KEYWORDS_KEY);
-  persistOnInput(excludeKeywordsEl, EXCLUDE_KEYWORDS_KEY);
   persistOnInput(bidStartDateFromEl, DATE_FROM_KEY);
   persistOnInput(bidStartDateToEl, DATE_TO_KEY);
 

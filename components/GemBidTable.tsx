@@ -176,9 +176,17 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
   };
 
   const currentSectionKey = bids[0]?.currentSection;
+  // From New Bids or Fetched Bid Data - still raw, unworked scrape data -
+  // the only manual "Send to" target offered is Bids to Fill. Bids Can Be
+  // Filled, Bid Document Maker, and Submitted Bids are reached by moving a
+  // bid forward one stage at a time from there instead, not skipped to
+  // directly from the raw data.
+  const RAW_DATA_SECTIONS = new Set<SectionKey>(["new_bids", "fetched_bid_data"]);
   // New Bids is system-populated only (a bid lands there on first sight, never
   // via a manual "Send to") - never offered as a manual move target.
-  const otherSections = SECTIONS.filter((s) => s.key !== currentSectionKey && !AUTO_ONLY_SECTIONS.includes(s.key));
+  const otherSections = RAW_DATA_SECTIONS.has(currentSectionKey)
+    ? SECTIONS.filter((s) => s.key === "bids_to_fill")
+    : SECTIONS.filter((s) => s.key !== currentSectionKey && !AUTO_ONLY_SECTIONS.includes(s.key));
   const otherColumns = useMemo(() => BID_COLUMNS.filter((c) => c.key !== "bidNo" && !c.hiddenInTable), []);
 
   const dropdownOptions = useMemo(() => {

@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import clientPromise from "@/lib/mongodb";
 import FirmDocumentVault from "@/models/FirmDocumentVault";
 import { getFileFromR2, uploadFileToR2, getSignedDownloadUrl } from "@/lib/cloudflareR2";
-import { generateAtcContentPage, overlaySignStamp, splitBySizeAndPages, finalizeOutputNames, AtcBidFields } from "@/lib/documentMaker/pdfEngine";
+import { generateAtcContentPage, splitBySizeAndPages, finalizeOutputNames, AtcBidFields } from "@/lib/documentMaker/pdfEngine";
 
 async function connectMongoose() {
   await clientPromise;
@@ -55,13 +55,8 @@ export async function POST(req: Request) {
       items: bid.items,
       departmentNameAndAddress: bid.departmentNameAndAddress,
       address: bid.address,
-      startDate: bid.startDate,
       bidEndDateTime: bid.bidEndDateTime,
-      emdAmount: bid.emdAmount,
-      beneficiary: bid.beneficiary,
     };
-
-    const atcDoc = await generateAtcContentPage(letterheadBytes, fields);
 
     let signBytes: Buffer | null = null;
     let stampBytes: Buffer | null = null;
@@ -69,9 +64,15 @@ export async function POST(req: Request) {
       if (vault.signKey) signBytes = await getFileFromR2(vault.signKey);
       if (vault.stampKey) stampBytes = await getFileFromR2(vault.stampKey);
     } catch (err) {
-      console.error("Failed to fetch sign/stamp from R2 (continuing without overlay):", err);
+      console.error("Failed to fetch sign/stamp from R2 (continuing without them):", err);
     }
-    await overlaySignStamp(atcDoc, signBytes, stampBytes);
+
+    // Sign + stamp are drawn inside generateAtcContentPage itself, right
+    // under the "Your Faithfully," closing - not via the shared
+    // overlaySignStamp helper (that pins to a fixed bottom-right corner on
+    // every page, meant for the "merge" flow's arbitrary uploaded documents,
+    // not this single generated cover page with its own letter layout).
+    const atcDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
 
     const parts = await splitBySizeAndPages(atcDoc);
     const safeBidNo = String(bid.bidNo || bidId).replace(/[^a-zA-Z0-9_-]/g, "_");

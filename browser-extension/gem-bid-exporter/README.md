@@ -45,13 +45,12 @@ navigations) while a batch runs; if you do need to stop one, use **Stop
 Sync** on the OMS page or **Cancel Running City Batch** in the popup rather
 than just closing the tab.
 
-## New: Start Sync's Cities are checkboxes, and its exclude-keyword list is saved on the OMS
+## New: Start Sync's Cities are checkboxes
 
 The Start Sync modal's Consignee Cities are now checkboxes (with an "All
 Cities" toggle and a "select more than one" multi-select) instead of a
-free-text box, and its exclude-keyword field is a persisted list you add
-words to over time rather than a one-off text box — see the "OMS side" notes
-below for exactly how each is populated.
+free-text box — see the "OMS side" notes below for exactly how it's
+populated.
 
 **Cities**: `bidplus.gem.gov.in` blocks non-browser requests (see the
 Advance-search honesty note further down), so the OMS server can't fetch
@@ -62,17 +61,21 @@ Sync modal's checkboxes are populated from. If a state has never been
 loaded that way, the modal shows an empty list with a note to do that once
 (or add a city by hand right there in the modal).
 
-**Exclude keywords**: the Start Sync modal's list lives in the OMS's own
-database (`GET`/`POST /api/gem-bids/exclude-keywords`), not in this
-extension's `chrome.storage.local` — so it's the same list for everyone who
-opens the modal, and it's what an OMS-triggered run actually filters by.
-When a run starts, `background.js` writes that run's exclude-keyword list
-into this extension's own `gemItemExcludeKeywords` storage key (see
-`pollAndMaybeStartAutoSync`), so `filterRowsByItemKeywords()` in
-`content.js` applies it exactly the same way it always has — no new
-filtering logic needed here. That does mean an OMS-triggered run overwrites
-whatever you'd separately typed into this popup's own exclude-keyword box
-for manual scans (same caveat as the Bid Start Date range below).
+## Removed: item exclude-keyword filter
+
+There used to be a "skip bids where Items contains" exclude-keyword filter,
+both in this popup and mirrored in the OMS's Start Sync modal (persisted
+server-side and pushed into this extension's storage on every OMS-triggered
+run). It's gone now, by request — it filtered rows out silently during
+scraping, before they ever reached the OMS, with no visible trace of what
+got dropped or why, which made legitimately-wanted bids look like they'd
+simply failed to fetch. The **include**-keyword filter ("only keep bids
+where Items contains") is unaffected and still works the same way. The
+OMS's own server-side category exclusion list
+(`lib/gemBids/exclusionKeywords.json` in the OMS repo) is the one remaining
+item-based filter — it still runs, but after the fact, on data that already
+made it into the OMS, and its count is visible in the OMS page's "Excluded"
+stat instead of disappearing without a trace.
 
 ## New: Start Sync now opens and drives GeM itself
 
@@ -136,32 +139,33 @@ for narrowing that), so a GeM tab logged in and open (any bidplus.gem.gov.in
 page is enough for the poller to run) is still required for it to be picked
 up at all.
 
-## Fixed: popup fields (exclude keywords, etc.) not saving
+## Fixed: popup fields (include keywords, etc.) not saving
 
 Chrome extension popups can be dismissed (click elsewhere, click the toolbar
 icon again, Esc) without a field ever losing focus first, and these fields
 used to save on the "change" event only, which fires on blur — so whatever
-you'd just typed (most noticeably the exclude/include keyword boxes, since
-those get edited and the popup just gets closed rather than tabbed away
-from) was silently dropped, forcing you to retype it every time. Every
-persisted popup field now also saves on every keystroke ("input" event), so
-it's in storage well before any close path can tear the popup down.
+you'd just typed (most noticeably the include keyword box, since it gets
+edited and the popup just gets closed rather than tabbed away from) was
+silently dropped, forcing you to retype it every time. Every persisted
+popup field now also saves on every keystroke ("input" event), so it's in
+storage well before any close path can tear the popup down.
 
 ## New: item-keyword and best-effort date-range filters
 
 Two new popup fields under **Consignee State/Cities**:
 
-- **Only keep bids where Items contains** / **Skip bids where Items
-  contains** — comma-separated, case-insensitive substring match against the
-  Items field. Applied to every row before it's saved anywhere — manual
-  scans, city batches, and the automated Start-Sync flow triggered from the
-  OMS all funnel through the same check (`filterRowsByItemKeywords()` in
-  `content.js`), even if the popup is closed at the time (settings persist in
-  `chrome.storage.local`). Filtering happens before each row's PDF is
-  fetched, not after, so excluded rows don't cost the extra fetch either.
-  This is separate from, and in addition to, the OMS's own server-side
-  category exclusion list (`lib/gemBids/exclusionKeywords.json` in the OMS
-  repo), which still applies afterward to whatever does get sent.
+- **Only keep bids where Items contains** — comma-separated, case-insensitive
+  substring match against the Items field. Applied to every row before it's
+  saved anywhere — manual scans, city batches, and the automated Start-Sync
+  flow triggered from the OMS all funnel through the same check
+  (`filterRowsByItemKeywords()` in `content.js`), even if the popup is closed
+  at the time (settings persist in `chrome.storage.local`). Filtering
+  happens before each row's PDF is fetched, not after, so filtered-out rows
+  don't cost the extra fetch either. This is separate from, and in addition
+  to, the OMS's own server-side category exclusion list
+  (`lib/gemBids/exclusionKeywords.json` in the OMS repo), which still
+  applies afterward to whatever does get sent. (A matching *exclude*-keyword
+  field used to sit right next to this one - removed, see further up.)
 - **Bid Start Date range** (From/To) — best-effort, same honesty caveat as
   the consignee state/city matching below: these fields are matched by
   keyword guess against GeM's Advance Search form, not confirmed ids, since

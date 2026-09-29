@@ -24,17 +24,20 @@
   // search form, whichever this site actually does.
   const CITY_BATCH_KEY = "gemCityBatch";
 
-  // Item-keyword filters, read fresh from storage by filterRowsByItemKeywords()
-  // below and applied to every row before it's saved anywhere - manual scans,
-  // city batches, AND OMS-triggered city batches (an omsRunId-tagged batch -
-  // see runBatchStepIfActive/autoScanAllPages further down) all funnel
-  // through it, so a keyword typed once in the popup is respected everywhere
-  // regardless of which flow found the row. This is in addition to - not a
-  // replacement for - the OMS's own server-side category exclusion list
+  // Item include-keyword filter, read fresh from storage by
+  // filterRowsByItemKeywords() below and applied to every row before it's
+  // saved anywhere - manual scans, city batches, AND OMS-triggered city
+  // batches (an omsRunId-tagged batch - see runBatchStepIfActive/
+  // autoScanAllPages further down) all funnel through it, so a keyword
+  // typed once in the popup is respected everywhere regardless of which
+  // flow found the row. This is in addition to - not a replacement for -
+  // the OMS's own server-side category exclusion list
   // (lib/gemBids/exclusionKeywords.json), which still runs afterwards on
-  // whatever gets sent.
+  // whatever gets sent. There used to be a matching EXCLUDE keyword filter
+  // here too, silently dropping rows during scraping before they ever
+  // reached the OMS - removed by request, since that made bids go
+  // unexpectedly missing with no visible trace of why.
   const INCLUDE_KEYWORDS_KEY = "gemItemIncludeKeywords";
-  const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
   const BID_START_DATE_FROM_KEY = "gemBidStartDateFrom";
   const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
 
@@ -197,20 +200,16 @@
       .filter(Boolean);
   }
 
-  // Include-list wins over nothing (blank include = "everything passes"),
-  // exclude-list always removes a match regardless of include. Both blank
-  // is a no-op (returns rows unchanged) so an install that never touches
-  // these two popup fields behaves exactly as before this filter existed.
+  // Blank include list is a no-op (returns rows unchanged) so an install
+  // that never touches this popup field behaves exactly as before this
+  // filter existed.
   async function filterRowsByItemKeywords(rows) {
-    const data = await chrome.storage.local.get([INCLUDE_KEYWORDS_KEY, EXCLUDE_KEYWORDS_KEY]);
+    const data = await chrome.storage.local.get([INCLUDE_KEYWORDS_KEY]);
     const include = parseKeywordList(data[INCLUDE_KEYWORDS_KEY]);
-    const exclude = parseKeywordList(data[EXCLUDE_KEYWORDS_KEY]);
-    if (!include.length && !exclude.length) return rows;
+    if (!include.length) return rows;
     return rows.filter((row) => {
       const items = (row.items || "").toLowerCase();
-      if (include.length && !include.some((kw) => items.includes(kw))) return false;
-      if (exclude.length && exclude.some((kw) => items.includes(kw))) return false;
-      return true;
+      return include.some((kw) => items.includes(kw));
     });
   }
 

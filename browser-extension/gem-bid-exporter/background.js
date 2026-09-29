@@ -133,12 +133,6 @@ const CLAIMED_RUN_KEY = "gemBgClaimedRunId";
 const CITY_BATCH_KEY = "gemCityBatch";
 const BID_START_DATE_FROM_KEY = "gemBidStartDateFrom";
 const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
-// Same key content.js's filterRowsByItemKeywords() already reads for a
-// manual scan's exclude-keyword box - reusing it means an OMS-triggered run
-// applies the OMS's persisted exclude-keyword list (managed in the Start
-// Sync modal, GET/POST /api/gem-bids/exclude-keywords) with no extra
-// filtering logic needed in content.js.
-const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
 const GEM_URL = "https://bidplus.gem.gov.in/advance-search#tab2";
 
 function ensurePollAlarm() {
@@ -218,7 +212,6 @@ async function pollAndMaybeStartAutoSync() {
     await chrome.storage.local.set({
       [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
       [BID_START_DATE_TO_KEY]: run.dateTo || "",
-      [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords.join(", ") : "",
       [CITY_BATCH_KEY]: {
         state: run.filterState || "Gujarat",
         cities: Array.isArray(run.filterCities) && run.filterCities.length ? run.filterCities : [""],

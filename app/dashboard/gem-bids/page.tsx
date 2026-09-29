@@ -111,21 +111,6 @@ export default function GemBidsPage() {
   const [allCitiesSelected, setAllCitiesSelected] = useState(true);
   const [customCityInput, setCustomCityInput] = useState("");
 
-  // Exclude-keyword list: persisted on the server (not per-browser like the
-  // extension popup's own copy of this field) so it's the same list no
-  // matter who clicks Start Sync, and keeps growing as words are added.
-  const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
-  const [newKeywordInput, setNewKeywordInput] = useState("");
-  const [keywordsSaving, setKeywordsSaving] = useState(false);
-
-  useEffect(() => {
-    if (!startSyncModalOpen) return;
-    fetch("/api/gem-bids/exclude-keywords")
-      .then((res) => res.json())
-      .then((data) => setExcludeKeywords(Array.isArray(data?.keywords) ? data.keywords : []))
-      .catch((err) => console.error("Failed to load exclude keywords", err));
-  }, [startSyncModalOpen]);
-
   useEffect(() => {
     if (!startSyncModalOpen) return;
     const state = filterState.trim();
@@ -157,36 +142,6 @@ export default function GemBidsPage() {
     setSelectedCities((prev) => (prev.includes(city) ? prev : [...prev, city]));
     setAllCitiesSelected(false);
     setCustomCityInput("");
-  };
-
-  const saveExcludeKeywords = async (next: string[]) => {
-    setExcludeKeywords(next);
-    setKeywordsSaving(true);
-    try {
-      await fetch("/api/gem-bids/exclude-keywords", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keywords: next }),
-      });
-    } catch (err) {
-      console.error("Failed to save exclude keywords", err);
-    } finally {
-      setKeywordsSaving(false);
-    }
-  };
-
-  const addExcludeKeyword = () => {
-    const word = newKeywordInput.trim();
-    if (!word || excludeKeywords.some((k) => k.toLowerCase() === word.toLowerCase())) {
-      setNewKeywordInput("");
-      return;
-    }
-    saveExcludeKeywords([...excludeKeywords, word]);
-    setNewKeywordInput("");
-  };
-
-  const removeExcludeKeyword = (word: string) => {
-    saveExcludeKeywords(excludeKeywords.filter((k) => k !== word));
   };
 
   useEffect(() => {
@@ -269,7 +224,6 @@ export default function GemBidsPage() {
           filterCities: allCitiesSelected ? [] : selectedCities,
           dateFrom: dateFrom.trim(),
           dateTo: dateTo.trim(),
-          filterExcludeKeywords: excludeKeywords,
         }),
       });
       const data = await res.json();
@@ -616,53 +570,6 @@ export default function GemBidsPage() {
                 placeholder="To: dd-mm-yyyy"
                 className="w-1/2 border border-slate-200 rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-            </div>
-            <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">
-              Skip bids whose Items contain (saved, reused every time)
-            </label>
-            <div className="mb-4 border border-slate-200 rounded-lg p-2.5">
-              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px]">
-                {excludeKeywords.length === 0 ? (
-                  <span className="text-[11px] text-slate-400">No words excluded yet.</span>
-                ) : (
-                  excludeKeywords.map((word) => (
-                    <span
-                      key={word}
-                      className="flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 rounded-full pl-2.5 pr-1 py-0.5 text-[11px] font-bold"
-                    >
-                      {word}
-                      <button
-                        onClick={() => removeExcludeKeyword(word)}
-                        className="hover:bg-red-200 rounded-full p-0.5 transition-colors"
-                        aria-label={`Remove ${word}`}
-                      >
-                        <FiX size={11} />
-                      </button>
-                    </span>
-                  ))
-                )}
-              </div>
-              <div className="flex gap-1.5">
-                <input
-                  value={newKeywordInput}
-                  onChange={(e) => setNewKeywordInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addExcludeKeyword();
-                    }
-                  }}
-                  placeholder="e.g. catering"
-                  className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={addExcludeKeyword}
-                  disabled={keywordsSaving}
-                  className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide bg-slate-200 hover:bg-slate-300 disabled:opacity-60 text-slate-700 transition-colors"
-                >
-                  Add
-                </button>
-              </div>
             </div>
             <div className="flex justify-end gap-2">
               <button

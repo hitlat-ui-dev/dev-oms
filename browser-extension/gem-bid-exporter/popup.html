@@ -200,14 +200,12 @@
   <div class="card">
     <label class="fieldLabel" for="includeKeywords">Only keep bids where Items contains (comma-separated, optional)</label>
     <textarea id="includeKeywords" placeholder="e.g. printing, stationery"></textarea>
-    <label class="fieldLabel" for="excludeKeywords">Skip bids where Items contains (comma-separated, optional)</label>
-    <textarea id="excludeKeywords" placeholder="e.g. catering, security"></textarea>
     <div class="hint">
       Case-insensitive substring match against the Items field. Applied to every row before it's
       saved anywhere - manual scans, city batches, AND automated Start-Sync runs triggered from
-      the OMS all use these same filters, even if this popup is closed at the time. Leave both
-      blank to keep everything found (the OMS's own category exclusion list still applies
-      separately, after this, on the server side).
+      the OMS all use this same filter, even if this popup is closed at the time. Leave blank to
+      keep everything found (the OMS's own category exclusion list still applies separately,
+      after this, on the server side).
     </div>
   </div>
 

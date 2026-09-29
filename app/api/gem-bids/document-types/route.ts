@@ -28,10 +28,9 @@ export async function GET() {
 
 // POST: body { add: string } — appends one new document type name (case-
 // insensitive de-dupe against what's already there). Single-item add
-// (rather than a full-list replace like the sibling exclude-keywords route)
-// because two different pages can each add a name here independently and
-// concurrently - a full-list overwrite from one could silently drop
-// whatever the other just added.
+// (rather than a full-list replace) because two different pages can each
+// add a name here independently and concurrently - a full-list overwrite
+// from one could silently drop whatever the other just added.
 export async function POST(req: Request) {
   try {
     const body = await req.json();

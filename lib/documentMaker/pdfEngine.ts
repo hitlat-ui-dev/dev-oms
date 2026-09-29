@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, StandardFonts, PDFFont } from "pdf-lib";
 
 // ============================================================
 // SIGN + STAMP OVERLAY
@@ -167,21 +167,55 @@ export interface AtcBidFields {
   items?: string;
   departmentNameAndAddress?: string;
   address?: string;
-  startDate?: string;
   bidEndDateTime?: string;
-  emdAmount?: string;
-  beneficiary?: string;
+}
+
+/**
+ * Greedy word-wrap: splits text into lines that each fit within maxWidth at
+ * the given font/size, measured with the font's own metrics rather than
+ * relying on pdf-lib's drawText(maxWidth: ...) auto-wrap - that DOES wrap
+ * automatically, but doesn't report back how many lines it used, so a
+ * caller placing more text right after it (as every row here does) has no
+ * way to know how much vertical space to reserve and ends up overlapping
+ * the next line drawn. Manually wrapping first means the exact line count
+ * is known up front.
+ */
+function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (!current || font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
 }
 
 /**
  * Draws the bid's key fields onto the first page of the firm's letterhead PDF
- * as the ATC cover. The coordinates below are a placeholder default layout —
- * pending the real letterhead sample PDF, after which exact positions should
- * be tuned to sit cleanly around its printed header/logo/footer design.
+ * as the ATC cover, followed by an acceptance line, a closing, and (if the
+ * firm has uploaded them) sign + stamp positioned right under the closing —
+ * in the letter's own flow, not pinned to a fixed page corner the way
+ * overlaySignStamp does for the "merge" flow's arbitrary multi-page uploaded
+ * documents. This is a single generated cover page with its own layout, so
+ * it draws its own sign/stamp here instead of going through that shared
+ * per-page overlay step. The coordinates below are a placeholder default
+ * layout — pending the real letterhead sample PDF, after which exact
+ * positions should be tuned to sit cleanly around its printed header/logo/
+ * footer design.
  */
 export async function generateAtcContentPage(
   letterheadBytes: Buffer | Uint8Array,
-  fields: AtcBidFields
+  fields: AtcBidFields,
+  signBytes?: Buffer | Uint8Array | null,
+  stampBytes?: Buffer | Uint8Array | null
 ): Promise<PDFDocument> {
   const pdfDoc = await PDFDocument.load(letterheadBytes);
   if (pdfDoc.getPageCount() === 0) {
@@ -196,10 +230,7 @@ export async function generateAtcContentPage(
     ["Bid No", fields.bidNo || "-"],
     ["Item(s)", fields.items || "-"],
     ["Department & Address", fields.departmentNameAndAddress || fields.address || "-"],
-    ["Start Date", fields.startDate || "-"],
     ["Bid End Date/Time", fields.bidEndDateTime || "-"],
-    ["EMD Amount", fields.emdAmount || "-"],
-    ["Beneficiary", fields.beneficiary || "-"],
   ];
 
   const marginX = 50;
@@ -210,16 +241,45 @@ export async function generateAtcContentPage(
   page.drawText("ACCEPTANCE OF TERMS & CONDITIONS", { x: marginX, y, size: 14, font: boldFont });
   y -= lineHeight * 1.5;
 
+  const valueColumnWidth = width - marginX - labelColumnWidth - 40;
   for (const [label, value] of rows) {
     page.drawText(`${label}:`, { x: marginX, y, size: 10, font: boldFont });
-    page.drawText(String(value), {
-      x: marginX + labelColumnWidth,
-      y,
-      size: 10,
-      font,
-      maxWidth: width - marginX - labelColumnWidth - 40,
+    const valueLines = wrapText(String(value), font, 10, valueColumnWidth);
+    valueLines.forEach((line, i) => {
+      page.drawText(line, { x: marginX + labelColumnWidth, y: y - i * lineHeight, size: 10, font });
     });
-    y -= lineHeight;
+    y -= lineHeight * valueLines.length;
+  }
+
+  y -= lineHeight * 1.5;
+  const acceptanceLines = wrapText(
+    "As per your requirement we accept your term and conditions of your bid.",
+    font,
+    10,
+    width - marginX * 2
+  );
+  acceptanceLines.forEach((line, i) => {
+    page.drawText(line, { x: marginX, y: y - i * lineHeight, size: 10, font });
+  });
+  y -= lineHeight * acceptanceLines.length + lineHeight;
+  page.drawText("Your Faithfully,", { x: marginX, y, size: 10, font });
+  y -= lineHeight;
+
+  const signImage = signBytes ? await pdfDoc.embedPng(signBytes) : null;
+  const stampImage = stampBytes ? await pdfDoc.embedPng(stampBytes) : null;
+  if (signImage || stampImage) {
+    const signDims = signImage ? scaledDims(signImage.width, signImage.height, SIGN_WIDTH) : null;
+    const stampDims = stampImage ? scaledDims(stampImage.width, stampImage.height, STAMP_WIDTH) : null;
+    const blockHeight = Math.max(signDims?.height || 0, stampDims?.height || 0);
+    const imageY = y - blockHeight;
+    let cursorX = marginX;
+    if (signImage && signDims) {
+      page.drawImage(signImage, { x: cursorX, y: imageY, width: signDims.width, height: signDims.height });
+      cursorX += signDims.width + OVERLAY_GAP;
+    }
+    if (stampImage && stampDims) {
+      page.drawImage(stampImage, { x: cursorX, y: imageY, width: stampDims.width, height: stampDims.height });
+    }
   }
 
   return pdfDoc;
