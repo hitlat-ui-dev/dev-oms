@@ -362,17 +362,25 @@ export default function FetchGeMOrdersPage() {
   // Same "does the Seller Directory already have a matching institute"
   // guess used to pre-select the Verify modal's dropdown - also used in the
   // list itself so a match is visible before ever opening Verify.
+  // A generic/short buyer name or location text (e.g. a junk "testing" entry
+  // someone created while trying out the Sheet Library upload) can be a
+  // substring of totally unrelated real institute names ("...soil testing
+  // laboratory...") and hijack the guess for every one of them. Real
+  // institute names/locations are always long phrases, so require a
+  // minimum length before trusting a substring match either way.
+  const MIN_MATCH_LEN = 8;
   const guessBuyerForOrder = (order: RawGeMOrder): BuyerOption | null => {
     const rawLoc = (order.instituteName || order.location || "").toLowerCase();
     if (!rawLoc) return null;
     return (
       buyerOptions.find((b) => {
         const gemLoc = (b.gemLocationText || "").toLowerCase();
-        return gemLoc && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc));
+        return gemLoc.length >= MIN_MATCH_LEN && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc));
       }) ||
-      buyerOptions.find(
-        (b) => b.name && (rawLoc.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(rawLoc))
-      ) ||
+      buyerOptions.find((b) => {
+        const name = (b.name || "").toLowerCase();
+        return name.length >= MIN_MATCH_LEN && (rawLoc.includes(name) || name.includes(rawLoc));
+      }) ||
       null
     );
   };
