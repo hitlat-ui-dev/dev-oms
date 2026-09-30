@@ -14,6 +14,7 @@ interface LastRun {
   excludedCount?: number;
   promotedCount?: number;
   expiredDeletedCount?: number;
+  protectedSkippedCount?: number;
 }
 
 interface ChangeHistoryRow {
@@ -28,6 +29,7 @@ interface MoveHistoryRow {
   movedBy: string;
   movedAt: string;
   isReversal: boolean;
+  remark?: string;
 }
 
 interface SyncRun {
@@ -42,7 +44,11 @@ interface SyncRun {
 export default function GemBidsPage() {
   const [bids, setBids] = useState<GemBid[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<SectionKey>(SECTIONS[0].key);
+  // "all" is a combined search-everything view, not a real workflow stage a
+  // bid can be *in* (see lib/gemBids/columns.ts's SECTIONS comment) - it's
+  // the default landing tab so search always starts from "show me
+  // everything" rather than one narrow stage.
+  const [activeSection, setActiveSection] = useState<SectionKey | "all">("all");
   const [currentUsername, setCurrentUsername] = useState("");
 
   const [historyBidNo, setHistoryBidNo] = useState<string | null>(null);
@@ -278,7 +284,10 @@ export default function GemBidsPage() {
     return map;
   }, [bids]);
 
-  const bidsInActiveSection = useMemo(() => bids.filter((b) => b.currentSection === activeSection), [bids, activeSection]);
+  const bidsInActiveSection = useMemo(
+    () => (activeSection === "all" ? bids : bids.filter((b) => b.currentSection === activeSection)),
+    [bids, activeSection]
+  );
 
   const openHistory = async (bidNo: string) => {
     setHistoryBidNo(bidNo);
@@ -367,6 +376,14 @@ export default function GemBidsPage() {
             </button>
 
             <div className="flex flex-wrap items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setActiveSection("all")}
+                className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
+                  activeSection === "all" ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                All Bids <span className="ml-1 opacity-70">({bids.length})</span>
+              </button>
               {SECTIONS.map((s) => (
                 <button
                   key={s.key}
@@ -447,6 +464,9 @@ export default function GemBidsPage() {
                 <span>
                   Promoted to Fetched: <span className="text-slate-800">{lastRun.promotedCount ?? 0}</span>
                 </span>
+                <span>
+                  Submitted Bids untouched: <span className="text-slate-800">{lastRun.protectedSkippedCount ?? 0}</span>
+                </span>
               </div>
             )}
           </div>
@@ -463,6 +483,7 @@ export default function GemBidsPage() {
               onBidsUpdated={setBids}
               onViewHistory={openHistory}
               stickyTop={stickyTop}
+              allSectionsMode={activeSection === "all"}
             />
           )}
         </div>
@@ -675,6 +696,7 @@ export default function GemBidsPage() {
                             <span className="block text-[9px] text-slate-400 mt-1">
                               {m.movedBy || "—"} · {new Date(m.movedAt).toLocaleString()}
                             </span>
+                            {m.remark && <span className="block text-[11px] text-slate-600 mt-1 italic">&ldquo;{m.remark}&rdquo;</span>}
                           </div>
                         ))}
                       </div>

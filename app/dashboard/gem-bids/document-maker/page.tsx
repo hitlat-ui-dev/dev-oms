@@ -10,6 +10,7 @@ import {
   FiDownload,
   FiPlus,
   FiLayers,
+  FiEye,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
@@ -39,7 +40,14 @@ interface GemBid {
   _id: string;
   bidNo: string;
   items?: string;
+  currentSection?: string;
 }
+
+// ATC is only ever generated for a bid that's actually being worked -
+// restricting the picker to these two sections (rather than every bid ever
+// scraped) is both a usability filter and a guardrail against generating
+// an acceptance letter for a bid nobody's decided to pursue yet.
+const ATC_ELIGIBLE_SECTIONS = new Set(["bids_to_fill", "submitted_bids"]);
 
 interface DownloadResult {
   partCount: number;
@@ -148,6 +156,20 @@ export default function DocumentMakerPage() {
     }
   };
 
+  const previewFromVault = async (kind: "custom" | "letterhead" | "sign" | "stamp", name?: string) => {
+    if (!firmId) return;
+    const params = new URLSearchParams({ kind });
+    if (name) params.set("name", name);
+    try {
+      const res = await fetch(`/api/document-vault/${firmId}/preview?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Preview failed");
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      alert(err.message || "Preview failed");
+    }
+  };
+
   const deleteFromVault = async (kind: "custom" | "letterhead" | "sign" | "stamp", name?: string) => {
     if (!firmId) return;
     if (!confirm("Delete this?")) return;
@@ -193,8 +215,9 @@ export default function DocumentMakerPage() {
   };
 
   const filteredBids = useMemo(() => {
+    const eligible = bids.filter((b) => ATC_ELIGIBLE_SECTIONS.has(b.currentSection || ""));
     const q = bidQuery.trim().toLowerCase();
-    const list = q ? bids.filter((b) => (b.bidNo || "").toLowerCase().includes(q)) : bids;
+    const list = q ? eligible.filter((b) => (b.bidNo || "").toLowerCase().includes(q)) : eligible;
     return list.slice(0, 25);
   }, [bids, bidQuery]);
 
@@ -297,6 +320,7 @@ export default function DocumentMakerPage() {
                     accept="application/pdf"
                     onPick={(f) => uploadToVault("letterhead", f)}
                     onDelete={() => deleteFromVault("letterhead")}
+                    onPreview={() => previewFromVault("letterhead")}
                   />
                   <FixedSlot
                     label="Sign (PNG, transparent)"
@@ -306,6 +330,7 @@ export default function DocumentMakerPage() {
                     accept="image/png"
                     onPick={(f) => uploadToVault("sign", f)}
                     onDelete={() => deleteFromVault("sign")}
+                    onPreview={() => previewFromVault("sign")}
                   />
                   <FixedSlot
                     label="Stamp (PNG, transparent)"
@@ -315,6 +340,7 @@ export default function DocumentMakerPage() {
                     accept="image/png"
                     onPick={(f) => uploadToVault("stamp", f)}
                     onDelete={() => deleteFromVault("stamp")}
+                    onPreview={() => previewFromVault("stamp")}
                   />
                 </div>
               </div>
@@ -375,13 +401,22 @@ export default function DocumentMakerPage() {
                           <span className="text-xs font-bold text-slate-800">{d.name}</span>
                           <span className="block text-[10px] text-slate-400">{d.originalFileName}</span>
                         </div>
-                        <button
-                          onClick={() => deleteFromVault("custom", d.name)}
-                          className="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors"
-                          title="Delete"
-                        >
-                          <FiTrash2 size={13} />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => previewFromVault("custom", d.name)}
+                            className="p-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors"
+                            title="Preview"
+                          >
+                            <FiEye size={13} />
+                          </button>
+                          <button
+                            onClick={() => deleteFromVault("custom", d.name)}
+                            className="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors"
+                            title="Delete"
+                          >
+                            <FiTrash2 size={13} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -466,6 +501,9 @@ export default function DocumentMakerPage() {
                       </option>
                     ))}
                   </select>
+                  <p className="text-[10px] text-slate-400 -mt-1">
+                    Only bids in Bids to Fill or Submitted Bids are listed here.
+                  </p>
                   <button
                     disabled={generatingAtc || !selectedBidId}
                     onClick={runAtc}
@@ -503,6 +541,7 @@ function FixedSlot({
   accept,
   onPick,
   onDelete,
+  onPreview,
 }: {
   label: string;
   hasFile: boolean;
@@ -511,6 +550,7 @@ function FixedSlot({
   accept: string;
   onPick: (file: File) => void;
   onDelete: () => void;
+  onPreview?: () => void;
 }) {
   return (
     <div className="border border-slate-200 rounded-xl p-3 flex flex-col gap-2">
@@ -534,6 +574,11 @@ function FixedSlot({
         >
           <FiUploadCloud size={12} /> {hasFile ? "Replace" : "Upload"}
         </button>
+        {hasFile && onPreview && (
+          <button onClick={onPreview} className="p-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors" title="Preview">
+            <FiEye size={13} />
+          </button>
+        )}
         {hasFile && (
           <button onClick={onDelete} className="p-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors" title="Delete">
             <FiTrash2 size={13} />

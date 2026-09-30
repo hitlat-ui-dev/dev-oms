@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GeM Bid Exporter",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Scrape GeM bidplus.gem.gov.in bid listings across pages and pull key details from each bid PDF into a single Excel file. Clicking Start Sync on the OMS page opens/drives the GeM Advance Search page automatically with the state/city/date filters chosen there, applies item-keyword filtering, sends the results straight into the OMS, and posts a desktop notification when it's done - keep working in other tabs/windows, it keeps running.",
   "action": {
     "default_popup": "popup.html",

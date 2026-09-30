@@ -19,9 +19,15 @@ export interface GemBid {
 
 // Sections where a bid has moved past the raw scrape and is now being
 // worked on by hand - Edit Bid only makes sense once it's here (per spec:
-// editing is offered starting at Bids Can Be Filled onward, not while a bid
-// is still New/Fetched raw data).
-const EDITABLE_SECTIONS = new Set<SectionKey>(["bids_can_be_filled", "bids_to_fill", "bid_document_maker", "submitted_bids"]);
+// editing is offered starting at Bids to Fill onward, not while a bid is
+// still New/Fetched raw data).
+const EDITABLE_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
+
+interface Company {
+  _id: string;
+  firmName: string;
+  firmCode?: string;
+}
 
 interface Props {
   bids: GemBid[];
@@ -37,6 +43,13 @@ interface Props {
   // which measures it live via ResizeObserver. Defaults to 0 (sticks to the
   // very top) if not given.
   stickyTop?: number;
+  // True for the "All Bids" tab - bids here come from every section mixed
+  // together, so per-row actions read each row's own currentSection instead
+  // of assuming one shared section, a "Section" column replaces the
+  // section-specific ones (Status/Bid Status/Party), and the bulk "Send to"
+  // bar is hidden (moving a mixed selection to one target section isn't a
+  // sensible single action).
+  allSectionsMode?: boolean;
 }
 
 const TAG_STYLES: Record<string, string> = {
@@ -74,7 +87,14 @@ const STACKED_GROUPS: Record<string, string[]> = {
   documentRequiredFromSeller: ["documentRequiredFromSeller", "buyerAddedBidSpecificAtcUrl"],
 };
 
-export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onViewHistory, stickyTop = 0 }: Props) {
+export default function GemBidTable({
+  bids,
+  currentUsername,
+  onBidsUpdated,
+  onViewHistory,
+  stickyTop = 0,
+  allSectionsMode = false,
+}: Props) {
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -83,6 +103,17 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
   // Bid To RA/RA/Type of Bid/Evaluation aren't searched often enough to earn
   // permanent space - collapsed by default, a button reveals them.
   const [showMoreFilters, setShowMoreFilters] = useState(false);
+  // Attached to every move-history row a "Send to" click creates.
+  const [moveRemark, setMoveRemark] = useState("");
+
+  // Companies list backs the Party dropdown in Bids to Fill.
+  const [companies, setCompanies] = useState<Company[]>([]);
+  useEffect(() => {
+    fetch("/api/companies")
+      .then((res) => res.json())
+      .then((data) => setCompanies(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load companies", err));
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollByPage = (dir: 1 | -1) => {
@@ -176,18 +207,27 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
   };
 
   const currentSectionKey = bids[0]?.currentSection;
-  // From New Bids or Fetched Bid Data - still raw, unworked scrape data -
-  // the only manual "Send to" target offered is Bids to Fill. Bids Can Be
-  // Filled, Bid Document Maker, and Submitted Bids are reached by moving a
-  // bid forward one stage at a time from there instead, not skipped to
-  // directly from the raw data.
+  // In "All Bids" mode rows can each be in a different section, so anything
+  // section-specific reads each row's own currentSection instead of this
+  // shared value - see effectiveSectionFor() below.
   const RAW_DATA_SECTIONS = new Set<SectionKey>(["new_bids", "fetched_bid_data"]);
   // New Bids is system-populated only (a bid lands there on first sight, never
-  // via a manual "Send to") - never offered as a manual move target.
-  const otherSections = RAW_DATA_SECTIONS.has(currentSectionKey)
+  // via a manual "Send to") - never offered as a manual move target. The
+  // whole bulk "Send to" bar is hidden in All Bids mode - moving a mixed-
+  // section selection to one target section isn't one sensible action.
+  const otherSections = allSectionsMode
+    ? []
+    : RAW_DATA_SECTIONS.has(currentSectionKey)
     ? SECTIONS.filter((s) => s.key === "bids_to_fill")
     : SECTIONS.filter((s) => s.key !== currentSectionKey && !AUTO_ONLY_SECTIONS.includes(s.key));
   const otherColumns = useMemo(() => BID_COLUMNS.filter((c) => c.key !== "bidNo" && !c.hiddenInTable), []);
+
+  const effectiveSectionFor = (b: GemBid): SectionKey => (allSectionsMode ? b.currentSection : currentSectionKey);
+  const showSectionCol = allSectionsMode;
+  const showStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
+  const showBidStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
+  const showPartyCol = !allSectionsMode && currentSectionKey === "bids_to_fill";
+  const extraColCount = [showSectionCol, showStatusCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
 
   const dropdownOptions = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -271,11 +311,12 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
       const res = await fetch("/api/gem-bids/move", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidNos, toSection, movedBy: currentUsername }),
+        body: JSON.stringify({ bidNos, toSection, movedBy: currentUsername, remark: moveRemark.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Move failed");
       setSelected(new Set());
+      setMoveRemark("");
       const bidNoSet = new Set(bidNos);
       onBidsUpdated((prev) => prev.map((b) => (bidNoSet.has(b.bidNo) ? { ...b, currentSection: toSection } : b)));
     } catch (err: any) {
@@ -363,6 +404,33 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
     }
   };
 
+  // Backs both the Party dropdown (Bids to Fill) and the Bid Status field
+  // (Submitted Bids) - a single small "set one field, record who/when"
+  // endpoint rather than two near-identical ones.
+  const quickUpdate = async (bidNo: string, field: "selectedPartyId" | "bidStatus", value: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/gem-bids/quick-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidNo, field, value, changedBy: currentUsername }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Update failed");
+      onBidsUpdated((prev) =>
+        prev.map((b) =>
+          b.bidNo === bidNo
+            ? { ...b, [field]: value, lastModifiedBy: currentUsername, lastModifiedAt: new Date().toISOString() }
+            : b
+        )
+      );
+    } catch (err: any) {
+      alert(err.message || "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const selectedList = [...selected];
 
   const filterField = (label: string, node: ReactNode) => (
@@ -381,18 +449,28 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
       {selectedList.length > 0 && (
         <div className="p-3 bg-blue-50 border-b border-blue-100 rounded-t-2xl flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-black text-blue-700 uppercase">{selectedList.length} selected</span>
-          <span className="text-[10px] text-blue-400 font-bold uppercase">Send to:</span>
-          {otherSections.map((s) => (
-            <button
-              key={s.key}
-              disabled={busy}
-              onClick={() => sendTo(s.key, selectedList)}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-colors"
-            >
-              {s.label}
-            </button>
-          ))}
-          {currentSectionKey !== "fetched_bid_data" && (
+          {otherSections.length > 0 && (
+            <>
+              <span className="text-[10px] text-blue-400 font-bold uppercase">Send to:</span>
+              {otherSections.map((s) => (
+                <button
+                  key={s.key}
+                  disabled={busy}
+                  onClick={() => sendTo(s.key, selectedList)}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  {s.label}
+                </button>
+              ))}
+              <input
+                value={moveRemark}
+                onChange={(e) => setMoveRemark(e.target.value)}
+                placeholder="Remark (optional)"
+                className="border border-blue-200 rounded-lg px-2.5 py-1.5 text-[11px] w-40 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </>
+          )}
+          {(allSectionsMode || currentSectionKey !== "fetched_bid_data") && (
             <button
               disabled={busy}
               onClick={() => sendBack(selectedList)}
@@ -607,7 +685,10 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
               <th className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort("bidNo")}>
                 Bid No {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
               </th>
-              {currentSectionKey === "submitted_bids" && <th className="py-2 px-2 whitespace-nowrap">Status</th>}
+              {showSectionCol && <th className="py-2 px-2 whitespace-nowrap">Section</th>}
+              {showStatusCol && <th className="py-2 px-2 whitespace-nowrap">Status</th>}
+              {showBidStatusCol && <th className="py-2 px-2 whitespace-nowrap">Bid Status</th>}
+              {showPartyCol && <th className="py-2 px-2 whitespace-nowrap">Party</th>}
               {otherColumns.map((col) => (
                 <th key={col.key} className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort(col.key)}>
                   {MERGED_COLUMN_LABELS[col.key] || col.header}{" "}
@@ -620,7 +701,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
           <tbody className="divide-y divide-slate-100">
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={otherColumns.length + (currentSectionKey === "submitted_bids" ? 5 : 4)} className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                <td colSpan={otherColumns.length + 4 + extraColCount} className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
                   No bids here
                 </td>
               </tr>
@@ -659,7 +740,14 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                       </span>
                     )}
                   </td>
-                  {currentSectionKey === "submitted_bids" && (
+                  {showSectionCol && (
+                    <td className="py-2 px-2">
+                      <span className="border border-slate-200 bg-slate-50 text-slate-600 text-[9px] font-black uppercase px-2 py-0.5 rounded-full whitespace-nowrap">
+                        {SECTIONS.find((s) => s.key === b.currentSection)?.label || b.currentSection}
+                      </span>
+                    </td>
+                  )}
+                  {showStatusCol && (
                     <td className="py-2 px-2">
                       <select
                         value={b.submittedStatus || "Active"}
@@ -673,6 +761,39 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                           </option>
                         ))}
                       </select>
+                    </td>
+                  )}
+                  {showBidStatusCol && (
+                    <td className="py-2 px-2">
+                      <input
+                        key={b.bidStatus || ""}
+                        defaultValue={b.bidStatus || ""}
+                        disabled={busy}
+                        onBlur={(e) => {
+                          if (e.target.value !== (b.bidStatus || "")) quickUpdate(b.bidNo, "bidStatus", e.target.value);
+                        }}
+                        placeholder="—"
+                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
+                      />
+                    </td>
+                  )}
+                  {showPartyCol && (
+                    <td className="py-2 px-2">
+                      <select
+                        value={b.selectedPartyId || ""}
+                        disabled={busy}
+                        onChange={(e) => quickUpdate(b.bidNo, "selectedPartyId", e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold max-w-[140px]"
+                      >
+                        <option value="">Select party...</option>
+                        {companies.map((c) => (
+                          <option key={c._id} value={c._id}>
+                            {c.firmName}
+                            {c.firmCode ? ` (${c.firmCode})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
                     </td>
                   )}
                   {otherColumns.map((col) => {
@@ -741,7 +862,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                   })}
                   <td className="py-2 px-2">
                     <div className="flex items-center gap-1">
-                      {EDITABLE_SECTIONS.has(currentSectionKey) && (
+                      {EDITABLE_SECTIONS.has(effectiveSectionFor(b)) && (
                         <button
                           disabled={busy}
                           onClick={() => openEdit(b)}
@@ -751,7 +872,7 @@ export default function GemBidTable({ bids, currentUsername, onBidsUpdated, onVi
                           <FiEdit2 size={12} />
                         </button>
                       )}
-                      {currentSectionKey !== "fetched_bid_data" && (
+                      {effectiveSectionFor(b) !== "fetched_bid_data" && (
                         <button
                           disabled={busy}
                           onClick={() => sendBack([b.bidNo])}

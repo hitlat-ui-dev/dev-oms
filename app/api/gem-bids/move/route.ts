@@ -6,10 +6,13 @@ const DB_NAME = "dev_oms_db";
 
 // PATCH: move one or more bids to a target section — never a copy, a bid lives in exactly
 // one section at a time. Every move (any direction) is recorded in gem_bid_move_history.
+// body: { bidNos, toSection, movedBy?, remark? } — remark is optional free text attached
+// to every move-history row this call creates (same note for the whole batch, since one
+// "Send to" click can move several bids at once).
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { bidNos, toSection, movedBy } = body;
+    const { bidNos, toSection, movedBy, remark } = body;
 
     if (!Array.isArray(bidNos) || bidNos.length === 0 || !SECTION_KEYS.includes(toSection)) {
       return NextResponse.json({ error: "bidNos and a valid toSection are required" }, { status: 400 });
@@ -49,6 +52,7 @@ export async function PATCH(req: Request) {
         movedBy: movedBy || "",
         movedAt,
         isReversal: false,
+        remark: typeof remark === "string" ? remark.trim() : "",
       });
       movedCount++;
     }

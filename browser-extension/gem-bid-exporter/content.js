@@ -733,7 +733,15 @@
       omsRunId = (data[CITY_BATCH_KEY] || {}).omsRunId || null;
     }
 
-    while (guard < 60) {
+    // Was 60 - a genuine safety net against runaway pagination (if
+    // findNextControl()/waitForListChange() ever malfunctioned and kept
+    // "advancing" without the page actually changing), but a state-wide
+    // search with no city filter (Gujarat, "All Cities") can legitimately
+    // have far more than 60 pages of live bids - a real run hit exactly
+    // this cap ("page 60 — 597 bids scanned" as its last recorded phase)
+    // and silently stopped there, missing every bid past it. Raised with
+    // plenty of headroom; still guards against a true infinite loop.
+    while (guard < 1000) {
       guard++;
       if (lastAction === "city_batch") {
         if (await isBatchCancelled()) break;

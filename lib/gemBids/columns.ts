@@ -109,12 +109,16 @@ export const HEADER_TO_FIELD: Record<string, string> = Object.fromEntries(
   BID_COLUMNS.map((c) => [c.header, c.key])
 );
 
+// "Bids Can Be Filled" and "Bid Document Maker" were removed as workflow
+// stages by request (both were empty - nothing migrated). "Open Document
+// Maker" is still a page/link (document-maker/page.tsx), just no longer a
+// section a bid lives in. "All Bids" (a combined search-everything view,
+// not a real stage a bid can be *in*) is handled separately in the UI, not
+// listed here — see GemBidsPage's tab list.
 export const SECTIONS = [
   { key: "new_bids", label: "New Bids" },
   { key: "fetched_bid_data", label: "Fetched Bid Data" },
-  { key: "bids_can_be_filled", label: "Bids Can Be Filled" },
   { key: "bids_to_fill", label: "Bids to Fill" },
-  { key: "bid_document_maker", label: "Bid Document Maker" },
   { key: "submitted_bids", label: "Submitted Bids" },
 ] as const;
 
@@ -129,7 +133,14 @@ export const AUTO_ONLY_SECTIONS: SectionKey[] = ["new_bids"];
 // Sections where an expired bid (Bid End Date/Time in the past) gets auto-deleted
 // during sync - a bid that's progressed further into real work (Bids to Fill
 // onward, including Submitted) is left for the user to remove manually.
-export const AUTO_DELETE_EXPIRED_SECTIONS: SectionKey[] = ["new_bids", "fetched_bid_data", "bids_can_be_filled"];
+export const AUTO_DELETE_EXPIRED_SECTIONS: SectionKey[] = ["new_bids", "fetched_bid_data"];
+
+// Submitted Bids is protected from every automated touch a sync run makes
+// (see applyImport.ts) - once a bid is here, only a manual action in the
+// OMS itself (Edit Bid, the Bid Status field, or a manual Delete) can
+// change it. A fresh sync will still leave it alone even if GeM's own
+// listing for it changed or disappeared.
+export const SYNC_PROTECTED_SECTIONS: SectionKey[] = ["submitted_bids"];
 
 export const SUBMITTED_STATUSES = [
   "Active",

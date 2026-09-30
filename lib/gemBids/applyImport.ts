@@ -1,4 +1,4 @@
-import { DATA_FIELD_KEYS, computeHighlight, isExcludedByCategory } from "./columns";
+import { DATA_FIELD_KEYS, computeHighlight, isExcludedByCategory, SYNC_PROTECTED_SECTIONS } from "./columns";
 import { diffBidFields } from "./diffEngine";
 import { runExpirySweep } from "./expirySweep";
 
@@ -16,6 +16,7 @@ export interface ApplyImportResult {
   excludedCount: number;
   promotedCount: number;
   expiredDeletedCount: number;
+  protectedSkippedCount: number;
   runId: string;
 }
 
@@ -47,6 +48,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     excludedCount: 0,
     promotedCount: 0,
     expiredDeletedCount: 0,
+    protectedSkippedCount: 0,
     importedBy: userName || "",
   });
   const runId = runResult.insertedId;
@@ -55,6 +57,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
   let updatedCount = 0;
   let oldCount = 0;
   let excludedCount = 0;
+  let protectedSkippedCount = 0;
   const changeHistoryDocs: any[] = [];
 
   for (const row of rows) {
@@ -75,6 +78,15 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
 
     const isHighlighted = computeHighlight(incoming.items);
     const existing = await bidsCollection.findOne({ bidNo });
+
+    // Submitted Bids is off-limits to every automated touch a sync makes -
+    // no field refresh, no re-tag, nothing - once a bid is here, only a
+    // manual action in the OMS itself (Edit Bid, Bid Status, or a manual
+    // Delete) can change it, even if GeM's own listing for it changed.
+    if (existing && SYNC_PROTECTED_SECTIONS.includes(existing.currentSection)) {
+      protectedSkippedCount++;
+      continue;
+    }
 
     if (!existing) {
       await bidsCollection.insertOne({
@@ -147,8 +159,17 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
 
   await runsCollection.updateOne(
     { _id: runId },
-    { $set: { newCount, updatedCount, oldCount, excludedCount, promotedCount, expiredDeletedCount } }
+    { $set: { newCount, updatedCount, oldCount, excludedCount, promotedCount, expiredDeletedCount, protectedSkippedCount } }
   );
 
-  return { newCount, updatedCount, oldCount, excludedCount, promotedCount, expiredDeletedCount, runId: runId.toString() };
+  return {
+    newCount,
+    updatedCount,
+    oldCount,
+    excludedCount,
+    promotedCount,
+    expiredDeletedCount,
+    protectedSkippedCount,
+    runId: runId.toString(),
+  };
 }

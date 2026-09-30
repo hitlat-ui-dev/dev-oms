@@ -16,8 +16,9 @@ export async function OPTIONS() {
 
 // GET: every stored bid (client filters/sorts/paginates per section — same convention as
 // the Orders board, no server-side pagination anywhere else in this app either).
-// ?light=1 returns just {_id, bidNo} - the Bid Document Maker page only ever
-// needs bid numbers to populate its search dropdown, not full bid documents.
+// ?light=1 returns just {_id, bidNo, items, currentSection} - the Bid Document Maker
+// page's ATC bid picker only needs enough to populate and filter its dropdown, not
+// full bid documents.
 // ?section=<key> narrows to one section server-side - used by the sync bridge to
 // fetch just the Submitted Bids bidNos it needs to status-check, without pulling
 // every bid over the wire for that.
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
     const query = section ? { currentSection: section } : {};
     const bids = await db
       .collection("gem_bids")
-      .find(query, light ? { projection: { bidNo: 1 } } : undefined)
+      .find(query, light ? { projection: { bidNo: 1, items: 1, currentSection: 1 } } : undefined)
       .sort({ updatedAt: -1 })
       .toArray();
     return NextResponse.json(bids, { headers: corsHeaders });

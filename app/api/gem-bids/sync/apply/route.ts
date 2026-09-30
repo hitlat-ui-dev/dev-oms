@@ -48,7 +48,7 @@ export async function POST(req: Request) {
 
     const importResult = rows.length > 0
       ? await applyImport(db, { rows, userName, source: "extension_direct" })
-      : { newCount: 0, updatedCount: 0, oldCount: 0, excludedCount: 0, promotedCount: 0, expiredDeletedCount: 0, runId: "" };
+      : { newCount: 0, updatedCount: 0, oldCount: 0, excludedCount: 0, promotedCount: 0, expiredDeletedCount: 0, protectedSkippedCount: 0, runId: "" };
 
     const statusUpdatedCount = await applySubmittedStatusUpdates(db, submittedStatusUpdates || []);
 
