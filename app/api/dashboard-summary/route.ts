@@ -388,6 +388,25 @@ export async function GET(req: Request) {
       syncActionsByUserToday,
     };
 
+    // Bank Statements staleness - how long since each firm's account was last
+    // topped up with a fresh upload, so a forgotten account doesn't just sit
+    // there silently going out of date. Sorted most-stale-first so the ones
+    // needing attention surface at the top.
+    const statementRows = await db
+      .collection("account_statements")
+      .find({}, { projection: { firmName: 1, bankName: 1, accountNumber: 1, closingBalance: 1, updatedAt: 1 } })
+      .sort({ updatedAt: 1 })
+      .toArray();
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const bankStatements = statementRows.map((s: any) => ({
+      firmName: s.firmName || "Unknown",
+      bankName: s.bankName || "",
+      accountNumber: s.accountNumber || "",
+      closingBalance: round2(s.closingBalance || 0),
+      updatedAt: s.updatedAt,
+      daysSinceUpdate: s.updatedAt ? Math.floor((now.getTime() - new Date(s.updatedAt).getTime()) / msPerDay) : null,
+    }));
+
     // Team activity today — merged from every user-attributed signal the app writes:
     // order status/purchase actions (items.history), new orders created (sellerorders.createdBy),
     // and GeM Sync file uploads / product completions (gem_sheets). Shared with the
@@ -430,6 +449,7 @@ export async function GET(req: Request) {
       bidsPendingAction,
       lowStockCount,
       gemSync,
+      bankStatements,
     });
   } catch (error: any) {
     console.error("Dashboard summary GET error:", error);

@@ -100,6 +100,17 @@ const formatMoney = (n: number) =>
   n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Soft "how long since this account's statement was refreshed" note - not an
+// error, just a nudge, so it reads as a suggestion rather than a warning.
+const daysSinceLabel = (updatedAt: string): { text: string; tone: string } | null => {
+  if (!updatedAt) return null;
+  const days = Math.floor((Date.now() - new Date(updatedAt).getTime()) / (24 * 60 * 60 * 1000));
+  if (days <= 0) return { text: "Updated today", tone: "text-emerald-600" };
+  if (days <= 7) return { text: `${days} day${days === 1 ? "" : "s"} ago`, tone: "text-slate-400" };
+  if (days <= 15) return { text: `Pending ${days} days`, tone: "text-amber-600" };
+  return { text: `Pending ${days} days`, tone: "text-red-600" };
+};
 // Same fingerprint formula the backend uses (app/api/account-statements/route.ts's
 // txnKey) - duplicated locally rather than imported, since that file is a
 // server route module, not a shared client-safe util.
@@ -273,6 +284,11 @@ export default function StatementPage() {
   const [viewingStatement, setViewingStatement] = useState<StatementRecord | null>(null);
   const [txnSearch, setTxnSearch] = useState("");
   const [currentUsername, setCurrentUsername] = useState("");
+  const [isOwner, setIsOwner] = useState(false);
+  // Owner-only: pick a set of accounts and see their combined closing balance
+  // - a staff login never sees this, since it exposes cross-firm cash position.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showSelectedTotal, setShowSelectedTotal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -281,6 +297,8 @@ export default function StatementPage() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed?.username) setCurrentUsername(parsed.username);
+        const usernameLower = (parsed?.username || "").trim().toLowerCase();
+        setIsOwner(["chintan", "hitesh"].includes(usernameLower) || parsed?.permissions?.boss === true);
       }
     } catch (err) {
       console.error("Failed to read logged-in user", err);
@@ -421,6 +439,37 @@ export default function StatementPage() {
       return (a.bankName || "").localeCompare(b.bankName || "");
     });
   }, [statements, libraryFirmFilter]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = filteredStatements.length > 0 && filteredStatements.every((s) => selectedIds.has(s._id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        // Only un-ticks what's currently visible under the firm filter - a
+        // selection made under "All Firms" stays intact if you narrow the list.
+        const next = new Set(prev);
+        filteredStatements.forEach((s) => next.delete(s._id));
+        return next;
+      }
+      const next = new Set(prev);
+      filteredStatements.forEach((s) => next.add(s._id));
+      return next;
+    });
+  };
+
+  const selectedTotal = useMemo(
+    () => statements.filter((s) => selectedIds.has(s._id)).reduce((sum, s) => sum + (s.closingBalance || 0), 0),
+    [statements, selectedIds]
+  );
 
   const filteredTransactions = useMemo(() => {
     if (!viewingStatement) return [];
@@ -634,19 +683,51 @@ export default function StatementPage() {
                   {filteredStatements.length}
                 </span>
               </h3>
-              <select
-                value={libraryFirmFilter}
-                onChange={(e) => setLibraryFirmFilter(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-700 focus:outline-none focus:border-blue-500 font-bold"
-              >
-                <option value="">All Firms</option>
-                {companies.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.firmName}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                {isOwner && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Leaving selection mode clears the ticks too, so re-opening
+                      // it later always starts from a clean slate.
+                      if (showSelectedTotal) setSelectedIds(new Set());
+                      setShowSelectedTotal((v) => !v);
+                    }}
+                    className={`flex items-center gap-1.5 border rounded-xl py-2 px-3 text-[11px] font-black uppercase tracking-wider transition-colors ${
+                      showSelectedTotal
+                        ? "bg-slate-800 hover:bg-slate-900 border-slate-800 text-white"
+                        : "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700"
+                    }`}
+                  >
+                    <FiCheckCircle size={13} />
+                    {showSelectedTotal ? "Done" : "Check Total"}
+                  </button>
+                )}
+                <select
+                  value={libraryFirmFilter}
+                  onChange={(e) => setLibraryFirmFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-700 focus:outline-none focus:border-blue-500 font-bold"
+                >
+                  <option value="">All Firms</option>
+                  {companies.map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.firmName}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {isOwner && showSelectedTotal && (
+              <div className="mx-5 mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-3">
+                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700">
+                  {selectedIds.size === 0
+                    ? "Tick accounts below to add them to the total"
+                    : `Total of ${selectedIds.size} selected account${selectedIds.size === 1 ? "" : "s"}`}
+                </span>
+                <span className="text-lg font-black text-emerald-800 font-mono">₹{formatMoney(selectedTotal)}</span>
+              </div>
+            )}
 
             {loadingStatements ? (
               <div className="flex justify-center items-center py-12">
@@ -662,6 +743,17 @@ export default function StatementPage() {
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+                      {isOwner && showSelectedTotal && (
+                        <th className="py-3 px-5 w-8">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={toggleSelectAll}
+                            title="Select all"
+                            className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer"
+                          />
+                        </th>
+                      )}
                       <th className="py-3 px-5">Firm</th>
                       <th className="py-3 px-5">Bank</th>
                       <th className="py-3 px-5">Account No.</th>
@@ -675,6 +767,16 @@ export default function StatementPage() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredStatements.map((s) => (
                       <tr key={s._id} className="hover:bg-blue-50/40 transition-colors">
+                        {isOwner && showSelectedTotal && (
+                          <td className="py-3.5 px-5">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(s._id)}
+                              onChange={() => toggleSelect(s._id)}
+                              className="w-3.5 h-3.5 rounded border-slate-300 cursor-pointer"
+                            />
+                          </td>
+                        )}
                         <td className="py-3.5 px-5 font-bold text-slate-800">{s.firmName || "—"}</td>
                         <td className="py-3.5 px-5 text-slate-600">{s.bankName || "—"}</td>
                         <td className="py-3.5 px-5 font-mono text-slate-600">{s.accountNumber || "—"}</td>
@@ -693,6 +795,11 @@ export default function StatementPage() {
                         </td>
                         <td className="py-3.5 px-5 text-center font-mono text-slate-500">
                           {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}
+                          {daysSinceLabel(s.updatedAt) && (
+                            <span className={`block text-[10px] font-bold normal-case mt-0.5 ${daysSinceLabel(s.updatedAt)!.tone}`}>
+                              {daysSinceLabel(s.updatedAt)!.text}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-5">
                           <div className="flex items-center justify-center gap-2">

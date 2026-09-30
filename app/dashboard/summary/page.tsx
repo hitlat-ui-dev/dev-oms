@@ -85,6 +85,14 @@ interface SummaryData {
   statusBreakdown: StatusRow[];
   subPartyBreakdown: { subParty: string; count: number; value: number }[];
   ownerBreakdown: { owner: string; count: number; value: number }[];
+  bankStatements: {
+    firmName: string;
+    bankName: string;
+    accountNumber: string;
+    closingBalance: number;
+    updatedAt: string | null;
+    daysSinceUpdate: number | null;
+  }[];
   purchase: {
     todayPurchaseValue: number;
     todayPurchaseCount: number;
@@ -973,6 +981,71 @@ export default function SummaryDashboardPage() {
                   )}
                 </div>
 
+              </div>
+
+              {/* Bank Statements: how long since each firm's account was last
+                  topped up with a fresh upload - most-stale first, so a
+                  forgotten account doesn't just sit there quietly. */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiFileText className="text-blue-600" size={14} /> Bank Statements — Last Updated
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Most stale first — how long since each firm&apos;s statement was last refreshed.
+                  </p>
+                </div>
+                {data.bankStatements.length === 0 ? (
+                  <p className="text-xs text-slate-400 uppercase font-bold tracking-widest text-center py-10">
+                    No statements uploaded yet
+                  </p>
+                ) : (
+                  <div className="max-h-96 overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-slate-50 text-slate-400 font-black uppercase tracking-wider text-[10px]">
+                        <tr>
+                          <th className="py-2 px-5">Firm</th>
+                          <th className="py-2 px-2.5">Bank</th>
+                          <th className="py-2 px-2.5">Account No.</th>
+                          <th className="py-2 px-2.5 text-right">Closing Balance</th>
+                          <th className="py-2 px-2.5">Last Updated</th>
+                          <th className="py-2 px-5 text-right">Days Since Update</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {data.bankStatements.map((s, idx) => {
+                          const days = s.daysSinceUpdate;
+                          const tone =
+                            days === null
+                              ? "bg-slate-50 border-slate-200 text-slate-500"
+                              : days > 15
+                              ? "bg-red-50 border-red-200 text-red-700"
+                              : days > 7
+                              ? "bg-amber-50 border-amber-200 text-amber-700"
+                              : "bg-emerald-50 border-emerald-200 text-emerald-700";
+                          return (
+                            <tr key={`${s.firmName}-${s.accountNumber}-${idx}`}>
+                              <td className="py-2.5 px-5 font-black text-slate-800">{s.firmName}</td>
+                              <td className="py-2.5 px-2.5 text-slate-600">{s.bankName || "—"}</td>
+                              <td className="py-2.5 px-2.5 font-mono text-slate-500">{s.accountNumber || "—"}</td>
+                              <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-800">
+                                ₹{formatMoney(s.closingBalance)}
+                              </td>
+                              <td className="py-2.5 px-2.5 font-mono text-slate-500">
+                                {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString("en-GB") : "—"}
+                              </td>
+                              <td className="py-2.5 px-5 text-right">
+                                <span className={`inline-flex items-center gap-1 border text-[10px] font-black uppercase px-2 py-1 rounded-full ${tone}`}>
+                                  {days === null ? "—" : `${days} day${days === 1 ? "" : "s"}`}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </>
           )}
