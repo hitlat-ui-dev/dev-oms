@@ -12,6 +12,7 @@ const COLUMN_MAP = {
   partyGstNo: "Party GSTNo",
   stateName: "StateName",
   itemName: "ItemName",
+  hsnSac: "HSN/SAC Code",
   qty: "QTY",
   rate: "Rate",
   uom: "UOM",
@@ -127,6 +128,14 @@ export async function GET(req: Request) {
 
       const regType = isCompositionByFirmCode.get(bill.firmCode) ? "Composition" : "Regular";
       const typeOfBill = bill.billType === "TAX_INVOICE" ? "TAX INVOICE" : "BILL OF SUPPLY";
+      // Miracle's own "Invoice Type" field (GST/NON GST) has to match "Tax/Bill
+      // of Supply" (Tax Invoice/Bill of Supply) on the same entry - a
+      // composition-dealer firm (ss/dev/sankalp) bills Bill of Supply, so its
+      // items go in as NON GST even though the item master itself carries
+      // GST/HSN data (shared across all firms). Previously hardcoded "GST",
+      // which made Miracle create every bill-of-supply bill as a GST Tax
+      // Invoice.
+      const invoiceType = typeOfBill === "TAX INVOICE" ? "GST" : "NON GST";
       // GST vs Non-GST goes by whether the firm actually holds a GSTIN, not
       // by billType alone - a Composition dealer still has a GSTIN and
       // counts as "GST" here, only a firm with no GSTIN (PAN-only) is
@@ -146,6 +155,7 @@ export async function GET(req: Request) {
           [COLUMN_MAP.partyGstNo]: "", // buyer GSTIN isn't captured anywhere in OMS - institutes are typically unregistered
           [COLUMN_MAP.stateName]: stateName,
           [COLUMN_MAP.itemName]: it.itemName,
+          [COLUMN_MAP.hsnSac]: it.hsnSac || "",
           [COLUMN_MAP.qty]: it.qty,
           [COLUMN_MAP.rate]: it.rate,
           [COLUMN_MAP.uom]: it.unit || "",
@@ -154,7 +164,7 @@ export async function GET(req: Request) {
           [COLUMN_MAP.sgstAmount]: isIgst ? 0 : Number((gstAmount / 2).toFixed(2)),
           [COLUMN_MAP.cgstAmount]: isIgst ? 0 : Number((gstAmount / 2).toFixed(2)),
           [COLUMN_MAP.igstAmount]: isIgst ? Number(gstAmount.toFixed(2)) : 0,
-          [COLUMN_MAP.invoiceType]: "GST",
+          [COLUMN_MAP.invoiceType]: invoiceType,
           [COLUMN_MAP.groupName]: "Sundry Debtors",
           [COLUMN_MAP.regType]: regType,
           [COLUMN_MAP.debitCredit]: "Debit",
