@@ -4,7 +4,12 @@ import XLSX from "xlsx-js-style";
 
 // Column order/headers confirmed directly by Miracle Accounting's own team
 // (their "Sales Profile" sample export, Sheet2 = sales/Sundry Debtors side) -
-// this is the real "Import from Excel" template, not a guess.
+// this is the real "Import from Excel" template, not a guess. Miracle's
+// saved Import Profile ("sales") maps fields by column POSITION, not header
+// text - inserting a column anywhere but the end shifts every later field
+// out of place (confirmed live: putting HSN/SAC Code before QTY pushed
+// InvoiceType one column over, so Miracle read it as empty). Any new column
+// must always go at the end.
 const COLUMN_MAP = {
   billDate: "Bill Date",
   billNo: "BillNo",
@@ -12,7 +17,6 @@ const COLUMN_MAP = {
   partyGstNo: "Party GSTNo",
   stateName: "StateName",
   itemName: "ItemName",
-  hsnSac: "HSN/SAC Code",
   qty: "QTY",
   rate: "Rate",
   uom: "UOM",
@@ -27,6 +31,7 @@ const COLUMN_MAP = {
   debitCredit: "Debit/Credit",
   typeOfBill: "Type of bill",
   gstNonGst: "Gst/non Gst",
+  hsnSac: "HSN/SAC Code",
 };
 
 // DD-MM-YYYY with leading zeros (e.g. "20-08-2026").
@@ -155,7 +160,6 @@ export async function GET(req: Request) {
           [COLUMN_MAP.partyGstNo]: "", // buyer GSTIN isn't captured anywhere in OMS - institutes are typically unregistered
           [COLUMN_MAP.stateName]: stateName,
           [COLUMN_MAP.itemName]: it.itemName,
-          [COLUMN_MAP.hsnSac]: it.hsnSac || "",
           [COLUMN_MAP.qty]: it.qty,
           [COLUMN_MAP.rate]: it.rate,
           [COLUMN_MAP.uom]: it.unit || "",
@@ -170,6 +174,7 @@ export async function GET(req: Request) {
           [COLUMN_MAP.debitCredit]: "Debit",
           [COLUMN_MAP.typeOfBill]: typeOfBill,
           [COLUMN_MAP.gstNonGst]: gstNonGst,
+          [COLUMN_MAP.hsnSac]: it.hsnSac || "",
         });
       }
     }
