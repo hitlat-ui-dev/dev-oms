@@ -27,6 +27,15 @@ export interface ApplyImportResult {
  * (manual xlsx import, the extension's direct POST, and the sync/apply route)
  * gets identical behavior. See lib/gemBids/columns.ts and diffEngine.ts for
  * the field list and compare rules this builds on.
+ *
+ * Batched rather than per-row: one $in fetch for every existing doc this
+ * batch could touch, then a single bulkWrite for every insert/update, instead
+ * of a sequential findOne+insert/update per row. A few-thousand-row sync
+ * used to mean a few-thousand sequential DB round trips — slow enough to
+ * exceed the apply route's serverless execution limit and leave the run
+ * stuck at status "applying" forever with no way to recover short of a
+ * manual DB edit (see sync/stop/route.ts's "applying" recovery path, added
+ * as a safety net for if this ever happens again anyway).
  */
 export async function applyImport(db: any, input: ApplyImportInput): Promise<ApplyImportResult> {
   const { rows, fileName, userName, source } = input;
@@ -53,13 +62,11 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
   });
   const runId = runResult.insertedId;
 
-  let newCount = 0;
-  let updatedCount = 0;
-  let oldCount = 0;
+  // Pass 1 (in memory, no DB calls): normalize rows, apply category
+  // exclusion, and dedup by bidNo (last row for a given bidNo wins, matching
+  // what a sequential pass would end up with).
   let excludedCount = 0;
-  let protectedSkippedCount = 0;
-  const changeHistoryDocs: any[] = [];
-
+  const incomingByBidNo = new Map<string, Record<string, string>>();
   for (const row of rows) {
     const bidNo = String(row.bidNo || "").trim();
     if (!bidNo) continue;
@@ -75,9 +82,25 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       excludedCount++;
       continue;
     }
+    incomingByBidNo.set(bidNo, incoming);
+  }
 
-    const isHighlighted = computeHighlight(incoming.items);
-    const existing = await bidsCollection.findOne({ bidNo });
+  // One round trip for every existing doc this batch could touch.
+  const bidNos = Array.from(incomingByBidNo.keys());
+  const existingDocs = bidNos.length > 0 ? await bidsCollection.find({ bidNo: { $in: bidNos } }).toArray() : [];
+  const existingByBidNo = new Map<string, any>(existingDocs.map((d: any) => [d.bidNo, d]));
+
+  let newCount = 0;
+  let updatedCount = 0;
+  let oldCount = 0;
+  let protectedSkippedCount = 0;
+  const changeHistoryDocs: any[] = [];
+  const bulkOps: any[] = [];
+
+  // Pass 2 (in memory): decide insert/update/skip per bid and queue it as a
+  // bulk op, instead of awaiting each one.
+  for (const [bidNo, incoming] of incomingByBidNo) {
+    const existing = existingByBidNo.get(bidNo);
 
     // Submitted Bids is off-limits to every automated touch a sync makes -
     // no field refresh, no re-tag, nothing - once a bid is here, only a
@@ -88,28 +111,34 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       continue;
     }
 
+    const isHighlighted = computeHighlight(incoming.items);
+
     if (!existing) {
-      await bidsCollection.insertOne({
-        ...incoming,
-        isHighlighted,
-        tag: "New Published",
-        currentSection: "new_bids",
-        sectionStack: [],
-        hasPendingUpdate: false,
-        changedFields: [],
-        lastChangedAt: null,
-        firstSeenAt: runAt,
-        justPromoted: false,
-        promotedAt: null,
-        submittedStatus: null,
-        selectedPartyId: null,
-        selectedBidType: null,
-        bidSpecificAtc: { fileKey: null, source: null, fetchedAt: null },
-        generation: { status: "not_generated", zipFileKey: null, generatedAt: null, error: null },
-        firstSeenRun: runAt,
-        lastSeenRun: runAt,
-        createdAt: runAt,
-        updatedAt: runAt,
+      bulkOps.push({
+        insertOne: {
+          document: {
+            ...incoming,
+            isHighlighted,
+            tag: "New Published",
+            currentSection: "new_bids",
+            sectionStack: [],
+            hasPendingUpdate: false,
+            changedFields: [],
+            lastChangedAt: null,
+            firstSeenAt: runAt,
+            justPromoted: false,
+            promotedAt: null,
+            submittedStatus: null,
+            selectedPartyId: null,
+            selectedBidType: null,
+            bidSpecificAtc: { fileKey: null, source: null, fetchedAt: null },
+            generation: { status: "not_generated", zipFileKey: null, generatedAt: null, error: null },
+            firstSeenRun: runAt,
+            lastSeenRun: runAt,
+            createdAt: runAt,
+            updatedAt: runAt,
+          },
+        },
       });
       newCount++;
       continue;
@@ -117,7 +146,9 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
 
     const changed = diffBidFields(existing, incoming);
     if (changed.length === 0) {
-      await bidsCollection.updateOne({ bidNo }, { $set: { tag: "Old", lastSeenRun: runAt, updatedAt: runAt } });
+      bulkOps.push({
+        updateOne: { filter: { bidNo }, update: { $set: { tag: "Old", lastSeenRun: runAt, updatedAt: runAt } } },
+      });
       oldCount++;
       continue;
     }
@@ -147,10 +178,13 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     if (existing.currentSection !== "fetched_bid_data") {
       setDoc.hasPendingUpdate = true;
     }
-    await bidsCollection.updateOne({ bidNo }, { $set: setDoc });
+    bulkOps.push({ updateOne: { filter: { bidNo }, update: { $set: setDoc } } });
     updatedCount++;
   }
 
+  if (bulkOps.length > 0) {
+    await bidsCollection.bulkWrite(bulkOps, { ordered: false });
+  }
   if (changeHistoryDocs.length > 0) {
     await changeHistoryCollection.insertMany(changeHistoryDocs);
   }

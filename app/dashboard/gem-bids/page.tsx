@@ -34,7 +34,7 @@ interface MoveHistoryRow {
 
 interface SyncRun {
   _id: string;
-  status: "scraping" | "stopped" | "discarded" | "applying" | "completed";
+  status: "scraping" | "stopped" | "discarded" | "applying" | "completed" | "failed";
   progressPercent: number;
   phase?: string;
   startedAt: string;
