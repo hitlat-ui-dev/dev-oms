@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>GeM L1 Rate Finder</title>
+<style>
+  :root {
+    --accent: #2563eb;
+    --bg: #0f172a;
+    --card: #16213c;
+    --text: #e6e9f0;
+    --muted: #94a3b8;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 400px;
+    margin: 0;
+    padding: 14px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 13px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 12px; }
+  .card { background: var(--card); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 8px; }
+  .row:last-child { margin-bottom: 0; }
+  .label { color: var(--muted); }
+  .value { font-weight: 600; }
+  button {
+    width: 100%;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+    border: none;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+    background: #22314f;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.88; }
+  button.primary { background: var(--accent); }
+  button.export { background: var(--ok); color: #04220f; }
+  button.danger { background: transparent; color: #f87171; border: 1px solid #7f1d1d; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.small { width: auto; padding: 5px 9px; font-size: 11px; margin: 0; }
+  #status { font-size: 11.5px; color: var(--muted); min-height: 14px; margin-top: 2px; line-height: 1.5; }
+  .warn { color: var(--warn); }
+  .ok { color: var(--ok); }
+  hr { border: none; border-top: 1px solid #26314f; margin: 10px 0; }
+  label.fieldLabel { display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 4px; }
+  input[type="text"], input[type="number"], textarea, select {
+    width: 100%;
+    background: #0f172a;
+    border: 1px solid #26314f;
+    border-radius: 6px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+  }
+  textarea { resize: vertical; min-height: 48px; }
+  .hint { color: var(--muted); font-size: 10.5px; margin: -4px 0 8px; line-height: 1.4; }
+  .twoCol { display: flex; gap: 8px; }
+  .twoCol > div { flex: 1; }
+  fieldset.paramGroup {
+    border: 1px solid #26314f;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    padding: 6px 8px 8px;
+  }
+  fieldset.paramGroup legend {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 0 4px;
+  }
+  .modeRow { display: flex; gap: 10px; font-size: 11px; margin-bottom: 6px; color: var(--muted); }
+  .modeRow label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+  .optionRow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 2px 0; }
+  .optionRow label { flex: 1; word-break: break-word; }
+  #paramsContainer { max-height: 260px; overflow-y: auto; margin-bottom: 4px; }
+  #resultsTable { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+  #resultsTable th, #resultsTable td { border-bottom: 1px solid #26314f; padding: 4px 3px; text-align: left; }
+  #resultsTable a { color: var(--accent); }
+  #debugOutput { min-height: 140px; font-family: monospace; font-size: 10.5px; }
+</style>
+</head>
+<body>
+  <h1>GeM L1 Rate Finder</h1>
+  <div class="sub">mkp.gem.gov.in &middot; lock the Golden Parameters you need, auto-vary the rest, get L1-L4</div>
+
+  <div class="card">
+    <div class="row"><span class="label">Status</span><span class="value" id="scanState">Idle</span></div>
+    <div id="status">Paste a GeM category search URL below, open it, then load its Golden Parameters.</div>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel" for="categoryUrlInput">1. GeM Category Search URL</label>
+    <input type="text" id="categoryUrlInput" placeholder="https://mkp.gem.gov.in/<category>/search" />
+    <div class="hint">
+      Paste the category's search-results link (open the category on GeM yourself, copy the address bar
+      URL - it looks like <code>mkp.gem.gov.in/hand-tools-.../search</code>). GeM's own search doesn't work
+      as a simple type-and-submit box, so this navigates straight to that page instead of guessing at one.
+    </div>
+    <button id="btnSearch" class="primary">Open This Category Page</button>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel">2. Golden Parameters (specifications)</label>
+    <button id="btnLoadParams">Load Golden Parameters From Page</button>
+    <div class="hint">
+      Reads the "Product Specifications" filter panel, expands every collapsed spec, and flags the ones
+      GeM itself marks with the golden/amber info icon. For each parameter: <b>Required</b> = fix it to
+      one value (the value you actually need for this item). <b>Auto-vary</b> = tick the option(s) you're
+      open to; the tool will try each one/combination while searching for the best-matched L1.
+      <b>Ignore</b> = leave it as GeM's default (untouched). Non-golden specs still show up too (in case
+      the golden-icon detection misses one) - just look plain instead of tagged 🟡 GOLDEN.
+    </div>
+    <div id="paramsContainer"></div>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel">3. Consignee / Delivery &amp; Quantity</label>
+    <div class="twoCol">
+      <div>
+        <label class="fieldLabel" for="pincodeInput">Delivery Pincode</label>
+        <input type="text" id="pincodeInput" placeholder="e.g. 380001" />
+      </div>
+      <div>
+        <label class="fieldLabel" for="qtyInput">Quantity</label>
+        <input type="number" id="qtyInput" placeholder="e.g. 10" min="1" />
+      </div>
+    </div>
+    <button id="btnApplyDelivery">Apply Pincode + Quantity On Page</button>
+    <div class="hint">
+      Best-effort: fills in whatever pincode/quantity field the current GeM page actually has. If GeM only
+      shows freight-adjusted price after opening a product, this won't reach that - the L1-L4 export below
+      still gives you the direct product links to check that.
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel" for="maxCombos">4. Run</label>
+    <div class="twoCol">
+      <div>
+        <label class="fieldLabel" for="maxCombos">Max combinations to try</label>
+        <input type="number" id="maxCombos" value="20" min="1" max="200" />
+      </div>
+    </div>
+    <button id="btnQuickScan">Quick Scan Current Results (no combos)</button>
+    <button id="btnRunSmart" class="primary">Run Smart Search — Required + Auto-vary → L1-L4</button>
+    <button id="btnCancel" class="danger">Cancel Running Search</button>
+  </div>
+
+  <div class="card">
+    <label class="fieldLabel">Results</label>
+    <table id="resultsTable" style="display:none;">
+      <thead><tr><th>Rank</th><th>Price</th><th>Title</th><th>Seller</th><th>Link</th></tr></thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+    <div class="hint" id="resultsHint">No results yet.</div>
+  </div>
+
+  <button id="btnExport" class="export">Export L1-L4 to Excel</button>
+  <button id="btnDiagnose">Diagnose Page (if search/params/scan fails)</button>
+  <textarea id="debugOutput" style="display:none;" readonly></textarea>
+  <button id="btnClear" class="danger">Clear Saved Results</button>
+
+  <script src="lib/xlsx-writer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

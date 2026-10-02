@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "GeM L1 Rate Finder",
+  "version": "1.0.0",
+  "description": "Search a GeM Marketplace category, lock the Golden Parameters (specifications) you need, auto-vary the rest, and pull the L1-L4 lowest-rate product links into one Excel file.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GeM L1 Rate Finder"
+  },
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["https://mkp.gem.gov.in/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mkp.gem.gov.in/*"],
+      "js": ["lib/xlsx-writer.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
