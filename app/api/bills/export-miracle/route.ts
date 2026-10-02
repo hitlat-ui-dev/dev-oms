@@ -162,7 +162,10 @@ export async function GET(req: Request) {
           [COLUMN_MAP.qty]: it.qty,
           [COLUMN_MAP.rate]: it.rate,
           [COLUMN_MAP.uom]: it.unit || "",
-          [COLUMN_MAP.gstPercent]: it.gstPercent || 0,
+          // Non-GST/Composition (Bill of Supply) bills charge no GST at all,
+          // so the item master's nominal rate shouldn't leak into Miracle
+          // here even though it's informational on the bill item itself.
+          [COLUMN_MAP.gstPercent]: typeOfBill === "TAX INVOICE" ? (it.gstPercent || 0) : 0,
           [COLUMN_MAP.taxableAmount]: it.taxableAmount,
           [COLUMN_MAP.sgstAmount]: isIgst ? 0 : Number((gstAmount / 2).toFixed(2)),
           [COLUMN_MAP.cgstAmount]: isIgst ? 0 : Number((gstAmount / 2).toFixed(2)),
