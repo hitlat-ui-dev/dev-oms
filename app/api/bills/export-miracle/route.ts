@@ -174,7 +174,11 @@ export async function GET(req: Request) {
           [COLUMN_MAP.debitCredit]: "Debit",
           [COLUMN_MAP.typeOfBill]: typeOfBill,
           [COLUMN_MAP.gstNonGst]: gstNonGst,
-          [COLUMN_MAP.hsnSac]: it.hsnSac || "",
+          // Only Tax Invoice bills (regular GST firms) carry an HSN/SAC code
+          // into Miracle - Non-GST and Composition-dealer (Bill of Supply)
+          // bills leave it blank, even though the item master itself always
+          // has one on file.
+          [COLUMN_MAP.hsnSac]: typeOfBill === "TAX INVOICE" ? (it.hsnSac || "") : "",
         });
       }
     }
