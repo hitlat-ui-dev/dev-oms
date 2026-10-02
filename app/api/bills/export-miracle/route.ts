@@ -141,13 +141,12 @@ export async function GET(req: Request) {
       // which made Miracle create every bill-of-supply bill as a GST Tax
       // Invoice.
       const invoiceType = typeOfBill === "TAX INVOICE" ? "GST" : "NON GST";
-      // GST vs Non-GST goes by whether the firm actually holds a GSTIN, not
-      // by billType alone - a Composition dealer still has a GSTIN and
-      // counts as "GST" here, only a firm with no GSTIN (PAN-only) is
-      // "NON GST". TAX_INVOICE bills always have a GSTIN (decideBillType in
-      // bills/generate/route.ts falls back to BILL_OF_SUPPLY otherwise), so
-      // this one check alone covers all three cases.
-      const gstNonGst = bill.firmSnapshot?.gstin ? "GST" : "NON GST";
+      // "Gst/non Gst" mirrors Invoice Type, not raw GSTIN presence - a
+      // composition-dealer firm (ss/dev/sankalp) does hold a GSTIN but still
+      // bills Bill of Supply, so it counts as NON GST here too, the same as
+      // a firm with no GSTIN at all. Only a true Tax Invoice (regular GST
+      // firm) bill is "GST".
+      const gstNonGst = invoiceType;
 
       for (const it of bill.items) {
         const gstAmount = Number(it.gstAmount || 0);
