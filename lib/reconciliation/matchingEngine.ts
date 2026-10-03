@@ -217,15 +217,22 @@ function collectInstituteCandidates(
     });
   };
 
+  // negativeKeywords is deliberately NOT consulted here (see learnFromRejection
+  // in learningEngine.ts for why) - a keyword registered on a seller's own
+  // statementDescriptionName always makes that seller a candidate, past
+  // rejections or not. Confirmed live: "SUB TREASURY,VADNAGAR" is shared by
+  // VADANAGAR/SATLASANA/VIJAPUR ITI; rejecting it once for VADANAGAR ITI (in
+  // favor of a different transaction's correct answer) silently excluded
+  // VADANAGAR ITI from EVERY later transaction with that keyword too - even
+  // ones that genuinely were VADANAGAR ITI's (proved by an exact ₹9,800 bill
+  // match once manually selected). A shared/generic treasury code is reused
+  // by different real institutes across different transactions; one past
+  // rejection is evidence about that ONE transaction, never a permanent ban.
   if (desc) {
     for (const seller of sellers) {
-      const negatives = new Set(
-        (seller.negativeKeywords || []).map((n) => (n.keyword || "").trim().toLowerCase())
-      );
       for (const raw of seller.statementDescriptionName || []) {
         const candidate = (raw || "").trim().toLowerCase();
         if (candidate.length < 3) continue;
-        if (negatives.has(candidate)) continue;
         if (!desc.includes(candidate)) continue;
         consider(seller, raw, candidate, candidate.length);
       }
@@ -241,13 +248,9 @@ function collectInstituteCandidates(
     if (fragment) {
       const fragmentLower = fragment.toLowerCase();
       for (const seller of sellers) {
-        const negatives = new Set(
-          (seller.negativeKeywords || []).map((n) => (n.keyword || "").trim().toLowerCase())
-        );
         for (const raw of seller.statementDescriptionName || []) {
           const candidate = (raw || "").trim().toLowerCase();
           if (candidate.length < 3) continue;
-          if (negatives.has(candidate)) continue;
           const isPrefixMatch =
             candidate.startsWith(fragmentLower) || fragmentLower.startsWith(candidate);
           if (!isPrefixMatch) continue;

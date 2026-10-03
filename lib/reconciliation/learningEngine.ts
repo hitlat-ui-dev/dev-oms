@@ -185,33 +185,29 @@ export async function learnFromRejection(
   seller: any,
   ctx: FeedbackContext & { matchedKeyword?: string; isAmbiguous?: boolean }
 ): Promise<void> {
-  if (ctx.matchedKeyword) {
+  // negativeKeywords is deliberately never written here any more (and
+  // matchingEngine.ts's collectInstituteCandidates no longer reads it either)
+  // - confirmed live it causes real harm either way: for a UNIQUE keyword,
+  // rejecting one bill-mismatch wrongly killed every future match for the
+  // institute's own name (e.g. "DIET MEHSANA"). For a SHARED/ambiguous one
+  // (several real institutes genuinely reuse the same generic treasury
+  // code), rejecting it once in favor of a different candidate wrongly
+  // excluded that institute from every LATER transaction too - even ones
+  // that genuinely were theirs (confirmed: "SUB TREASURY,VADNAGAR" excluding
+  // VADANAGAR ITI from its own exact ₹9,800 bill match). A past rejection is
+  // evidence about that ONE transaction only, never a permanent ban.
+  //
+  // A genuinely ambiguous rejection still mildly penalizes confidence (never
+  // excludes - just deprioritizes slightly in future scoring), since
+  // confidence only affects ranking among candidates, not whether one
+  // appears at all.
+  if (ctx.matchedKeyword && ctx.isAmbiguous) {
     const keyword = ctx.matchedKeyword.trim();
     seller.aliasMeta = seller.aliasMeta || [];
     const alias = seller.aliasMeta.find(
       (a: any) => (a.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
     );
-
-    // Not ambiguous means this institute was the sole candidate the keyword
-    // matched to - the rejection can only have been about the suggested
-    // BILL/amount (the caller already records rejectedBillIds for that), so
-    // blacklisting the keyword here would wrongly poison the institute's own
-    // registered name. (manual_seed kept as a belt-and-suspenders check for
-    // any caller that doesn't pass isAmbiguous.) This previously killed every
-    // future match for e.g. "DIET MEHSANA" after one unrelated rejection.
-    if (ctx.isAmbiguous && alias?.source !== "manual_seed") {
-      seller.negativeKeywords = seller.negativeKeywords || [];
-      const existing = seller.negativeKeywords.find(
-        (n: any) => (n.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
-      );
-      if (existing) {
-        existing.rejectedCount += 1;
-      } else {
-        seller.negativeKeywords.push({ keyword, rejectedCount: 1 });
-      }
-
-      if (alias) alias.confidence = Math.max(0, alias.confidence - 2);
-    }
+    if (alias) alias.confidence = Math.max(0, alias.confidence - 2);
   }
 
   await seller.save();
