@@ -24,20 +24,17 @@
   // search form, whichever this site actually does.
   const CITY_BATCH_KEY = "gemCityBatch";
 
-  // Item include-keyword filter, read fresh from storage by
-  // filterRowsByItemKeywords() below and applied to every row before it's
-  // saved anywhere - manual scans, city batches, AND OMS-triggered city
-  // batches (an omsRunId-tagged batch - see runBatchStepIfActive/
-  // autoScanAllPages further down) all funnel through it, so a keyword
-  // typed once in the popup is respected everywhere regardless of which
-  // flow found the row. This is in addition to - not a replacement for -
-  // the OMS's own server-side category exclusion list
+  // Item-keyword filters, read fresh from storage by filterRowsByItemKeywords()
+  // below and applied to every row before it's saved anywhere - manual scans,
+  // city batches, AND OMS-triggered city batches (an omsRunId-tagged batch -
+  // see runBatchStepIfActive/autoScanAllPages further down) all funnel
+  // through it, so a keyword typed once in the popup is respected everywhere
+  // regardless of which flow found the row. This is in addition to - not a
+  // replacement for - the OMS's own server-side category exclusion list
   // (lib/gemBids/exclusionKeywords.json), which still runs afterwards on
-  // whatever gets sent. There used to be a matching EXCLUDE keyword filter
-  // here too, silently dropping rows during scraping before they ever
-  // reached the OMS - removed by request, since that made bids go
-  // unexpectedly missing with no visible trace of why.
+  // whatever gets sent.
   const INCLUDE_KEYWORDS_KEY = "gemItemIncludeKeywords";
+  const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
   const BID_START_DATE_FROM_KEY = "gemBidStartDateFrom";
   const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
 
@@ -200,16 +197,20 @@
       .filter(Boolean);
   }
 
-  // Blank include list is a no-op (returns rows unchanged) so an install
-  // that never touches this popup field behaves exactly as before this
-  // filter existed.
+  // Include-list wins over nothing (blank include = "everything passes"),
+  // exclude-list always removes a match regardless of include. Both blank
+  // is a no-op (returns rows unchanged) so an install that never touches
+  // these two popup fields behaves exactly as before this filter existed.
   async function filterRowsByItemKeywords(rows) {
-    const data = await chrome.storage.local.get([INCLUDE_KEYWORDS_KEY]);
+    const data = await chrome.storage.local.get([INCLUDE_KEYWORDS_KEY, EXCLUDE_KEYWORDS_KEY]);
     const include = parseKeywordList(data[INCLUDE_KEYWORDS_KEY]);
-    if (!include.length) return rows;
+    const exclude = parseKeywordList(data[EXCLUDE_KEYWORDS_KEY]);
+    if (!include.length && !exclude.length) return rows;
     return rows.filter((row) => {
       const items = (row.items || "").toLowerCase();
-      return include.some((kw) => items.includes(kw));
+      if (include.length && !include.some((kw) => items.includes(kw))) return false;
+      if (exclude.length && exclude.some((kw) => items.includes(kw))) return false;
+      return true;
     });
   }
 
@@ -847,15 +848,31 @@
         // same state/city and re-submits), so there's no good reason to
         // skip it.
         const searchResult = await runConsigneeSearch(batch.state, city);
-        if (!searchResult.ok && batch.omsRunId) {
-          // An OMS-triggered run is unattended - nobody's watching the
-          // popup to notice a silently wrong/empty result set the way a
-          // manual city batch's user might. Fail loudly instead of scanning
-          // whatever happens to be on screen and pushing it to the OMS.
-          throw new Error("consignee search failed: " + (searchResult.error || "unknown"));
+        if (!searchResult.ok && searchResult.error === "no_results_detected") {
+          // A genuinely empty city ("No Data Found" on GeM) is not a
+          // failure - this used to throw below for *any* non-ok result on
+          // an OMS-triggered run, which stopped the entire multi-city batch
+          // the moment it reached one city with zero bids today. Skip
+          // straight to the next city instead; emptyCities is tracked so
+          // the next batch build can drop it from the city list up front
+          // (see pollAndMaybeStartAutoSync in background.js) and so the
+          // finish/error notification can report it.
+          batch.emptyCities = [...(batch.emptyCities || []), city];
+          batch.index += 1;
+          batch.phase = "search";
+          await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+        } else {
+          if (!searchResult.ok && batch.omsRunId) {
+            // Every other failure reason (a selector/DOM match that didn't
+            // find what it expected, etc.) is a real automation problem,
+            // not "no data" - an OMS-triggered run is unattended, so this
+            // still fails loudly rather than silently scanning whatever
+            // happens to be on screen and pushing it to the OMS.
+            throw new Error("consignee search failed: " + (searchResult.error || "unknown"));
+          }
+          batch.phase = "scan";
+          await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
         }
-        batch.phase = "scan";
-        await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
       }
 
       if (batch.phase === "scan") {
@@ -893,7 +910,17 @@
           await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
           if (batch.omsRunId) {
             await chrome.storage.local.remove(CLAIMED_RUN_KEY);
-            notify("GeM Bid Sync failed", msg);
+            const total = (batch.cities || []).length;
+            const emptyCount = (batch.emptyCities || []).length;
+            const doneCount = Math.min(batch.index || 0, total);
+            // So the user knows exactly where this stopped and can judge
+            // whether to just click Start Sync again (it'll re-scan from
+            // city 1, but bidNo-keyed dedup means nothing already applied
+            // gets duplicated) rather than wondering what, if anything, made it in.
+            notify(
+              "GeM Bid Sync failed",
+              `Stopped after ${doneCount}/${total} cities (${emptyCount} empty) — ${msg}`
+            );
           }
         }
       } catch (_) {
@@ -921,6 +948,26 @@
       phase: "apply",
       cityLabel: `sending ${rows.length} bid(s) to OMS…`,
     });
+
+    // Re-read rather than trust a passed-in snapshot - same reasoning as
+    // runBatchStepIfActive's own re-reads elsewhere in this file. Used for
+    // the completion notification's city summary and to drop any city that
+    // came back empty this run from the cached city list (see
+    // pollAndMaybeStartAutoSync in background.js, which reads that cache
+    // for "All Cities" batches) - cheap, self-correcting housekeeping: a
+    // city pruned here just won't be tried again until "Load All Cities
+    // From GeM" is clicked in the popup to refresh the cache.
+    const cbData = await chrome.storage.local.get(CITY_BATCH_KEY);
+    const finishedBatch = cbData[CITY_BATCH_KEY] || {};
+    const totalCities = (finishedBatch.cities || []).length;
+    const emptyCities = finishedBatch.emptyCities || [];
+    if (emptyCities.length) {
+      sendToBackground("GEM_BID_CITIES_PRUNE", {
+        state: finishedBatch.state || "Gujarat",
+        removeCities: emptyCities,
+      }).catch(() => {});
+    }
+
     const userData = await chrome.storage.local.get(OMS_USER_KEY);
     const applyResult = await sendToBackground("GEM_BID_SYNC_APPLY", {
       runId,
@@ -928,13 +975,14 @@
       userName: userData[OMS_USER_KEY] || "",
     });
     await chrome.storage.local.remove([OMS_BATCH_ROWS_KEY, CLAIMED_RUN_KEY]);
+    const citySummary = totalCities > 1 ? ` across ${totalCities} cities (${emptyCities.length} empty)` : "";
     if (applyResult && applyResult.ok) {
       await setStatus({ scanning: false, lastAction: "city_batch_done", omsApplied: true, omsRowCount: rows.length });
-      notify("GeM Bid Sync finished", `${rows.length} bid(s) sent to the OMS.`);
+      notify("GeM Bid Sync finished", `${rows.length} bid(s) sent to the OMS${citySummary}.`);
     } else {
       const errorMessage = (applyResult && applyResult.error) || "apply failed";
       await setStatus({ scanning: false, lastAction: "city_batch_error", errorMessage });
-      notify("GeM Bid Sync failed", errorMessage);
+      notify("GeM Bid Sync failed", `Scan finished${citySummary} but the OMS apply step failed: ${errorMessage}`);
     }
   }
 

@@ -4,7 +4,13 @@ import mongoose from "mongoose";
 import clientPromise from "@/lib/mongodb";
 import FirmDocumentVault from "@/models/FirmDocumentVault";
 import { getFileFromR2, uploadFileToR2, getSignedDownloadUrl } from "@/lib/cloudflareR2";
-import { generateAtcContentPage, splitBySizeAndPages, finalizeOutputNames, AtcBidFields } from "@/lib/documentMaker/pdfEngine";
+import { splitBySizeAndPages, finalizeOutputNames } from "@/lib/documentMaker/pdfEngine";
+import { buildAtcDocument } from "@/lib/documentMaker/buildAtcDocument";
+
+// Image rendering (pdfjs-dist + @napi-rs/canvas) for a multi-page ATC can
+// take a few seconds per page - same reasoning as the GeM sync apply route's
+// own maxDuration bump.
+export const maxDuration = 60;
 
 async function connectMongoose() {
   await clientPromise;
@@ -13,9 +19,10 @@ async function connectMongoose() {
   }
 }
 
-// POST { firmId, bidId } — fetches the bid's fields from gem_bids, fills them
-// onto the firm's letterhead as an ATC cover, stamps sign+stamp bottom-right
-// on every page, splits if needed, uploads to R2 and returns download link(s).
+// POST { firmId, bidId } — builds the ATC (image-based when the bid's real
+// ATC document has been fetched, otherwise a text-summary cover — see
+// buildAtcDocument), splits the PDF if needed, uploads the PDF part(s) and
+// a Word copy to R2, and returns download link(s) for all of them.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -50,14 +57,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Could not fetch the letterhead — check R2 connection" }, { status: 502 });
     }
 
-    const fields: AtcBidFields = {
-      bidNo: bid.bidNo,
-      items: bid.items,
-      departmentNameAndAddress: bid.departmentNameAndAddress,
-      address: bid.address,
-      bidEndDateTime: bid.bidEndDateTime,
-    };
-
     let signBytes: Buffer | null = null;
     let stampBytes: Buffer | null = null;
     try {
@@ -67,14 +66,9 @@ export async function POST(req: Request) {
       console.error("Failed to fetch sign/stamp from R2 (continuing without them):", err);
     }
 
-    // Sign + stamp are drawn inside generateAtcContentPage itself, right
-    // under the "Your Faithfully," closing - not via the shared
-    // overlaySignStamp helper (that pins to a fixed bottom-right corner on
-    // every page, meant for the "merge" flow's arbitrary uploaded documents,
-    // not this single generated cover page with its own letter layout).
-    const atcDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
+    const { pdfDoc, docxBytes, mode, note } = await buildAtcDocument(bid, letterheadBytes, signBytes, stampBytes);
 
-    const parts = await splitBySizeAndPages(atcDoc);
+    const parts = await splitBySizeAndPages(pdfDoc);
     const safeBidNo = String(bid.bidNo || bidId).replace(/[^a-zA-Z0-9_-]/g, "_");
     const names = finalizeOutputNames(`ATC-${safeBidNo}.pdf`, parts.length);
 
@@ -85,7 +79,11 @@ export async function POST(req: Request) {
       downloads.push({ fileName: names[i], url: await getSignedDownloadUrl(key) });
     }
 
-    return NextResponse.json({ partCount: parts.length, downloads });
+    const docxKey = `bids/${bidId}/output/ATC-${safeBidNo}.docx`;
+    await uploadFileToR2(docxBytes, docxKey, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    downloads.push({ fileName: `ATC-${safeBidNo}.docx`, url: await getSignedDownloadUrl(docxKey) });
+
+    return NextResponse.json({ partCount: parts.length, downloads, mode, note });
   } catch (error: any) {
     console.error("ATC generate error:", error);
     return NextResponse.json({ error: error.message || "Failed to generate ATC" }, { status: 500 });

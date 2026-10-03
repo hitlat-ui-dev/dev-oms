@@ -52,6 +52,20 @@ const ATC_ELIGIBLE_SECTIONS = new Set(["bids_to_fill", "submitted_bids"]);
 interface DownloadResult {
   partCount: number;
   downloads: { fileName: string; url: string }[];
+  mode?: "image" | "text_fallback";
+  note?: string;
+}
+
+interface DocFetchStatus {
+  status: "idle" | "pending" | "fetching" | "done" | "failed";
+  error?: string | null;
+}
+
+interface BundleResult {
+  url: string;
+  fileName: string;
+  atcMode: "image" | "text_fallback";
+  notes: string[];
 }
 
 type Tab = "vault" | "generate";
@@ -83,6 +97,18 @@ export default function DocumentMakerPage() {
   const [selectedBidId, setSelectedBidId] = useState("");
   const [generatingAtc, setGeneratingAtc] = useState(false);
   const [atcResult, setAtcResult] = useState<DownloadResult | null>(null);
+
+  // The real multi-page ATC + Bid Document are fetched by the GeM Bid
+  // Exporter extension (GeM blocks non-browser requests - see
+  // /api/gem-bids/cities's note), not this page directly - this just
+  // queues the request and polls for it to land.
+  const [docFetchStatus, setDocFetchStatus] = useState<DocFetchStatus | null>(null);
+  const [hasBidDocument, setHasBidDocument] = useState(false);
+  const [hasAtcDocument, setHasAtcDocument] = useState(false);
+  const [requestingFetch, setRequestingFetch] = useState(false);
+
+  const [bundling, setBundling] = useState(false);
+  const [bundleResult, setBundleResult] = useState<BundleResult | null>(null);
 
   useEffect(() => {
     fetch("/api/companies")
@@ -238,6 +264,76 @@ export default function DocumentMakerPage() {
       alert(err.message || "Failed to generate ATC");
     } finally {
       setGeneratingAtc(false);
+    }
+  };
+
+  const fetchDocStatus = useCallback(() => {
+    if (!selectedBidId) return;
+    fetch(`/api/gem-bids/fetch-documents/status?bidId=${selectedBidId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.error) return;
+        setDocFetchStatus(data.docFetch || { status: "idle" });
+        setHasBidDocument(!!data.hasBidDocument);
+        setHasAtcDocument(!!data.hasAtcDocument);
+      })
+      .catch((err) => console.error("Failed to load document-fetch status", err));
+  }, [selectedBidId]);
+
+  useEffect(() => {
+    setDocFetchStatus(null);
+    setHasBidDocument(false);
+    setHasAtcDocument(false);
+    setAtcResult(null);
+    setBundleResult(null);
+    fetchDocStatus();
+  }, [selectedBidId, fetchDocStatus]);
+
+  // Poll every ~3s while the extension's background worker is (or is about
+  // to start) fetching this bid's documents - same idea as the GeM Bids
+  // page's own sync-status poll, just scoped to one bid instead of a run.
+  useEffect(() => {
+    if (docFetchStatus?.status !== "pending" && docFetchStatus?.status !== "fetching") return;
+    const interval = setInterval(fetchDocStatus, 3000);
+    return () => clearInterval(interval);
+  }, [docFetchStatus?.status, fetchDocStatus]);
+
+  const requestFetchDocuments = async () => {
+    if (!selectedBidId) return;
+    setRequestingFetch(true);
+    try {
+      const res = await fetch("/api/gem-bids/fetch-documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidId: selectedBidId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to queue fetch");
+      fetchDocStatus();
+    } catch (err: any) {
+      alert(err.message || "Failed to queue fetch");
+    } finally {
+      setRequestingFetch(false);
+    }
+  };
+
+  const runBundle = async () => {
+    if (!firmId || !selectedBidId) return;
+    setBundling(true);
+    setBundleResult(null);
+    try {
+      const res = await fetch("/api/document-maker/bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firmId, bidId: selectedBidId, documentNames: Array.from(selectedDocNames) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to build ZIP bundle");
+      setBundleResult(data);
+    } catch (err: any) {
+      alert(err.message || "Failed to build ZIP bundle");
+    } finally {
+      setBundling(false);
     }
   };
 
@@ -478,7 +574,9 @@ export default function DocumentMakerPage() {
                     <FiLayers className="text-purple-600" size={14} /> ATC Generate
                   </h3>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Fetches the bid's details and fills them onto this firm's letterhead as the cover page.
+                    Pastes the bid's real ATC document (every page, fetched via the GeM Bid Exporter extension) onto
+                    this firm's letterhead with sign+stamp on each page. Falls back to a text summary cover page if
+                    the real ATC hasn&apos;t been fetched yet (or this bid has none available on GeM).
                   </p>
                 </div>
                 <div className="p-5 flex flex-col gap-3">
@@ -504,6 +602,42 @@ export default function DocumentMakerPage() {
                   <p className="text-[10px] text-slate-400 -mt-1">
                     Only bids in Bids to Fill or Submitted Bids are listed here.
                   </p>
+
+                  {selectedBidId && (
+                    <div className="border border-slate-200 rounded-xl p-3 flex flex-col gap-2 bg-slate-50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase text-slate-500">Bid Documents</span>
+                        <button
+                          disabled={requestingFetch || docFetchStatus?.status === "pending" || docFetchStatus?.status === "fetching"}
+                          onClick={requestFetchDocuments}
+                          className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-1.5 px-3 rounded-lg transition-colors"
+                        >
+                          <FiDownload size={12} />
+                          {docFetchStatus?.status === "pending" || docFetchStatus?.status === "fetching"
+                            ? "Fetching..."
+                            : "Fetch Bid Documents"}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-[10px] font-bold">
+                        <span className={hasBidDocument ? "text-emerald-600" : "text-slate-400"}>
+                          {hasBidDocument ? "✓ Bid Document ready" : "— Bid Document not fetched"}
+                        </span>
+                        <span className={hasAtcDocument ? "text-emerald-600" : "text-slate-400"}>
+                          {hasAtcDocument ? "✓ ATC Link document ready" : "— ATC Link document not fetched"}
+                        </span>
+                      </div>
+                      {docFetchStatus?.status === "pending" && (
+                        <p className="text-[10px] text-slate-400">
+                          Queued — the extension checks for this about once a minute. Keep it installed and your GeM
+                          login active in this browser.
+                        </p>
+                      )}
+                      {docFetchStatus?.status === "failed" && docFetchStatus.error && (
+                        <p className="text-[10px] text-red-600">{docFetchStatus.error}</p>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     disabled={generatingAtc || !selectedBidId}
                     onClick={runAtc}
@@ -514,13 +648,55 @@ export default function DocumentMakerPage() {
                   {atcResult && (
                     <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
                       <p className="text-[10px] font-black uppercase text-purple-700 mb-1.5">
-                        {atcResult.partCount > 1 ? `Split into ${atcResult.partCount} parts` : "Ready"}
+                        {atcResult.mode === "image" ? "Image-based (real ATC document)" : "Text summary cover"}
+                        {atcResult.partCount > 1 ? ` — split into ${atcResult.partCount} parts` : ""}
                       </p>
+                      {atcResult.note && <p className="text-[10px] text-purple-700/80 mb-1.5">{atcResult.note}</p>}
                       {atcResult.downloads.map((d) => (
                         <a key={d.fileName} href={d.url} target="_blank" rel="noreferrer" className="block text-[11px] text-purple-800 underline">
                           {d.fileName}
                         </a>
                       ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ZIP Bundle */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiDownload className="text-emerald-600" size={14} /> ZIP Bundle
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    One ZIP with the Bid Document, the ATC Link document, each document checked above on its own, the
+                    generated ATC (PDF + Word), and everything merged into one &quot;ATC_ALL_&quot; PDF (in the order
+                    checked above, split at 99 pages/9.5MB into ATC_ALL_, ATC_ALL_2, ...). Uses the bid selected in
+                    ATC Generate above.
+                  </p>
+                </div>
+                <div className="p-5 flex flex-col gap-2">
+                  <button
+                    disabled={bundling || !selectedBidId}
+                    onClick={runBundle}
+                    className="w-fit flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                  >
+                    <FiDownload size={13} /> {bundling ? "Building..." : "Download ZIP Bundle"}
+                  </button>
+                  {bundleResult && (
+                    <div className="mt-1 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                      <a href={bundleResult.url} target="_blank" rel="noreferrer" className="block text-[11px] text-emerald-800 underline font-bold">
+                        {bundleResult.fileName}
+                      </a>
+                      {bundleResult.notes.length > 0 && (
+                        <ul className="mt-1.5 list-disc list-inside">
+                          {bundleResult.notes.map((n, i) => (
+                            <li key={i} className="text-[10px] text-emerald-700/80">
+                              {n}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </div>

@@ -104,7 +104,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+
+  // Drops the given cities from this state's cached city list (see
+  // getCachedCities below) after an OMS-triggered "All Cities" batch finds
+  // them genuinely empty ("No Data Found" on GeM) - content.js can't reach
+  // the OMS API directly, same reason every other GEM_BID_SYNC_* message
+  // exists here instead.
+  if (message.type === "GEM_BID_CITIES_PRUNE") {
+    (async () => {
+      try {
+        const apiBase = await getApiBase();
+        const getRes = await fetch(`${apiBase}/api/gem-bids/cities?state=${encodeURIComponent(message.state)}`);
+        const getData = getRes.ok ? await getRes.json() : { cities: [] };
+        const remove = new Set((message.removeCities || []).map((c) => String(c).trim().toLowerCase()));
+        const existing = Array.isArray(getData.cities) ? getData.cities : [];
+        const kept = existing.filter((c) => !remove.has(String(c).trim().toLowerCase()));
+        if (kept.length !== existing.length) {
+          await fetch(`${apiBase}/api/gem-bids/cities`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: message.state, cities: kept }),
+          });
+        }
+        sendResponse({ ok: true, pruned: existing.length - kept.length });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
 });
+
+// The OMS's cache of GeM's own Consignee City dropdown for a state (see
+// app/api/gem-bids/cities/route.ts), populated by the popup's "Load All
+// Cities From GeM" button. Used below so an OMS-triggered "All Cities" run
+// can expand to the real per-city list instead of one combined search with
+// no city filter at all.
+async function getCachedCities(state) {
+  try {
+    const apiBase = await getApiBase();
+    const res = await fetch(`${apiBase}/api/gem-bids/cities?state=${encodeURIComponent(state)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.cities) ? data.cities : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 // ===== Auto-open the GeM tab for an OMS-triggered Start Sync run =====
 //
@@ -133,6 +179,12 @@ const CLAIMED_RUN_KEY = "gemBgClaimedRunId";
 const CITY_BATCH_KEY = "gemCityBatch";
 const BID_START_DATE_FROM_KEY = "gemBidStartDateFrom";
 const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
+// Same key content.js's filterRowsByItemKeywords() already reads for a
+// manual scan's exclude-keyword box - reusing it means an OMS-triggered run
+// applies the OMS's persisted exclude-keyword list (managed in the Start
+// Sync modal, GET/POST /api/gem-bids/exclude-keywords) with no extra
+// filtering logic needed in content.js.
+const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
 const GEM_URL = "https://bidplus.gem.gov.in/advance-search#tab2";
 
 function ensurePollAlarm() {
@@ -145,9 +197,13 @@ chrome.runtime.onStartup.addListener(ensurePollAlarm);
 ensurePollAlarm();
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === POLL_ALARM_NAME) pollAndMaybeStartAutoSync();
+  if (alarm.name === POLL_ALARM_NAME) {
+    pollAndMaybeStartAutoSync();
+    pollAndMaybeFetchBidDocuments();
+  }
 });
 pollAndMaybeStartAutoSync();
+pollAndMaybeFetchBidDocuments();
 
 // Clearing the claim is content.js's job (finishOmsBatch, or the error/
 // cancel paths in runBatchStepIfActive) - all of which run *inside* the GeM
@@ -208,13 +264,36 @@ async function pollAndMaybeStartAutoSync() {
     // that happens to be the most recent one in the collection.
     if (!run || run.status !== "scraping" || run.phase !== "starting") return;
 
+    const state = run.filterState || "Gujarat";
+    let cities;
+    if (Array.isArray(run.filterCities) && run.filterCities.length) {
+      cities = run.filterCities;
+    } else {
+      // "All Cities" in the Start Sync modal sends filterCities as [] -
+      // this used to fall straight back to [""], a single search with no
+      // city filter at all, which for "All Cities" in Gujarat meant one
+      // continuous 330+ page, 3000+ bid scan. That turned out to be
+      // unreliable (it would eventually die with an error well into the
+      // scan, losing everything past that point) - expanding to the real
+      // per-city list and reusing the existing one-city-at-a-time batch
+      // loop (same code path as picking specific cities manually) means
+      // one city failing only costs that city, and each city's own scan is
+      // far shorter and less likely to hit whatever was killing the
+      // combined scan. If the cache is empty (nobody's ever clicked "Load
+      // All Cities From GeM" in the popup for this state yet), fall back
+      // to the old combined search rather than running an empty batch.
+      const cached = await getCachedCities(state);
+      cities = cached.length ? cached : [""];
+    }
+
     await chrome.storage.local.set({ [CLAIMED_RUN_KEY]: { runId: run._id, claimedAt: Date.now() } });
     await chrome.storage.local.set({
       [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
       [BID_START_DATE_TO_KEY]: run.dateTo || "",
+      [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords.join(", ") : "",
       [CITY_BATCH_KEY]: {
-        state: run.filterState || "Gujarat",
-        cities: Array.isArray(run.filterCities) && run.filterCities.length ? run.filterCities : [""],
+        state,
+        cities,
         index: 0,
         phase: "search",
         running: true,
@@ -231,5 +310,120 @@ async function pollAndMaybeStartAutoSync() {
     }
   } catch (e) {
     console.error("[GeM Bid Exporter] background sync poll failed:", e);
+  }
+}
+
+// ===== Image-based ATC: fetch a bid's real documents into R2 =====
+//
+// Document Maker's "Fetch bid documents" button (see app/dashboard/gem-bids/
+// document-maker/page.tsx) queues a bid by POSTing /api/gem-bids/fetch-
+// documents, which just sets docFetch.status = "pending" on that bid - this
+// worker's existing 1/min alarm is what actually does the fetching, same
+// division of labor as Start Sync. No GeM tab is needed for this one: unlike
+// content.js's page-context fetches, this runs the fetch directly from the
+// service worker, relying on the same host_permissions-granted cross-origin
+// + cookie access this file's very first comment already documents for the
+// OMS API calls above - bidplus.gem.gov.in is in that same host_permissions
+// list, so as long as the user is logged into GeM in this browser profile,
+// these requests carry that session the same way a content-script fetch
+// would. If the resolved response isn't actually a PDF (session invalid, or
+// the link embedded in the bid at scrape time has since expired), isLikelyPdf
+// catches that instead of silently uploading a login/error page as if it
+// were the real document.
+async function isLikelyPdf(resp) {
+  const ct = (resp.headers.get("content-type") || "").toLowerCase();
+  if (ct.includes("pdf")) return true;
+  // Content-Type can be missing/generic on some GeM responses - fall back to
+  // sniffing the actual bytes for the "%PDF-" magic header.
+  const buf = await resp.clone().arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 5));
+  return String.fromCharCode(...head) === "%PDF-";
+}
+
+// Mirrors content.js's fetchAndParsePdf() two-step resolution (direct PDF,
+// or an interim HTML page with a real PDF link inside it) - duplicated
+// rather than shared, since content.js only runs inside a GeM tab and this
+// needs to work from the service worker with no tab at all.
+async function fetchGemPdfBytes(url) {
+  const resp = await fetch(url, { credentials: "include" });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  if (await isLikelyPdf(resp)) return resp.arrayBuffer();
+
+  const html = await resp.text();
+  if (/captcha/i.test(html)) throw new Error("GeM showed a captcha page instead of the document");
+  const m =
+    html.match(/href=["']([^"']+\.pdf[^"']*)["']/i) ||
+    html.match(/href=["']([^"']*(?:showbiddocument|ShowBidDocument|showBidDocument)[^"']*)["']/i);
+  if (!m) throw new Error("Response wasn't a PDF and no PDF link was found in it (session may have expired)");
+
+  const pdfUrl = new URL(m[1], url).href;
+  const resp2 = await fetch(pdfUrl, { credentials: "include" });
+  if (!resp2.ok || !(await isLikelyPdf(resp2))) {
+    throw new Error("Couldn't resolve a real PDF from this link");
+  }
+  return resp2.arrayBuffer();
+}
+
+async function uploadFetchedBidDoc(apiBase, bidId, kind, arrayBuffer) {
+  const fd = new FormData();
+  fd.append("bidId", bidId);
+  fd.append("kind", kind);
+  fd.append("file", new Blob([arrayBuffer], { type: "application/pdf" }), `${kind}.pdf`);
+  const res = await fetch(`${apiBase}/api/gem-bids/fetch-documents/upload`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+}
+
+let docFetchInFlight = false;
+
+async function pollAndMaybeFetchBidDocuments() {
+  if (docFetchInFlight) return; // one job at a time, same as the city batch's own guard
+  docFetchInFlight = true;
+  try {
+    const apiBase = await getApiBase();
+    const res = await fetch(`${apiBase}/api/gem-bids/fetch-documents`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const bid = data.bid;
+    if (!bid) return;
+
+    const errors = {};
+
+    if (bid.bidLink) {
+      try {
+        const bytes = await fetchGemPdfBytes(bid.bidLink);
+        await uploadFetchedBidDoc(apiBase, bid._id, "bidLink", bytes);
+      } catch (e) {
+        errors.bidLink = String((e && e.message) || e);
+      }
+    } else {
+      errors.bidLink = "This bid has no Bid Link";
+    }
+
+    // Blank on many bids - GeM's ATC download is often a JS action rather
+    // than a real link embedded in the PDF (see content.js's ATC_LABEL
+    // comment), not a sign anything is broken.
+    if (bid.buyerAddedBidSpecificAtcUrl) {
+      try {
+        const bytes = await fetchGemPdfBytes(bid.buyerAddedBidSpecificAtcUrl);
+        await uploadFetchedBidDoc(apiBase, bid._id, "atc", bytes);
+      } catch (e) {
+        errors.atc = String((e && e.message) || e);
+      }
+    } else {
+      errors.atc = "No buyer-added ATC link on this bid";
+    }
+
+    await fetch(`${apiBase}/api/gem-bids/fetch-documents/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bidId: bid._id, errors }),
+    });
+  } catch (e) {
+    console.error("[GeM Bid Exporter] bid-document fetch poll failed:", e);
+  } finally {
+    docFetchInFlight = false;
   }
 }

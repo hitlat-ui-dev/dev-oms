@@ -211,22 +211,20 @@ export default function GemBidTable({
   // section-specific reads each row's own currentSection instead of this
   // shared value - see effectiveSectionFor() below.
   const RAW_DATA_SECTIONS = new Set<SectionKey>(["new_bids", "fetched_bid_data"]);
-  // New Bids is system-populated only (a bid lands there on first sight, never
-  // via a manual "Send to") - never offered as a manual move target. The
-  // whole bulk "Send to" bar is hidden in All Bids mode - moving a mixed-
-  // section selection to one target section isn't one sensible action.
-  const otherSections = allSectionsMode
-    ? []
-    : RAW_DATA_SECTIONS.has(currentSectionKey)
-    ? SECTIONS.filter((s) => s.key === "bids_to_fill")
-    : SECTIONS.filter((s) => s.key !== currentSectionKey && !AUTO_ONLY_SECTIONS.includes(s.key));
   const otherColumns = useMemo(() => BID_COLUMNS.filter((c) => c.key !== "bidNo" && !c.hiddenInTable), []);
 
   const effectiveSectionFor = (b: GemBid): SectionKey => (allSectionsMode ? b.currentSection : currentSectionKey);
   const showSectionCol = allSectionsMode;
-  const showStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
-  const showBidStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
-  const showPartyCol = !allSectionsMode && currentSectionKey === "bids_to_fill";
+  // In All Bids mode these headers show whenever *any* row could need them -
+  // a submitted_bids row still gets its Status/Bid Status controls, a
+  // bids_to_fill row its Party dropdown, same as viewing that section's own
+  // tab would show; each body cell below checks the row's own
+  // effectiveSectionFor() rather than this flag to decide whether to render
+  // the real control or a blank dash for a row the column doesn't apply to.
+  const showStatusCol = allSectionsMode || currentSectionKey === "submitted_bids";
+  const showBidStatusCol = allSectionsMode || currentSectionKey === "submitted_bids";
+  const PARTY_COL_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
+  const showPartyCol = allSectionsMode || PARTY_COL_SECTIONS.has(currentSectionKey);
   const extraColCount = [showSectionCol, showStatusCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
 
   const dropdownOptions = useMemo(() => {
@@ -404,10 +402,14 @@ export default function GemBidTable({
     }
   };
 
-  // Backs both the Party dropdown (Bids to Fill) and the Bid Status field
-  // (Submitted Bids) - a single small "set one field, record who/when"
-  // endpoint rather than two near-identical ones.
-  const quickUpdate = async (bidNo: string, field: "selectedPartyId" | "bidStatus", value: string) => {
+  // Backs the Party multi-select (Bids to Fill and Submitted Bids) and the
+  // Bid Status field (Submitted Bids) - a single small "set one field,
+  // record who/when" endpoint rather than several near-identical ones.
+  const quickUpdate = async (
+    bidNo: string,
+    field: "selectedPartyIds" | "bidStatus",
+    value: string | string[]
+  ) => {
     setBusy(true);
     try {
       const res = await fetch("/api/gem-bids/quick-update", {
@@ -432,6 +434,28 @@ export default function GemBidTable({
   };
 
   const selectedList = [...selected];
+
+  // New Bids is system-populated only (a bid lands there on first sight,
+  // never via a manual "Send to") - never offered as a manual move target.
+  // In All Bids mode the valid move targets depend on which section the
+  // selection is actually in - computed from the selected bids' own
+  // sections, same list a normal single-section view would show, so moving
+  // a bid found via All Bids works exactly like moving it from its own tab
+  // would. A selection spanning more than one section has no single sensible
+  // target list, so the bar is hidden rather than guessing.
+  const selectedSections = allSectionsMode
+    ? Array.from(
+        new Set(selectedList.map((id) => bids.find((b) => b.bidNo === id)?.currentSection).filter(Boolean))
+      )
+    : [];
+  const uniformSelectedSection: SectionKey | undefined =
+    allSectionsMode && selectedSections.length === 1 ? (selectedSections[0] as SectionKey) : undefined;
+  const sendToFromSection = allSectionsMode ? uniformSelectedSection : currentSectionKey;
+  const otherSections = !sendToFromSection
+    ? []
+    : RAW_DATA_SECTIONS.has(sendToFromSection)
+    ? SECTIONS.filter((s) => s.key === "bids_to_fill")
+    : SECTIONS.filter((s) => s.key !== sendToFromSection && !AUTO_ONLY_SECTIONS.includes(s.key));
 
   const filterField = (label: string, node: ReactNode) => (
     <div key={label}>
@@ -749,51 +773,77 @@ export default function GemBidTable({
                   )}
                   {showStatusCol && (
                     <td className="py-2 px-2">
-                      <select
-                        value={b.submittedStatus || "Active"}
-                        disabled={busy}
-                        onChange={(e) => updateSubmittedStatus(b.bidNo, e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold"
-                      >
-                        {SUBMITTED_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                      {effectiveSectionFor(b) === "submitted_bids" ? (
+                        <select
+                          value={b.submittedStatus || "Active"}
+                          disabled={busy}
+                          onChange={(e) => updateSubmittedStatus(b.bidNo, e.target.value)}
+                          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold"
+                        >
+                          {SUBMITTED_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                   )}
                   {showBidStatusCol && (
                     <td className="py-2 px-2">
-                      <input
-                        key={b.bidStatus || ""}
-                        defaultValue={b.bidStatus || ""}
-                        disabled={busy}
-                        onBlur={(e) => {
-                          if (e.target.value !== (b.bidStatus || "")) quickUpdate(b.bidNo, "bidStatus", e.target.value);
-                        }}
-                        placeholder="—"
-                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
-                      />
+                      {effectiveSectionFor(b) === "submitted_bids" ? (
+                        <input
+                          key={b.bidStatus || ""}
+                          defaultValue={b.bidStatus || ""}
+                          disabled={busy}
+                          onBlur={(e) => {
+                            if (e.target.value !== (b.bidStatus || "")) quickUpdate(b.bidNo, "bidStatus", e.target.value);
+                          }}
+                          placeholder="—"
+                          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
+                        />
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                   )}
                   {showPartyCol && (
                     <td className="py-2 px-2">
-                      <select
-                        value={b.selectedPartyId || ""}
-                        disabled={busy}
-                        onChange={(e) => quickUpdate(b.bidNo, "selectedPartyId", e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold max-w-[140px]"
-                      >
-                        <option value="">Select party...</option>
-                        {companies.map((c) => (
-                          <option key={c._id} value={c._id}>
-                            {c.firmName}
-                            {c.firmCode ? ` (${c.firmCode})` : ""}
-                          </option>
-                        ))}
-                      </select>
-                      {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
+                      {PARTY_COL_SECTIONS.has(effectiveSectionFor(b)) ? (
+                        <>
+                          {/* Multiple parties can fill the same bid (split
+                              quantities, alternates, etc.) - native multi-select
+                              over a custom dropdown since this is a dense table
+                              cell, not a spacious form; ctrl/cmd+click or drag
+                              to pick more than one, same as any multi-select. */}
+                          <select
+                            multiple
+                            size={Math.min(4, Math.max(2, companies.length))}
+                            value={b.selectedPartyIds || (b.selectedPartyId ? [b.selectedPartyId] : [])}
+                            disabled={busy}
+                            onChange={(e) =>
+                              quickUpdate(
+                                b.bidNo,
+                                "selectedPartyIds",
+                                Array.from(e.target.selectedOptions).map((o) => o.value)
+                              )
+                            }
+                            className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold max-w-[140px]"
+                          >
+                            {companies.map((c) => (
+                              <option key={c._id} value={c._id}>
+                                {c.firmName}
+                                {c.firmCode ? ` (${c.firmCode})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
+                        </>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                   )}
                   {otherColumns.map((col) => {

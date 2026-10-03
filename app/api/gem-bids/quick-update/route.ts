@@ -7,11 +7,15 @@ const DB_NAME = "dev_oms_db";
 // than accepting an arbitrary key, since this bypasses the Edit Bid modal's
 // EDITABLE_FIELD_KEYS/LOCKED_FIELD_KEYS gate entirely (these two aren't
 // scraped bid data at all, just app-level workflow fields).
-const ALLOWED_FIELDS = ["selectedPartyId", "bidStatus"];
+// selectedPartyIds replaces the old singular selectedPartyId (a bid can be
+// filled under more than one party - split quantities, alternates, etc.);
+// existing docs still carrying selectedPartyId are read as a fallback by
+// GemBidTable.tsx rather than migrated, so this endpoint never needs to.
+const ALLOWED_FIELDS = ["selectedPartyIds", "bidStatus"];
 
 // POST: set one workflow field on a bid and record who/when - backs the
-// Party dropdown (Bids to Fill) and the Bid Status field (Submitted Bids)
-// in GemBidTable.tsx. body: { bidNo, field, value, changedBy? }
+// Party multi-select (Bids to Fill, Submitted Bids) and the Bid Status
+// field (Submitted Bids) in GemBidTable.tsx. body: { bidNo, field, value, changedBy? }
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -21,6 +25,9 @@ export async function POST(req: Request) {
     }
     if (!ALLOWED_FIELDS.includes(field)) {
       return NextResponse.json({ error: `field must be one of ${ALLOWED_FIELDS.join(", ")}` }, { status: 400 });
+    }
+    if (field === "selectedPartyIds" && !Array.isArray(value)) {
+      return NextResponse.json({ error: "selectedPartyIds must be an array" }, { status: 400 });
     }
 
     const client = await clientPromise;
