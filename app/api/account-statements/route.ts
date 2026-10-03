@@ -213,6 +213,15 @@ export async function DELETE(req: Request) {
 
     if (!txnKeyParam) {
       await collection.deleteOne({ _id: new ObjectId(id) });
+      // Every reconciliation match generated from this statement's
+      // transactions points at it by statementId - left behind, those rows
+      // become permanent zombies: generateSuggestions can never find or
+      // refresh them again (it only ever looks at CURRENT statements), so a
+      // deleted-and-reuploaded statement's old suggestions stay stuck
+      // "Select Institute..." forever with no way to resolve them. Confirmed
+      // matches are left alone - they already posted a real payment and are
+      // a historical record, not something generateSuggestions ever revisits.
+      await db.collection("bank_reconciliation_matches").deleteMany({ statementId: id, status: { $ne: "confirmed" } });
       return NextResponse.json({ success: true });
     }
 
