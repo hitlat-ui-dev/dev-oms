@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import BlockGuard from "@/components/BlockGuard";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft, FiSend } from "react-icons/fi";
+import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft, FiSend, FiChevronDown } from "react-icons/fi";
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
 // jspdf, jspdf-autotable and xlsx are all heavy (500KB+) and only ever needed
 // when the user actually clicks an Export/Download button - dynamically
@@ -86,6 +86,11 @@ export default function OrdersListPage() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  // Header "Quick Actions" dropdown - combines what used to be 5 separate
+  // buttons (Add New Order, Add Purchase Req, Add New Item, Check Advance
+  // Match, Remaining Order) into one menu.
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const quickActionsRef = useRef<HTMLDivElement>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -130,6 +135,18 @@ export default function OrdersListPage() {
   useEffect(() => {
     fetchOrders();
   }, []);
+
+  // Closes the Quick Actions dropdown on an outside click.
+  useEffect(() => {
+    if (!showQuickActions) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (quickActionsRef.current && !quickActionsRef.current.contains(e.target as Node)) {
+        setShowQuickActions(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [showQuickActions]);
 
   // Ctrl+Shift+A opens "Add New Item" from anywhere on this page - same
   // shortcut as the Fetch GeM Orders page's Add New Item.
@@ -1361,12 +1378,6 @@ const shippingLock = useRef(false);
               <h1 className="text-2xl font-black uppercase tracking-tight text-slate-800">Orders Management</h1>
               <p className="text-blue-600 text-[10px] font-black tracking-widest uppercase">Sales Control Panel</p>
             </div>
-            <button
-              onClick={() => setShowRemainingOrderModal(true)}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-widest text-[10px] px-6 py-3 rounded-xl transition-all border border-slate-200"
-            >
-              Remaining Order
-            </button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!ordersLoadedAll && (
@@ -1378,27 +1389,50 @@ const shippingLock = useRef(false);
                 {loadingAllOrders ? "Loading..." : "Load All Orders"}
               </button>
             )}
-            <button
-              onClick={handleCheckAdvanceMatches}
-              className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-amber-200"
-            >Check Advance Matches</button>
-            <button
-              onClick={() => setIsAddItemModalOpen(true)}
-              title="Add a new stock item without leaving this page (shortcut: Ctrl+Shift+A)"
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all border border-slate-200 flex items-center gap-1.5"
-            >
-              <FiPlus size={13} /> Add New Item
-            </button>
-            <button
-              onClick={() => setIsRequestModalOpen(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
-            >Add Purchase Req</button>
-            <button
-              onClick={() => setShowOrderModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200"
-            >
-              Add New Order
-            </button>
+            <div className="relative" ref={quickActionsRef}>
+              <button
+                onClick={() => setShowQuickActions((prev) => !prev)}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
+              >
+                Quick Actions
+                <FiChevronDown size={14} className={`transition-transform ${showQuickActions ? "rotate-180" : ""}`} />
+              </button>
+              {showQuickActions && (
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl border border-slate-200 shadow-xl z-50 overflow-hidden">
+                  <button
+                    onClick={() => { setShowOrderModal(true); setShowQuickActions(false); }}
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors border-b border-slate-100"
+                  >
+                    Add New Order
+                  </button>
+                  <button
+                    onClick={() => { setIsRequestModalOpen(true); setShowQuickActions(false); }}
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors border-b border-slate-100"
+                  >
+                    Add Purchase Req
+                  </button>
+                  <button
+                    onClick={() => { setIsAddItemModalOpen(true); setShowQuickActions(false); }}
+                    title="Shortcut: Ctrl+Shift+A"
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors border-b border-slate-100 flex items-center gap-1.5"
+                  >
+                    <FiPlus size={13} /> Add New Item
+                  </button>
+                  <button
+                    onClick={() => { handleCheckAdvanceMatches(); setShowQuickActions(false); }}
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors border-b border-slate-100"
+                  >
+                    Check Advance Match
+                  </button>
+                  <button
+                    onClick={() => { setShowRemainingOrderModal(true); setShowQuickActions(false); }}
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                  >
+                    Remaining Order
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
