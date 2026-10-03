@@ -116,31 +116,44 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // learning hook below can record the gap between the orders it settled.
       let comboOrderDates: string[] = [];
 
-      if (!match.billIds || match.billIds.length === 0) {
-        // Link-only confirm - the credit is now attributed to this institute,
-        // but there's no specific bill to post the payment against (e.g. an
-        // advance/unallocated credit). Nothing to apply, just record it.
-      } else if (match.billIds.length === 1) {
-        await applyPaymentToBill(
-          match.billIds[0],
-          match.creditedAmount,
-          finalDeductionAmount,
-          finalType || null,
-          deductionReason ?? match.deductionReason ?? ""
+      try {
+        if (!match.billIds || match.billIds.length === 0) {
+          // Link-only confirm - the credit is now attributed to this institute,
+          // but there's no specific bill to post the payment against (e.g. an
+          // advance/unallocated credit). Nothing to apply, just record it.
+        } else if (match.billIds.length === 1) {
+          await applyPaymentToBill(
+            match.billIds[0],
+            match.creditedAmount,
+            finalDeductionAmount,
+            finalType || null,
+            deductionReason ?? match.deductionReason ?? ""
+          );
+        } else {
+          // Combination match: distribute the credited amount + any classified deduction
+          // proportionally across the bills by their remaining-amount share, so a
+          // cluster-combo-with-deduction match settles each bill correctly instead of
+          // silently absorbing the deduction as if the full remaining amount was paid.
+          const result = await applyComboPayment(
+            match.billIds,
+            match.creditedAmount,
+            finalDeductionAmount,
+            finalType || null,
+            deductionReason ?? match.deductionReason ?? ""
+          );
+          comboOrderDates = result.contractDates;
+        }
+      } catch (applyError: any) {
+        // applyPaymentToBill/applyComboPayment refused (would overpay a bill -
+        // most likely it was already settled by a different match). The row
+        // was already reserved as "confirmed" above to block a concurrent
+        // double-apply; undo that reservation so it's back to pending instead
+        // of stuck confirmed with no payment actually applied.
+        await matchesCollection.updateOne(
+          { _id: match._id, status: "confirmed" },
+          { $set: { status: "pending", updatedAt: new Date() }, $unset: { confirmedAt: "", confirmedBy: "" } }
         );
-      } else {
-        // Combination match: distribute the credited amount + any classified deduction
-        // proportionally across the bills by their remaining-amount share, so a
-        // cluster-combo-with-deduction match settles each bill correctly instead of
-        // silently absorbing the deduction as if the full remaining amount was paid.
-        const result = await applyComboPayment(
-          match.billIds,
-          match.creditedAmount,
-          finalDeductionAmount,
-          finalType || null,
-          deductionReason ?? match.deductionReason ?? ""
-        );
-        comboOrderDates = result.contractDates;
+        return NextResponse.json({ error: applyError.message || "Failed to apply payment" }, { status: 409 });
       }
 
       await matchesCollection.updateOne(

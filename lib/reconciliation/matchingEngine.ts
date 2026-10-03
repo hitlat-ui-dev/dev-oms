@@ -406,6 +406,22 @@ export function findAmountMatch(
     return { bill: exact, remainingAmount: exact.remainingAmount, deductionAmount: 0, matchType: "exact" };
   }
 
+  // A bill whose shortfall lands cleanly on TDS's fixed 2% or TDS+GST's fixed
+  // 4% is almost certainly the right one - those are precise, known business
+  // rules, unlike Kasar's wide 0.1%-3% catch-all band. Sorting by smallest
+  // absolute deduction alone picked e.g. a ₹15,500 bill (1.21% "Kasar") over
+  // the real ₹15,624 bill (1.997% ≈ TDS) just because ₹188 < ₹312 - the
+  // wrong bill, with a vaguer deduction type, purely because it was
+  // numerically closer. Clean TDS/TDS+GST matches now sort first; ties
+  // within the same group still break on smallest deduction.
+  const isCleanDeduction = (remainingAmount: number, deductionAmount: number) => {
+    const percent = (deductionAmount / remainingAmount) * 100;
+    return (
+      Math.abs(percent - TDS_PERCENT) <= DEDUCTION_PERCENT_TOLERANCE ||
+      Math.abs(percent - TDS_GST_PERCENT) <= DEDUCTION_PERCENT_TOLERANCE
+    );
+  };
+
   const shortPaid = candidates
     .filter(
       (b) =>
@@ -413,7 +429,12 @@ export function findAmountMatch(
         creditedAmount >= b.remainingAmount * (1 - MAX_DEDUCTION_FRACTION)
     )
     .map((b) => ({ ...b, deductionAmount: round2(b.remainingAmount - creditedAmount) }))
-    .sort((a, b) => a.deductionAmount - b.deductionAmount);
+    .sort((a, b) => {
+      const aClean = isCleanDeduction(a.remainingAmount, a.deductionAmount);
+      const bClean = isCleanDeduction(b.remainingAmount, b.deductionAmount);
+      if (aClean !== bClean) return aClean ? -1 : 1;
+      return a.deductionAmount - b.deductionAmount;
+    });
 
   if (shortPaid.length > 0) {
     const best = shortPaid[0];

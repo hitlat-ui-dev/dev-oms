@@ -19,7 +19,21 @@ export async function applyPaymentToBill(
 
   const newPaidAmount = round2((bill.paidAmount || 0) + amount);
   const newDeductionAmount = round2((bill.deductionAmount || 0) + deductionAmount);
-  const settled = newPaidAmount + newDeductionAmount >= (bill.totalAmount || 0) - 5;
+  const totalAmount = bill.totalAmount || 0;
+
+  // A confirm should never be able to push a bill past its own total - this
+  // is the only thing standing between "two pending matches both suggested
+  // the same bill" (a real, confirmed scenario: several identical-amount
+  // open bills all getting suggested the same one until a fresh Run
+  // Matching pass catches up) and silently quadruple-paying one bill while
+  // its siblings stay unpaid forever.
+  if (newPaidAmount + newDeductionAmount > totalAmount + 5) {
+    throw new Error(
+      `Bill ${bill.orderNo || billId} would be overpaid: ₹${newPaidAmount + newDeductionAmount} against a ₹${totalAmount} total. It's likely already settled by another payment - re-run Matching and confirm the correct bill.`
+    );
+  }
+
+  const settled = newPaidAmount + newDeductionAmount >= totalAmount - 5;
 
   bill.paidAmount = newPaidAmount;
   bill.deductionAmount = newDeductionAmount;

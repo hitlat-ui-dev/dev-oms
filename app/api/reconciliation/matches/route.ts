@@ -50,6 +50,16 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
 
   const ops: any[] = [];
 
+  // Several open bills can be amount-identical (e.g. 4 orders for the same
+  // item/price), and several pending transactions can carry the identical
+  // credited amount too - without this, every one of them independently
+  // picks the SAME best-fit bill (nothing here knew another transaction in
+  // this same run had already claimed it), leaving that one bill suggested
+  // four times over while its siblings never get suggested at all. Claimed
+  // here as each transaction is assigned, so the next one in this run excludes
+  // it and falls through to the next candidate instead.
+  const claimedBillIds = new Set<string>();
+
   for (const statement of statements) {
     const transactions: Transaction[] = statement.transactions || [];
     for (const t of transactions) {
@@ -114,10 +124,11 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
         });
         // Never re-suggest a bill this same transaction's match was already
         // rejected against - the rest of that institute's open bills still
-        // matches normally.
-        const openBills = rejectedBillIds.length > 0
-          ? allOpenBills.filter((b: any) => !rejectedBillIds.includes(String(b._id)))
-          : allOpenBills;
+        // matches normally. Also exclude anything another transaction already
+        // claimed earlier in this same run (see claimedBillIds above).
+        const openBills = allOpenBills.filter(
+          (b: any) => !rejectedBillIds.includes(String(b._id)) && !claimedBillIds.has(String(b._id))
+        );
 
         const single = findAmountMatch(openBills, t.credit);
         if (single) {
@@ -171,6 +182,8 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
             }
           }
         }
+
+        for (const id of billIds) claimedBillIds.add(id);
       }
 
       const highConfidence = instituteMatch
