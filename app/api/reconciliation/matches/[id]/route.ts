@@ -12,6 +12,10 @@ import {
 } from "@/lib/reconciliation/learningEngine";
 import { applyPaymentToBill, reversePaymentFromBill, applyComboPayment } from "@/lib/reconciliation/paymentEngine";
 
+// Reasons a credited transaction is never going to be a bill payment at all,
+// so it shouldn't keep being offered up for institute/bill matching.
+export const TAG_VALUES = ["LAST_FY", "TDS", "DIVIDEND_INTEREST", "DD_CANCELLED", "OTHER"] as const;
+
 async function connectMongoose() {
   await clientPromise;
   if (mongoose.connection.readyState !== 1) {
@@ -75,14 +79,51 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const matchesCollection = db.collection("bank_reconciliation_matches");
 
     const body = await req.json();
-    const { action, correctedType, deductionAmount, deductionReason, userName } = body;
+    const { action, correctedType, deductionAmount, deductionReason, tag, userName } = body;
 
-    if (!["confirm", "reject", "reverse"].includes(action)) {
-      return NextResponse.json({ error: "action must be confirm, reject or reverse" }, { status: 400 });
+    if (!["confirm", "reject", "reverse", "tag", "untag"].includes(action)) {
+      return NextResponse.json({ error: "action must be confirm, reject, reverse, tag or untag" }, { status: 400 });
     }
 
     const match = await matchesCollection.findOne({ _id: new ObjectId(id) });
     if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+
+    // ============================================================
+    // TAG — mark a credit as not a bill payment at all (TDS refund, DD
+    // cancellation, bank interest, an old financial year's leftover, etc.),
+    // so it stops being swept into institute/bill auto-matching on every
+    // future Run Matching pass. Moves it out of "pending" entirely into its
+    // own "excluded" status/tab rather than just hiding it, so it stays
+    // auditable instead of silently vanishing.
+    // ============================================================
+    if (action === "tag") {
+      if (match.status !== "pending" && match.status !== "rejected") {
+        return NextResponse.json({ error: "Only a pending or rejected match can be tagged" }, { status: 400 });
+      }
+      if (!TAG_VALUES.includes(tag)) {
+        return NextResponse.json({ error: `tag must be one of: ${TAG_VALUES.join(", ")}` }, { status: 400 });
+      }
+      await matchesCollection.updateOne(
+        { _id: match._id },
+        { $set: { status: "excluded", tag, taggedBy: userName || "", updatedAt: new Date() } }
+      );
+      const updated = await matchesCollection.findOne({ _id: match._id });
+      return NextResponse.json(updated);
+    }
+
+    // UNTAG — send it back to Pending Review for a fresh Run Matching pass
+    // (e.g. tagged by mistake).
+    if (action === "untag") {
+      if (match.status !== "excluded") {
+        return NextResponse.json({ error: "Only an excluded match can be untagged" }, { status: 400 });
+      }
+      await matchesCollection.updateOne(
+        { _id: match._id },
+        { $set: { status: "pending", updatedAt: new Date() }, $unset: { tag: "", taggedBy: "" } }
+      );
+      const updated = await matchesCollection.findOne({ _id: match._id });
+      return NextResponse.json(updated);
+    }
 
     // ============================================================
     // CONFIRM

@@ -35,11 +35,13 @@ interface Match {
   matchedKeyword: string | null;
   confidence: number;
   confidenceLabel: "high" | "low" | "new";
-  status: "pending" | "confirmed" | "rejected";
+  status: "pending" | "confirmed" | "rejected" | "excluded";
   suggestedType: string | null;
   correctedType: string | null;
   confirmedAt?: string;
   confirmedBy?: string;
+  tag?: string | null;
+  taggedBy?: string;
   isAmbiguous?: boolean;
   ambiguousCandidates?: {
     sellerId: string;
@@ -189,6 +191,18 @@ function OrderLedgerMini({
 const RETURN_FAMILY = new Set(["CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"]);
 const DEDUCTION_TYPES = ["TDS", "TDS+GST", "Kasar"];
 
+// Reasons a credited transaction is never going to be a bill payment at all -
+// tagging one of these moves it out of auto-matching entirely instead of it
+// resurfacing as "unmatched" on every Run Matching pass.
+const TAG_OPTIONS: { value: string; label: string }[] = [
+  { value: "LAST_FY", label: "Last Financial Year" },
+  { value: "TDS", label: "TDS Refund" },
+  { value: "DIVIDEND_INTEREST", label: "Dividend / Interest" },
+  { value: "DD_CANCELLED", label: "DD Cancelled" },
+  { value: "OTHER", label: "Other (Non-Bill)" },
+];
+const tagLabel = (tag?: string | null) => TAG_OPTIONS.find((t) => t.value === tag)?.label || tag || "—";
+
 const formatMoney = (n: number) =>
   (n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -199,7 +213,7 @@ const confidencePill = (label: string) => {
   return "bg-slate-50 border-slate-200 text-slate-500";
 };
 
-type Tab = "pending" | "confirmed" | "rejected";
+type Tab = "pending" | "confirmed" | "rejected" | "excluded";
 
 export default function ReconciliationPage() {
   const [companies, setCompanies] = useState<any[]>([]);
@@ -234,6 +248,7 @@ export default function ReconciliationPage() {
   const [manualState, setManualState] = useState<
     Record<string, { sellerId: string; billId: string; deductionType: string; deductionAmount: string; deductionReason: string }>
   >({});
+  const [tagState, setTagState] = useState<Record<string, string>>({});
   // Same firm can have several bank accounts open at once (e.g. DEV ENTERPRISE
   // has both an HDFC and a Mehsana Co-op account) - the firm code alone
   // doesn't say which one a given statement entry came from, so the last 4
@@ -487,6 +502,19 @@ export default function ReconciliationPage() {
     runAction(m._id, `/api/reconciliation/matches/${m._id}`, { action: "reverse", userName: currentUsername });
   };
 
+  const handleTag = (m: Match, tag: string) => {
+    if (!tag) {
+      alert("Pick a reason first.");
+      return;
+    }
+    runAction(m._id, `/api/reconciliation/matches/${m._id}`, { action: "tag", tag, userName: currentUsername });
+  };
+
+  const handleUntag = (m: Match) => {
+    if (!confirm("Send this back to Pending Review for matching?")) return;
+    runAction(m._id, `/api/reconciliation/matches/${m._id}`, { action: "untag", userName: currentUsername });
+  };
+
   // Assigns institute (+ bill, if picked) AND immediately confirms it in the
   // same click - a manual pick here already IS the user's deliberate
   // decision, so a second separate "now click Confirm" step was just
@@ -531,7 +559,12 @@ export default function ReconciliationPage() {
       const confirmData = await confirmRes.json();
       if (!confirmRes.ok) throw new Error(confirmData?.error || "Saved the match but failed to confirm it");
 
-      fetchMatches();
+      // Drop the row locally instead of fetchMatches() - same reasoning as
+      // runAction above: a full re-fetch flips `loading` and blanks the whole
+      // table with a spinner, and re-sorts/re-shuffles every other row mid-
+      // workflow while confirming several entries back to back. This row just
+      // moved to "confirmed" either way, so it no longer belongs here.
+      setMatches((prev) => prev.filter((match) => match._id !== m._id));
       refreshSellers();
     } catch (err: any) {
       alert(err.message || "Failed to save");
@@ -639,7 +672,7 @@ export default function ReconciliationPage() {
           {/* Filters + Tabs */}
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1">
-              {(["pending", "confirmed", "rejected"] as Tab[]).map((t) => (
+              {(["pending", "confirmed", "rejected", "excluded"] as Tab[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -647,7 +680,7 @@ export default function ReconciliationPage() {
                     tab === t ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  {t === "pending" ? "Pending Review" : t}
+                  {t === "pending" ? "Pending Review" : t === "excluded" ? "Not A Bill" : t}
                 </button>
               ))}
             </div>
@@ -1003,6 +1036,26 @@ export default function ReconciliationPage() {
                                       Dismiss
                                     </button>
                                   )}
+                                  <div className="w-full border-t border-slate-100 mt-1 pt-1.5 flex flex-col gap-1">
+                                    <select
+                                      value={tagState[m._id] || ""}
+                                      onChange={(e) => setTagState((prev) => ({ ...prev, [m._id]: e.target.value }))}
+                                      title="Not a bill payment at all (TDS refund, DD cancellation, interest, a prior year's leftover, etc.) - tagging it stops it reappearing here on every Run Matching pass"
+                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1 px-1.5 text-[10px] font-bold focus:outline-none focus:border-rose-400"
+                                    >
+                                      <option value="">Not a bill…</option>
+                                      {TAG_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      disabled={busyId === m._id || !tagState[m._id]}
+                                      onClick={() => handleTag(m, tagState[m._id])}
+                                      className="w-full bg-rose-50 hover:bg-rose-100 disabled:opacity-40 text-rose-700 border border-rose-200 font-black uppercase text-[10px] tracking-wide py-1.5 px-3 rounded-lg transition-colors"
+                                    >
+                                      Tag
+                                    </button>
+                                  </div>
                                 </div>
                               </td>
                             </tr>
@@ -1018,7 +1071,7 @@ export default function ReconciliationPage() {
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-100">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 capitalize">
-                  {tab} Matches
+                  {tab === "excluded" ? "Not A Bill" : `${tab} Matches`}
                   <span className="ml-2 bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
                     {matches.length}
                   </span>
@@ -1037,26 +1090,52 @@ export default function ReconciliationPage() {
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
                         <th className="py-2.5 px-3">Date</th>
-                        <th className="py-2.5 px-3">Bill No</th>
-                        <th className="py-2.5 px-3">Institute</th>
+                        {tab === "excluded" ? (
+                          <>
+                            <th className="py-2.5 px-3">Description</th>
+                            <th className="py-2.5 px-3">Tag</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="py-2.5 px-3">Bill No</th>
+                            <th className="py-2.5 px-3">Institute</th>
+                          </>
+                        )}
                         <th className="py-2.5 px-3 text-right">Credited</th>
-                        <th className="py-2.5 px-3 text-right">Deduction</th>
-                        <th className="py-2.5 px-3">Type</th>
+                        {tab !== "excluded" && <th className="py-2.5 px-3 text-right">Deduction</th>}
+                        {tab !== "excluded" && <th className="py-2.5 px-3">Type</th>}
                         {tab === "confirmed" && <th className="py-2.5 px-3 text-center">Fast-track</th>}
-                        {tab === "confirmed" && <th className="py-2.5 px-3 text-center">Actions</th>}
+                        {(tab === "confirmed" || tab === "excluded") && <th className="py-2.5 px-3 text-center">Actions</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {matches.map((m) => (
                         <tr key={m._id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-600">{m.transactionDate}</td>
-                          <td className="py-2.5 px-3 font-mono text-slate-700">{m.billNos.join(", ") || "—"}</td>
-                          <td className="py-2.5 px-3 text-slate-700">{m.instituteName || "—"}</td>
+                          {tab === "excluded" ? (
+                            <>
+                              <td className="py-2.5 px-3 text-slate-700 max-w-[320px] whitespace-normal break-words">
+                                {m.transactionDescription}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-block bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                                  {tagLabel(m.tag)}
+                                </span>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="py-2.5 px-3 font-mono text-slate-700">{m.billNos.join(", ") || "—"}</td>
+                              <td className="py-2.5 px-3 text-slate-700">{m.instituteName || "—"}</td>
+                            </>
+                          )}
                           <td className="py-2.5 px-3 text-right font-mono text-emerald-700">₹{formatMoney(m.creditedAmount)}</td>
-                          <td className="py-2.5 px-3 text-right font-mono text-red-600">
-                            {m.deductionAmount ? `₹${formatMoney(m.deductionAmount)}` : "—"}
-                          </td>
-                          <td className="py-2.5 px-3">{m.correctedType || m.deductionType || "—"}</td>
+                          {tab !== "excluded" && (
+                            <td className="py-2.5 px-3 text-right font-mono text-red-600">
+                              {m.deductionAmount ? `₹${formatMoney(m.deductionAmount)}` : "—"}
+                            </td>
+                          )}
+                          {tab !== "excluded" && <td className="py-2.5 px-3">{m.correctedType || m.deductionType || "—"}</td>}
                           {tab === "confirmed" && (
                             <td className="py-2.5 px-3 text-center">{m.highConfidence ? "⚡" : "—"}</td>
                           )}
@@ -1067,6 +1146,18 @@ export default function ReconciliationPage() {
                                 onClick={() => handleReverse(m)}
                                 className="inline-flex items-center gap-1 p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-40"
                                 title="Reverse"
+                              >
+                                <FiRotateCcw size={13} />
+                              </button>
+                            </td>
+                          )}
+                          {tab === "excluded" && (
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                disabled={busyId === m._id}
+                                onClick={() => handleUntag(m)}
+                                className="inline-flex items-center gap-1 p-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 transition-colors disabled:opacity-40"
+                                title="Send back to Pending Review"
                               >
                                 <FiRotateCcw size={13} />
                               </button>

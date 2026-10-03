@@ -67,10 +67,14 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       const key = `${statement._id}|${txnKey(t)}`;
       const existingMatch = existingByKey.get(key);
       // Confirmed is final - already posted to a bill, never touched again.
+      // Excluded means a human already tagged this credit as not a bill
+      // payment at all (TDS refund, DD cancellation, bank interest, a prior
+      // financial year's leftover, etc.) - re-processing it every run would
+      // just put it right back in front of the user as "unmatched" forever.
       // Rejected is NOT final - re-tried every run (excluding whichever
       // bill(s) were rejected for it before) so a wrong suggestion doesn't
       // permanently strand the transaction with no way to ever match it.
-      if (existingMatch && existingMatch.status === "confirmed") continue;
+      if (existingMatch && (existingMatch.status === "confirmed" || existingMatch.status === "excluded")) continue;
       const rejectedBillIds: string[] = existingMatch?.rejectedBillIds || [];
 
       // A payer keyword can legitimately belong to more than one institute (shared
