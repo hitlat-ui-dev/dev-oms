@@ -17,6 +17,15 @@ interface FeedbackContext {
   userName?: string;
 }
 
+// Every matchedKeyword is, by construction, already a member of the seller's
+// OWN statementDescriptionName list (collectInstituteCandidates in
+// matchingEngine.ts only ever sets it from there) - so blacklisting it can
+// only ever be correct when the SAME keyword is also registered by at least
+// one other institute (a genuinely shared/ambiguous tag, e.g. several
+// schools all filing "District Treasury, Mehsana"), and the user rejected
+// this one in favor of a different candidate. `isAmbiguous` is exactly that
+// signal, computed live per-transaction by collectInstituteCandidates.
+
 /**
  * Updates an institute's learned cluster (order-burst) shape: the gaps, in days,
  * between the contractDates of orders that a confirmed combo payment settled
@@ -174,7 +183,7 @@ export async function learnFromDeductionCorrection(
 /** HOOK 4 — engine suggested the wrong institute/bill; user rejected it. */
 export async function learnFromRejection(
   seller: any,
-  ctx: FeedbackContext & { matchedKeyword?: string }
+  ctx: FeedbackContext & { matchedKeyword?: string; isAmbiguous?: boolean }
 ): Promise<void> {
   if (ctx.matchedKeyword) {
     const keyword = ctx.matchedKeyword.trim();
@@ -183,15 +192,14 @@ export async function learnFromRejection(
       (a: any) => (a.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
     );
 
-    // A manual_seed alias was typed in directly on the Seller form (Statement
-    // Description Name) - a human already confirmed this keyword belongs to
-    // this institute. Rejecting a match never means that mapping was wrong;
-    // it means the suggested BILL/amount was wrong (the caller already
-    // records rejectedBillIds for that), so a manual_seed keyword must never
-    // be blacklisted here - that previously poisoned e.g. "DIET MEHSANA"'s
-    // own registered name after one unrelated bill-mismatch rejection,
-    // silently killing every future match for that institute.
-    if (alias?.source !== "manual_seed") {
+    // Not ambiguous means this institute was the sole candidate the keyword
+    // matched to - the rejection can only have been about the suggested
+    // BILL/amount (the caller already records rejectedBillIds for that), so
+    // blacklisting the keyword here would wrongly poison the institute's own
+    // registered name. (manual_seed kept as a belt-and-suspenders check for
+    // any caller that doesn't pass isAmbiguous.) This previously killed every
+    // future match for e.g. "DIET MEHSANA" after one unrelated rejection.
+    if (ctx.isAmbiguous && alias?.source !== "manual_seed") {
       seller.negativeKeywords = seller.negativeKeywords || [];
       const existing = seller.negativeKeywords.find(
         (n: any) => (n.keyword || "").trim().toLowerCase() === keyword.toLowerCase()

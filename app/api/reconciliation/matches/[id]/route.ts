@@ -239,6 +239,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             firmCode: match.firmCode,
             transactionDescription: match.transactionDescription,
             matchedKeyword: match.matchedKeyword,
+            isAmbiguous: !!match.isAmbiguous,
             userName,
           });
         }
