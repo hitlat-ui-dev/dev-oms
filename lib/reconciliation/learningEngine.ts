@@ -178,21 +178,32 @@ export async function learnFromRejection(
 ): Promise<void> {
   if (ctx.matchedKeyword) {
     const keyword = ctx.matchedKeyword.trim();
-    seller.negativeKeywords = seller.negativeKeywords || [];
-    const existing = seller.negativeKeywords.find(
-      (n: any) => (n.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
-    );
-    if (existing) {
-      existing.rejectedCount += 1;
-    } else {
-      seller.negativeKeywords.push({ keyword, rejectedCount: 1 });
-    }
-
     seller.aliasMeta = seller.aliasMeta || [];
     const alias = seller.aliasMeta.find(
       (a: any) => (a.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
     );
-    if (alias) alias.confidence = Math.max(0, alias.confidence - 2);
+
+    // A manual_seed alias was typed in directly on the Seller form (Statement
+    // Description Name) - a human already confirmed this keyword belongs to
+    // this institute. Rejecting a match never means that mapping was wrong;
+    // it means the suggested BILL/amount was wrong (the caller already
+    // records rejectedBillIds for that), so a manual_seed keyword must never
+    // be blacklisted here - that previously poisoned e.g. "DIET MEHSANA"'s
+    // own registered name after one unrelated bill-mismatch rejection,
+    // silently killing every future match for that institute.
+    if (alias?.source !== "manual_seed") {
+      seller.negativeKeywords = seller.negativeKeywords || [];
+      const existing = seller.negativeKeywords.find(
+        (n: any) => (n.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
+      );
+      if (existing) {
+        existing.rejectedCount += 1;
+      } else {
+        seller.negativeKeywords.push({ keyword, rejectedCount: 1 });
+      }
+
+      if (alias) alias.confidence = Math.max(0, alias.confidence - 2);
+    }
   }
 
   await seller.save();
