@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
-import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX } from "react-icons/fi";
-import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
+import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX, FiRefreshCw } from "react-icons/fi";
+import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS } from "@/lib/gemBids/columns";
 
 export interface GemBid {
   _id: string;
@@ -65,7 +65,16 @@ const TAG_SHORT_LABELS: Record<string, string> = {
   "Updated/Extended": "U/E",
 };
 
-const LINK_COLUMNS = new Set(["bidLink", "buyerAddedBidSpecificAtcUrl"]);
+const LINK_COLUMNS = new Set(["bidLink", "buyerAddedBidSpecificAtcUrl", "specificationDocumentUrl", "boqDetailDocumentUrl"]);
+// Short prefix for a stacked link line, so three link lines in the same
+// cell (ATC/Spec/BOQ, all under Document required from seller) read as
+// which-is-which instead of three identical bare "Link"s. Unset (plain
+// "Link") for a link column that's never stacked with another one.
+const STACKED_LINK_PREFIX: Record<string, string> = {
+  buyerAddedBidSpecificAtcUrl: "ATC",
+  specificationDocumentUrl: "Spec",
+  boqDetailDocumentUrl: "BOQ",
+};
 
 // Three columns render a second field stacked underneath the first (folded
 // in via BID_COLUMNS' hiddenInTable so that second field still gets its own
@@ -75,7 +84,7 @@ const MERGED_COLUMN_LABELS: Record<string, string> = {
   address: "Address / Dept / City",
   bidToRaEnabled: "Bid To RA / RA",
   evaluationMethod: "Evaluation / EMD",
-  documentRequiredFromSeller: "Doc Required / ATC",
+  documentRequiredFromSeller: "Doc Required / ATC / Spec / BOQ",
 };
 
 // Body-row rendering for the merged (stacked) columns - each maps its
@@ -84,7 +93,12 @@ const STACKED_GROUPS: Record<string, string[]> = {
   address: ["address", "departmentNameAndAddress", "consigneeCity"],
   bidToRaEnabled: ["bidToRaEnabled", "raQualificationRule"],
   evaluationMethod: ["evaluationMethod", "emdAmount"],
-  documentRequiredFromSeller: ["documentRequiredFromSeller", "buyerAddedBidSpecificAtcUrl"],
+  documentRequiredFromSeller: [
+    "documentRequiredFromSeller",
+    "buyerAddedBidSpecificAtcUrl",
+    "specificationDocumentUrl",
+    "boqDetailDocumentUrl",
+  ],
 };
 
 export default function GemBidTable({
@@ -215,17 +229,14 @@ export default function GemBidTable({
 
   const effectiveSectionFor = (b: GemBid): SectionKey => (allSectionsMode ? b.currentSection : currentSectionKey);
   const showSectionCol = allSectionsMode;
-  // In All Bids mode these headers show whenever *any* row could need them -
-  // a submitted_bids row still gets its Status/Bid Status controls, a
-  // bids_to_fill row its Party dropdown, same as viewing that section's own
-  // tab would show; each body cell below checks the row's own
-  // effectiveSectionFor() rather than this flag to decide whether to render
-  // the real control or a blank dash for a row the column doesn't apply to.
-  const showStatusCol = allSectionsMode || currentSectionKey === "submitted_bids";
-  const showBidStatusCol = allSectionsMode || currentSectionKey === "submitted_bids";
-  const PARTY_COL_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
-  const showPartyCol = allSectionsMode || PARTY_COL_SECTIONS.has(currentSectionKey);
-  const extraColCount = [showSectionCol, showStatusCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
+  // Status/Bid Status/Party are each one specific section's own thing, not
+  // shown in All Bids (or any other section) even for a row that happens to
+  // be in that section - these used to also show in All Bids mode (matching
+  // each row's own section), which turned out to be more confusing than
+  // useful; reverted to simple single-section visibility by request.
+  const showBidStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
+  const showPartyCol = !allSectionsMode && currentSectionKey === "bids_to_fill";
+  const extraColCount = [showSectionCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
 
   const dropdownOptions = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -360,7 +371,7 @@ export default function GemBidTable({
   const deleteBids = async (bidNos: string[]) => {
     if (bidNos.length === 0) return;
     const label = bidNos.length === 1 ? `bid ${bidNos[0]}` : `${bidNos.length} bids`;
-    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${label}? Kept in Deleted Bids for 7 days (restorable there) before it's gone for good.`)) return;
     setBusy(true);
     try {
       const res = await fetch("/api/gem-bids", {
@@ -384,21 +395,23 @@ export default function GemBidTable({
     }
   };
 
-  const updateSubmittedStatus = async (bidNo: string, status: string) => {
-    setBusy(true);
+  const [refreshingStatuses, setRefreshingStatuses] = useState(false);
+
+  // Queues every Submitted Bids bid for a GeM Bid Exporter re-check (same
+  // background-worker-polls-the-OMS pattern as Start Sync and Fetch Bid
+  // Documents) - the button just queues it, it doesn't wait for the
+  // extension to actually finish (that can take a while across many bids).
+  const refreshBidStatuses = async () => {
+    setRefreshingStatuses(true);
     try {
-      const res = await fetch("/api/gem-bids/submitted-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates: [{ bidNo, status }] }),
-      });
+      const res = await fetch("/api/gem-bids/refresh-status", { method: "POST" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Status update failed");
-      onBidsUpdated((prev) => prev.map((b) => (b.bidNo === bidNo ? { ...b, submittedStatus: status } : b)));
+      if (!res.ok) throw new Error(data.error || "Failed to queue status refresh");
+      alert(`Queued ${data.queuedCount ?? 0} bid(s) for a status refresh. The extension checks about once a minute.`);
     } catch (err: any) {
-      alert(err.message || "Status update failed");
+      alert(err.message || "Failed to queue status refresh");
     } finally {
-      setBusy(false);
+      setRefreshingStatuses(false);
     }
   };
 
@@ -710,8 +723,23 @@ export default function GemBidTable({
                 Bid No {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
               </th>
               {showSectionCol && <th className="py-2 px-2 whitespace-nowrap">Section</th>}
-              {showStatusCol && <th className="py-2 px-2 whitespace-nowrap">Status</th>}
-              {showBidStatusCol && <th className="py-2 px-2 whitespace-nowrap">Bid Status</th>}
+              {showBidStatusCol && (
+                <th className="py-2 px-2 whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    Bid Status
+                    <button
+                      type="button"
+                      disabled={refreshingStatuses}
+                      onClick={refreshBidStatuses}
+                      title="Fetch current status from GeM for every bid in this section"
+                      className="flex items-center gap-1 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[8px] tracking-wide py-1 px-2 rounded normal-case"
+                    >
+                      <FiRefreshCw size={9} className={refreshingStatuses ? "animate-spin" : ""} />
+                      {refreshingStatuses ? "Refreshing..." : "Refresh"}
+                    </button>
+                  </div>
+                </th>
+              )}
               {showPartyCol && <th className="py-2 px-2 whitespace-nowrap">Party</th>}
               {otherColumns.map((col) => (
                 <th key={col.key} className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort(col.key)}>
@@ -771,79 +799,29 @@ export default function GemBidTable({
                       </span>
                     </td>
                   )}
-                  {showStatusCol && (
-                    <td className="py-2 px-2">
-                      {effectiveSectionFor(b) === "submitted_bids" ? (
-                        <select
-                          value={b.submittedStatus || "Active"}
-                          disabled={busy}
-                          onChange={(e) => updateSubmittedStatus(b.bidNo, e.target.value)}
-                          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold"
-                        >
-                          {SUBMITTED_STATUSES.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-                  )}
                   {showBidStatusCol && (
                     <td className="py-2 px-2">
-                      {effectiveSectionFor(b) === "submitted_bids" ? (
-                        <input
-                          key={b.bidStatus || ""}
-                          defaultValue={b.bidStatus || ""}
-                          disabled={busy}
-                          onBlur={(e) => {
-                            if (e.target.value !== (b.bidStatus || "")) quickUpdate(b.bidNo, "bidStatus", e.target.value);
-                          }}
-                          placeholder="—"
-                          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
-                        />
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
+                      <input
+                        key={b.bidStatus || ""}
+                        defaultValue={b.bidStatus || ""}
+                        disabled={busy}
+                        onBlur={(e) => {
+                          if (e.target.value !== (b.bidStatus || "")) quickUpdate(b.bidNo, "bidStatus", e.target.value);
+                        }}
+                        placeholder="—"
+                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
+                      />
                     </td>
                   )}
                   {showPartyCol && (
                     <td className="py-2 px-2">
-                      {PARTY_COL_SECTIONS.has(effectiveSectionFor(b)) ? (
-                        <>
-                          {/* Multiple parties can fill the same bid (split
-                              quantities, alternates, etc.) - native multi-select
-                              over a custom dropdown since this is a dense table
-                              cell, not a spacious form; ctrl/cmd+click or drag
-                              to pick more than one, same as any multi-select. */}
-                          <select
-                            multiple
-                            size={Math.min(4, Math.max(2, companies.length))}
-                            value={b.selectedPartyIds || (b.selectedPartyId ? [b.selectedPartyId] : [])}
-                            disabled={busy}
-                            onChange={(e) =>
-                              quickUpdate(
-                                b.bidNo,
-                                "selectedPartyIds",
-                                Array.from(e.target.selectedOptions).map((o) => o.value)
-                              )
-                            }
-                            className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold max-w-[140px]"
-                          >
-                            {companies.map((c) => (
-                              <option key={c._id} value={c._id}>
-                                {c.firmName}
-                                {c.firmCode ? ` (${c.firmCode})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
-                        </>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
+                      <PartySelect
+                        companies={companies}
+                        selectedIds={b.selectedPartyIds || (b.selectedPartyId ? [b.selectedPartyId] : [])}
+                        disabled={busy}
+                        onChange={(ids) => quickUpdate(b.bidNo, "selectedPartyIds", ids)}
+                      />
+                      {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
                     </td>
                   )}
                   {otherColumns.map((col) => {
@@ -858,13 +836,14 @@ export default function GemBidTable({
                         <td key={col.key} className={`py-2 px-2 ${wide ? "max-w-[300px]" : "max-w-[220px]"}`}>
                           {group.map((fieldKey, i) => {
                             if (LINK_COLUMNS.has(fieldKey)) {
+                              const prefix = STACKED_LINK_PREFIX[fieldKey];
                               return (
                                 <div key={fieldKey} className={i === 0 ? "" : "text-[10px]"}>
                                   {b[fieldKey] ? (
                                     <a href={b[fieldKey]} target="_blank" rel="noreferrer" className="text-blue-600 underline">
-                                      Link
+                                      {prefix ? `${prefix}: Link` : "Link"}
                                     </a>
-                                  ) : (
+                                  ) : prefix ? null : (
                                     <span className="text-slate-400">—</span>
                                   )}
                                 </div>
@@ -1059,6 +1038,109 @@ export default function GemBidTable({
                 Save
               </button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Searchable multi-select for the Party column (Bids to Fill): a trigger
+// button showing how many are picked, selected parties as removable chips
+// below it, and a dropdown panel with a search box on top over the
+// checkbox list - a plain <select multiple> (ctrl/cmd-click to multi-pick)
+// worked but wasn't discoverable/searchable enough for a firm list that
+// can run long, and had no obvious way to remove one selection at a time.
+function PartySelect({
+  companies,
+  selectedIds,
+  disabled,
+  onChange,
+}: {
+  companies: Company[];
+  selectedIds: string[];
+  disabled: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const selected = companies.filter((c) => selectedIds.includes(c._id));
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? companies.filter((c) => c.firmName.toLowerCase().includes(query) || (c.firmCode || "").toLowerCase().includes(query))
+    : companies;
+
+  const toggle = (id: string) => {
+    onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
+  };
+  const remove = (id: string) => onChange(selectedIds.filter((x) => x !== id));
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] font-bold min-w-[110px] max-w-[150px] text-left disabled:opacity-40 truncate"
+      >
+        {selected.length === 0 ? <span className="text-slate-400">Select party...</span> : `${selected.length} selected`}
+      </button>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1 max-w-[150px]">
+          {selected.map((c) => (
+            <span
+              key={c._id}
+              className="flex items-center gap-0.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-full pl-1.5 pr-0.5 py-0.5 text-[9px] font-bold max-w-full"
+            >
+              <span className="truncate">{c.firmName}</span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => remove(c._id)}
+                className="hover:bg-blue-200 rounded-full p-0.5 shrink-0"
+                aria-label={`Remove ${c.firmName}`}
+              >
+                <FiX size={9} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {open && (
+        <div className="absolute z-40 top-full left-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search party..."
+            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] mb-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <div className="max-h-40 overflow-y-auto flex flex-col gap-0.5">
+            {filtered.length === 0 ? (
+              <span className="text-[10px] text-slate-400 px-1 py-1">No match</span>
+            ) : (
+              filtered.map((c) => (
+                <label
+                  key={c._id}
+                  className="flex items-center gap-1.5 text-[11px] text-slate-700 px-1 py-1 hover:bg-slate-50 rounded cursor-pointer"
+                >
+                  <input type="checkbox" checked={selectedIds.includes(c._id)} onChange={() => toggle(c._id)} />
+                  {c.firmName}
+                  {c.firmCode ? ` (${c.firmCode})` : ""}
+                </label>
+              ))
+            )}
           </div>
         </div>
       )}

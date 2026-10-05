@@ -46,6 +46,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       fetch("/api/courier/auto", { method: "POST" }).catch((err) =>
         console.error("Courier auto-run check failed silently:", err)
       );
+      // Permanently remove any GeM bid past its 7-day Deleted Bids window
+      fetch("/api/gem-bids/purge-deleted", { method: "POST" }).catch((err) =>
+        console.error("GeM bid purge check failed silently:", err)
+      );
     }
   }, [isLoginPage, router]);
 

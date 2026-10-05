@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
-import { EDITABLE_FIELD_KEYS } from "@/lib/gemBids/columns";
+import { EDITABLE_FIELD_KEYS, DATA_FIELD_KEYS } from "@/lib/gemBids/columns";
 
 const DB_NAME = "dev_oms_db";
 
@@ -16,6 +16,9 @@ export async function OPTIONS() {
 
 // GET: every stored bid (client filters/sorts/paginates per section — same convention as
 // the Orders board, no server-side pagination anywhere else in this app either).
+// Deleted bids (deletedAt set - see DELETE below) are left out by default,
+// same as a real delete used to look from every other tab's perspective -
+// ?section=deleted_bids is the one way to see them, for the Deleted Bids tab.
 // ?light=1 returns just {_id, bidNo, items, currentSection} - the Bid Document Maker
 // page's ATC bid picker only needs enough to populate and filter its dropdown, not
 // full bid documents.
@@ -30,7 +33,12 @@ export async function GET(req: Request) {
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);
-    const query = section ? { currentSection: section } : {};
+    const query =
+      section === "deleted_bids"
+        ? { deletedAt: { $exists: true, $ne: null } }
+        : section
+        ? { currentSection: section, deletedAt: { $exists: false } }
+        : { deletedAt: { $exists: false } };
     const bids = await db
       .collection("gem_bids")
       .find(query, light ? { projection: { bidNo: 1, items: 1, currentSection: 1 } } : undefined)
@@ -100,9 +108,18 @@ export async function PATCH(req: Request) {
   }
 }
 
-// DELETE: remove one or more bids permanently, by Bid No. Available on every
-// section (New Bids and Submitted Bids included) - change/move history rows
-// for a deleted bid are kept as an audit trail, only the live gem_bids doc goes.
+// DELETE: soft-delete one or more bids by Bid No - available on every
+// section (New Bids and Submitted Bids included). Sets deletedAt rather
+// than actually removing the doc, so it still shows (in the Deleted Bids
+// tab only - see GET above) for a 7-day grace window before
+// /api/gem-bids/purge-deleted removes it for good; change/move history
+// rows are kept as an audit trail regardless.
+//
+// Also writes/refreshes a standing tombstone per bidNo (a snapshot of its
+// scraped fields at delete time) that outlives the 7-day window and the
+// eventual purge - applyImport.ts checks it on every future sync so a
+// deleted bid doesn't just come back on the next scrape, unless GeM's own
+// data for it has genuinely changed since the delete.
 export async function DELETE(req: Request) {
   try {
     const body = await req.json();
@@ -113,9 +130,32 @@ export async function DELETE(req: Request) {
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);
-    const result = await db.collection("gem_bids").deleteMany({ bidNo: { $in: bidNos } });
+    const bidsCollection = db.collection("gem_bids");
+    const tombstonesCollection = db.collection("gem_bid_tombstones");
 
-    return NextResponse.json({ success: true, deletedCount: result.deletedCount || 0 }, { headers: corsHeaders });
+    const toDelete = await bidsCollection.find({ bidNo: { $in: bidNos } }).toArray();
+    const now = new Date();
+
+    if (toDelete.length > 0) {
+      const tombstoneOps = toDelete.map((bid: any) => ({
+        updateOne: {
+          filter: { bidNo: bid.bidNo },
+          update: {
+            $set: {
+              bidNo: bid.bidNo,
+              deletedAt: now,
+              snapshot: Object.fromEntries(DATA_FIELD_KEYS.map((k) => [k, String(bid[k] ?? "")])),
+            },
+          },
+          upsert: true,
+        },
+      }));
+      await tombstonesCollection.bulkWrite(tombstoneOps, { ordered: false });
+    }
+
+    const result = await bidsCollection.updateMany({ bidNo: { $in: bidNos } }, { $set: { deletedAt: now } });
+
+    return NextResponse.json({ success: true, deletedCount: result.modifiedCount || 0 }, { headers: corsHeaders });
   } catch (error: any) {
     console.error("GeM bids DELETE error:", error);
     return NextResponse.json({ error: error.message || "Delete failed" }, { status: 500, headers: corsHeaders });

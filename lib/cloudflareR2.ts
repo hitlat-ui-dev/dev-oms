@@ -79,11 +79,27 @@ export async function getFileFromR2(key: string): Promise<Buffer> {
  * A time-limited download URL for a private object — kept off the client
  * entirely otherwise, per the R2 spec's security note (never expose the
  * bucket publicly or hand out the R2 credentials themselves).
+ *
+ * downloadFileName, when given, sets Content-Disposition: attachment on the
+ * response so the browser saves the file under that exact name instead of
+ * guessing from the URL (which, being a signed URL with a query string, is
+ * not a reliable filename source) or trying to render a type it has no
+ * inline viewer for - a .docx opened that way can show as garbled text in
+ * the tab instead of downloading, and "Save Page As" from there produces a
+ * genuinely broken file. Left unset for the Document Vault's Preview
+ * button and similar inline-view links, where opening in the browser (a
+ * PDF, an image) is the actual intent.
  */
-export async function getSignedDownloadUrl(key: string, expirySeconds = 3600): Promise<string> {
+export async function getSignedDownloadUrl(key: string, expirySeconds = 3600, downloadFileName?: string): Promise<string> {
   const s3Client = getR2Client();
   const bucketName = process.env.R2_BUCKET_NAME || "dev-oms-backups";
 
-  const command = new GetObjectCommand({ Bucket: bucketName, Key: key });
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ...(downloadFileName
+      ? { ResponseContentDisposition: `attachment; filename="${downloadFileName.replace(/"/g, "'")}"` }
+      : {}),
+  });
   return getSignedUrl(s3Client, command, { expiresIn: expirySeconds });
 }

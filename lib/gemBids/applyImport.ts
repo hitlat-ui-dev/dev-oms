@@ -1,5 +1,5 @@
 import { DATA_FIELD_KEYS, computeHighlight, isExcludedByCategory, SYNC_PROTECTED_SECTIONS } from "./columns";
-import { diffBidFields } from "./diffEngine";
+import { diffBidFields, normalizeForCompare } from "./diffEngine";
 import { runExpirySweep } from "./expirySweep";
 
 export interface ApplyImportInput {
@@ -17,6 +17,7 @@ export interface ApplyImportResult {
   promotedCount: number;
   expiredDeletedCount: number;
   protectedSkippedCount: number;
+  tombstoneSkippedCount: number;
   runId: string;
 }
 
@@ -58,6 +59,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     promotedCount: 0,
     expiredDeletedCount: 0,
     protectedSkippedCount: 0,
+    tombstoneSkippedCount: 0,
     importedBy: userName || "",
   });
   const runId = runResult.insertedId;
@@ -90,10 +92,22 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
   const existingDocs = bidNos.length > 0 ? await bidsCollection.find({ bidNo: { $in: bidNos } }).toArray() : [];
   const existingByBidNo = new Map<string, any>(existingDocs.map((d: any) => [d.bidNo, d]));
 
+  // A bid the user deleted stays excluded from every future sync - even
+  // once its 7-day soft-delete window has passed and the live gem_bids doc
+  // is gone for good - unless GeM's own data for it has genuinely changed
+  // since the delete (the tombstone's snapshot is what it looked like at
+  // that moment, compared field-by-field below). See app/api/gem-bids/
+  // route.ts's DELETE handler for where these get written.
+  const tombstonesCollection = db.collection("gem_bid_tombstones");
+  const tombstoneDocs =
+    bidNos.length > 0 ? await tombstonesCollection.find({ bidNo: { $in: bidNos } }).toArray() : [];
+  const tombstoneByBidNo = new Map<string, any>(tombstoneDocs.map((t: any) => [t.bidNo, t]));
+
   let newCount = 0;
   let updatedCount = 0;
   let oldCount = 0;
   let protectedSkippedCount = 0;
+  let tombstoneSkippedCount = 0;
   const changeHistoryDocs: any[] = [];
   const bulkOps: any[] = [];
 
@@ -109,6 +123,31 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     if (existing && SYNC_PROTECTED_SECTIONS.includes(existing.currentSection)) {
       protectedSkippedCount++;
       continue;
+    }
+
+    // Still inside its 7-day soft-delete window - frozen in place, same as
+    // a protected section, so it doesn't un-delete itself or get its
+    // fields silently refreshed while sitting in Deleted Bids.
+    if (existing && existing.deletedAt) {
+      tombstoneSkippedCount++;
+      continue;
+    }
+
+    // Not currently in gem_bids at all (soft-delete window has lapsed and
+    // it was purged, or purged by an older flow) - a tombstone means it was
+    // deliberately deleted, so it only comes back if GeM's data for it has
+    // actually changed since that delete.
+    if (!existing) {
+      const tombstone = tombstoneByBidNo.get(bidNo);
+      if (tombstone) {
+        const changedSinceDelete = DATA_FIELD_KEYS.some(
+          (k) => normalizeForCompare(tombstone.snapshot?.[k]) !== normalizeForCompare(incoming[k])
+        );
+        if (!changedSinceDelete) {
+          tombstoneSkippedCount++;
+          continue;
+        }
+      }
     }
 
     const isHighlighted = computeHighlight(incoming.items);
@@ -193,7 +232,18 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
 
   await runsCollection.updateOne(
     { _id: runId },
-    { $set: { newCount, updatedCount, oldCount, excludedCount, promotedCount, expiredDeletedCount, protectedSkippedCount } }
+    {
+      $set: {
+        newCount,
+        updatedCount,
+        oldCount,
+        excludedCount,
+        promotedCount,
+        expiredDeletedCount,
+        protectedSkippedCount,
+        tombstoneSkippedCount,
+      },
+    }
   );
 
   return {
@@ -204,6 +254,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     promotedCount,
     expiredDeletedCount,
     protectedSkippedCount,
+    tombstoneSkippedCount,
     runId: runId.toString(),
   };
 }

@@ -76,12 +76,13 @@ export async function POST(req: Request) {
     for (let i = 0; i < parts.length; i++) {
       const key = `bids/${bidId}/output/${names[i]}`;
       await uploadFileToR2(parts[i], key, "application/pdf");
-      downloads.push({ fileName: names[i], url: await getSignedDownloadUrl(key) });
+      downloads.push({ fileName: names[i], url: await getSignedDownloadUrl(key, 3600, names[i]) });
     }
 
-    const docxKey = `bids/${bidId}/output/ATC-${safeBidNo}.docx`;
+    const docxName = `ATC-${safeBidNo}.docx`;
+    const docxKey = `bids/${bidId}/output/${docxName}`;
     await uploadFileToR2(docxBytes, docxKey, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    downloads.push({ fileName: `ATC-${safeBidNo}.docx`, url: await getSignedDownloadUrl(docxKey) });
+    downloads.push({ fileName: docxName, url: await getSignedDownloadUrl(docxKey, 3600, docxName) });
 
     return NextResponse.json({ partCount: parts.length, downloads, mode, note });
   } catch (error: any) {

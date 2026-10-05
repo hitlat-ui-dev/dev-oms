@@ -154,12 +154,13 @@ export async function POST(req: Request) {
     atcAllParts.forEach((part, i) => zip.file(atcAllFileNames[i], part));
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const zipFileName = `ATC-Bundle-${safeBidNo}.zip`;
     const key = `bids/${bidId}/output/ATC-Bundle-${safeBidNo}-${Date.now()}.zip`;
     await uploadFileToR2(zipBuffer, key, "application/zip");
 
     return NextResponse.json({
-      url: await getSignedDownloadUrl(key),
-      fileName: `ATC-Bundle-${safeBidNo}.zip`,
+      url: await getSignedDownloadUrl(key, 3600, zipFileName),
+      fileName: zipFileName,
       atcMode: atcResult.mode,
       notes,
     });

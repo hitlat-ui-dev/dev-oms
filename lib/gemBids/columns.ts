@@ -47,8 +47,12 @@ export const BID_COLUMNS: BidColumn[] = [
   // spec - still scraped/stored/diffed/editable, just not its own column.
   { key: "beneficiary", header: "Beneficiary :", filterType: "text", hiddenInTable: true },
   // Folded into the Document required from seller column's cell (stacked
-  // below it, as its own hyperlink line) and filter box.
+  // below it, each as its own hyperlink line, when the bid's PDF had a real
+  // link for it - see content.js's SPEC_LABEL/BOQ_LABEL comment, same "not
+  // every bid has one" caveat as ATC) and filter box.
   { key: "buyerAddedBidSpecificAtcUrl", header: "ATC", filterType: "text", hiddenInTable: true },
+  { key: "specificationDocumentUrl", header: "Specification Document", filterType: "text", hiddenInTable: true },
+  { key: "boqDetailDocumentUrl", header: "BOQ Detail Document", filterType: "text", hiddenInTable: true },
   { key: "documentRequiredFromSeller", header: "Document required from seller", filterType: "text" },
 ];
 

@@ -96,16 +96,16 @@ export default function DocumentMakerPage() {
   const [bidQuery, setBidQuery] = useState("");
   const [selectedBidId, setSelectedBidId] = useState("");
   const [generatingAtc, setGeneratingAtc] = useState(false);
+  const [atcPhase, setAtcPhase] = useState<"idle" | "fetching" | "generating">("idle");
   const [atcResult, setAtcResult] = useState<DownloadResult | null>(null);
 
   // The real multi-page ATC + Bid Document are fetched by the GeM Bid
   // Exporter extension (GeM blocks non-browser requests - see
-  // /api/gem-bids/cities's note), not this page directly - this just
-  // queues the request and polls for it to land.
+  // /api/gem-bids/cities's note), not this page directly - Generate ATC
+  // below queues this itself and waits for it, no separate button needed.
   const [docFetchStatus, setDocFetchStatus] = useState<DocFetchStatus | null>(null);
   const [hasBidDocument, setHasBidDocument] = useState(false);
   const [hasAtcDocument, setHasAtcDocument] = useState(false);
-  const [requestingFetch, setRequestingFetch] = useState(false);
 
   const [bundling, setBundling] = useState(false);
   const [bundleResult, setBundleResult] = useState<BundleResult | null>(null);
@@ -220,6 +220,13 @@ export default function DocumentMakerPage() {
     });
   };
 
+  const toggleSelectAllDocs = () => {
+    if (!vault) return;
+    setSelectedDocNames((prev) =>
+      prev.size === vault.documents.length ? new Set() : new Set(vault.documents.map((d) => d.name))
+    );
+  };
+
   const runMerge = async () => {
     if (!firmId || selectedDocNames.size === 0) return;
     setMerging(true);
@@ -252,6 +259,43 @@ export default function DocumentMakerPage() {
     setGeneratingAtc(true);
     setAtcResult(null);
     try {
+      // Auto-fetch the bid's real ATC Link + Bid Document first if that
+      // hasn't happened yet - no separate "Fetch Bid Documents" click
+      // needed. Skipped straight past if either is already cached (or a
+      // fetch was already attempted for this bid before), and quietly
+      // continues even if the fetch comes back empty (blank on many bids -
+      // buildAtcDocument falls back to a text summary cover in that case).
+      let status = docFetchStatus?.status || "idle";
+      if (status === "idle" && !hasBidDocument && !hasAtcDocument) {
+        setAtcPhase("fetching");
+        const queueRes = await fetch("/api/gem-bids/fetch-documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bidId: selectedBidId }),
+        });
+        if (!queueRes.ok) throw new Error("Failed to queue document fetch");
+        status = "pending";
+        setDocFetchStatus({ status: "pending" });
+
+        // Polled locally (not the passive background poll below) since ATC
+        // generation genuinely needs to wait for this - the extension's
+        // background worker checks about once a minute, so this can take a
+        // little while; capped so a stuck/offline extension doesn't hang
+        // the button forever.
+        const deadline = Date.now() + 3 * 60 * 1000;
+        while ((status === "pending" || status === "fetching") && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 4000));
+          const statusRes = await fetch(`/api/gem-bids/fetch-documents/status?bidId=${selectedBidId}`);
+          const statusData = await statusRes.json();
+          if (statusData?.error) break;
+          status = statusData.docFetch?.status || "idle";
+          setDocFetchStatus(statusData.docFetch || { status: "idle" });
+          setHasBidDocument(!!statusData.hasBidDocument);
+          setHasAtcDocument(!!statusData.hasAtcDocument);
+        }
+      }
+
+      setAtcPhase("generating");
       const res = await fetch("/api/document-maker/atc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -264,6 +308,7 @@ export default function DocumentMakerPage() {
       alert(err.message || "Failed to generate ATC");
     } finally {
       setGeneratingAtc(false);
+      setAtcPhase("idle");
     }
   };
 
@@ -288,34 +333,6 @@ export default function DocumentMakerPage() {
     setBundleResult(null);
     fetchDocStatus();
   }, [selectedBidId, fetchDocStatus]);
-
-  // Poll every ~3s while the extension's background worker is (or is about
-  // to start) fetching this bid's documents - same idea as the GeM Bids
-  // page's own sync-status poll, just scoped to one bid instead of a run.
-  useEffect(() => {
-    if (docFetchStatus?.status !== "pending" && docFetchStatus?.status !== "fetching") return;
-    const interval = setInterval(fetchDocStatus, 3000);
-    return () => clearInterval(interval);
-  }, [docFetchStatus?.status, fetchDocStatus]);
-
-  const requestFetchDocuments = async () => {
-    if (!selectedBidId) return;
-    setRequestingFetch(true);
-    try {
-      const res = await fetch("/api/gem-bids/fetch-documents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidId: selectedBidId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to queue fetch");
-      fetchDocStatus();
-    } catch (err: any) {
-      alert(err.message || "Failed to queue fetch");
-    } finally {
-      setRequestingFetch(false);
-    }
-  };
 
   const runBundle = async () => {
     if (!firmId || !selectedBidId) return;
@@ -538,6 +555,14 @@ export default function DocumentMakerPage() {
                   </div>
                 ) : (
                   <div className="p-5 flex flex-col gap-2">
+                    <label className="flex items-center gap-2 text-xs font-black uppercase text-slate-500 cursor-pointer pb-2 border-b border-slate-100 mb-1">
+                      <input
+                        type="checkbox"
+                        checked={vault!.documents.length > 0 && selectedDocNames.size === vault!.documents.length}
+                        onChange={toggleSelectAllDocs}
+                      />
+                      Select All Documents
+                    </label>
                     {vault!.documents.map((d) => (
                       <label key={d.name} className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
                         <input type="checkbox" checked={selectedDocNames.has(d.name)} onChange={() => toggleDoc(d.name)} />
@@ -604,37 +629,13 @@ export default function DocumentMakerPage() {
                   </p>
 
                   {selectedBidId && (
-                    <div className="border border-slate-200 rounded-xl p-3 flex flex-col gap-2 bg-slate-50">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase text-slate-500">Bid Documents</span>
-                        <button
-                          disabled={requestingFetch || docFetchStatus?.status === "pending" || docFetchStatus?.status === "fetching"}
-                          onClick={requestFetchDocuments}
-                          className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-1.5 px-3 rounded-lg transition-colors"
-                        >
-                          <FiDownload size={12} />
-                          {docFetchStatus?.status === "pending" || docFetchStatus?.status === "fetching"
-                            ? "Fetching..."
-                            : "Fetch Bid Documents"}
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-[10px] font-bold">
-                        <span className={hasBidDocument ? "text-emerald-600" : "text-slate-400"}>
-                          {hasBidDocument ? "✓ Bid Document ready" : "— Bid Document not fetched"}
-                        </span>
-                        <span className={hasAtcDocument ? "text-emerald-600" : "text-slate-400"}>
-                          {hasAtcDocument ? "✓ ATC Link document ready" : "— ATC Link document not fetched"}
-                        </span>
-                      </div>
-                      {docFetchStatus?.status === "pending" && (
-                        <p className="text-[10px] text-slate-400">
-                          Queued — the extension checks for this about once a minute. Keep it installed and your GeM
-                          login active in this browser.
-                        </p>
-                      )}
-                      {docFetchStatus?.status === "failed" && docFetchStatus.error && (
-                        <p className="text-[10px] text-red-600">{docFetchStatus.error}</p>
-                      )}
+                    <div className="flex flex-wrap gap-2 text-[10px] font-bold -mt-1">
+                      <span className={hasBidDocument ? "text-emerald-600" : "text-slate-400"}>
+                        {hasBidDocument ? "✓ Bid Document fetched" : "— Bid Document not fetched yet"}
+                      </span>
+                      <span className={hasAtcDocument ? "text-emerald-600" : "text-slate-400"}>
+                        {hasAtcDocument ? "✓ ATC Link document fetched" : "— ATC Link document not fetched yet"}
+                      </span>
                     </div>
                   )}
 
@@ -643,8 +644,23 @@ export default function DocumentMakerPage() {
                     onClick={runAtc}
                     className="w-fit flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
                   >
-                    <FiUploadCloud size={13} /> {generatingAtc ? "Generating..." : "Generate ATC"}
+                    <FiUploadCloud size={13} />
+                    {atcPhase === "fetching"
+                      ? "Fetching bid documents..."
+                      : atcPhase === "generating"
+                      ? "Generating ATC..."
+                      : "Generate ATC"}
                   </button>
+                  {atcPhase === "fetching" && (
+                    <p className="text-[10px] text-slate-400 -mt-2">
+                      Fetching the real Bid Document + ATC link via the GeM Bid Exporter extension (checks about once
+                      a minute, keep it installed with your GeM login active) — falls back to a text summary cover if
+                      this bid has no ATC link available.
+                    </p>
+                  )}
+                  {docFetchStatus?.status === "failed" && docFetchStatus.error && (
+                    <p className="text-[10px] text-red-600 -mt-2">{docFetchStatus.error}</p>
+                  )}
                   {atcResult && (
                     <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
                       <p className="text-[10px] font-black uppercase text-purple-700 mb-1.5">

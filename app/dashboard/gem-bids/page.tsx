@@ -15,6 +15,7 @@ interface LastRun {
   promotedCount?: number;
   expiredDeletedCount?: number;
   protectedSkippedCount?: number;
+  tombstoneSkippedCount?: number;
 }
 
 interface ChangeHistoryRow {
@@ -43,12 +44,14 @@ interface SyncRun {
 
 export default function GemBidsPage() {
   const [bids, setBids] = useState<GemBid[]>([]);
+  const [deletedBids, setDeletedBids] = useState<GemBid[]>([]);
   const [loading, setLoading] = useState(true);
   // "all" is a combined search-everything view, not a real workflow stage a
-  // bid can be *in* (see lib/gemBids/columns.ts's SECTIONS comment) - it's
-  // the default landing tab so search always starts from "show me
-  // everything" rather than one narrow stage.
-  const [activeSection, setActiveSection] = useState<SectionKey | "all">("all");
+  // bid can be *in* (see lib/gemBids/columns.ts's SECTIONS comment) - same
+  // for "deleted_bids", a 7-day holding area rather than one, see
+  // fetchDeletedBids. the default landing tab so search always starts from
+  // "show me everything" rather than one narrow stage.
+  const [activeSection, setActiveSection] = useState<SectionKey | "all" | "deleted_bids">("all");
   const [currentUsername, setCurrentUsername] = useState("");
 
   const [historyBidNo, setHistoryBidNo] = useState<string | null>(null);
@@ -216,6 +219,18 @@ export default function GemBidsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // A bid that's been deleted (see GemBidTable's deleteBids) - soft-deleted
+  // for 7 days (/api/gem-bids/purge-deleted removes it for good after
+  // that, fired once per site visit from app/layout.tsx) rather than gone
+  // immediately, so a mistaken delete can still be undone. Fetched
+  // separately from the main bids list, which now excludes these.
+  const fetchDeletedBids = useCallback(() => {
+    fetch("/api/gem-bids?section=deleted_bids")
+      .then((res) => res.json())
+      .then((data) => setDeletedBids(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load deleted GeM bids", err));
+  }, []);
+
   const fetchLastRun = useCallback(() => {
     fetch("/api/gem-bids/last-run")
       .then((res) => res.json())
@@ -232,9 +247,10 @@ export default function GemBidsPage() {
 
   const refetchAll = useCallback(() => {
     fetchBids();
+    fetchDeletedBids();
     fetchLastRun();
     fetchSyncStatus();
-  }, [fetchBids, fetchLastRun, fetchSyncStatus]);
+  }, [fetchBids, fetchDeletedBids, fetchLastRun, fetchSyncStatus]);
 
   useEffect(() => {
     refetchAll();
@@ -331,8 +347,13 @@ export default function GemBidsPage() {
   }, [bids]);
 
   const bidsInActiveSection = useMemo(
-    () => (activeSection === "all" ? bids : bids.filter((b) => b.currentSection === activeSection)),
-    [bids, activeSection]
+    () =>
+      activeSection === "all"
+        ? bids
+        : activeSection === "deleted_bids"
+        ? deletedBids
+        : bids.filter((b) => b.currentSection === activeSection),
+    [bids, deletedBids, activeSection]
   );
 
   const openHistory = async (bidNo: string) => {
@@ -441,6 +462,14 @@ export default function GemBidsPage() {
                   {s.label} <span className="ml-1 opacity-70">({sectionCounts[s.key] || 0})</span>
                 </button>
               ))}
+              <button
+                onClick={() => setActiveSection("deleted_bids")}
+                className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
+                  activeSection === "deleted_bids" ? "bg-rose-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Deleted Bids <span className="ml-1 opacity-70">({deletedBids.length})</span>
+              </button>
             </div>
           </div>
 
@@ -513,6 +542,9 @@ export default function GemBidsPage() {
                 <span>
                   Submitted Bids untouched: <span className="text-slate-800">{lastRun.protectedSkippedCount ?? 0}</span>
                 </span>
+                <span>
+                  Deleted bids kept out: <span className="text-slate-800">{lastRun.tombstoneSkippedCount ?? 0}</span>
+                </span>
               </div>
             )}
           </div>
@@ -522,6 +554,8 @@ export default function GemBidsPage() {
             <div className="flex justify-center items-center py-16">
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
             </div>
+          ) : activeSection === "deleted_bids" ? (
+            <DeletedBidsPanel bids={deletedBids} onRestored={() => { fetchDeletedBids(); fetchBids(); }} />
           ) : (
             <GemBidTable
               bids={bidsInActiveSection}
@@ -802,5 +836,125 @@ export default function GemBidsPage() {
         </div>
       )}
     </BlockGuard>
+  );
+}
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A simple, deliberately separate view (not GemBidTable) - deleted bids
+// have none of the workflow actions a live section's rows do (Edit, Send
+// To, Send Back), just Restore and a days-remaining-until-permanent-delete
+// countdown, so reusing that heavier component would mean suppressing most
+// of what it does rather than genuinely fitting it.
+function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: () => void }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const toggle = (bidNo: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(bidNo)) next.delete(bidNo);
+      else next.add(bidNo);
+      return next;
+    });
+  };
+
+  const restore = async (bidNos: string[]) => {
+    if (bidNos.length === 0) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/gem-bids/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidNos }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Restore failed");
+      setSelected(new Set());
+      onRestored();
+    } catch (err: any) {
+      alert(err.message || "Restore failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (bids.length === 0) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center text-slate-400 text-xs font-bold uppercase tracking-widest">
+        No deleted bids
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
+      {selected.size > 0 && (
+        <div className="p-3 bg-rose-50 border-b border-rose-100 rounded-t-2xl flex items-center gap-2">
+          <span className="text-[11px] font-black text-rose-700 uppercase">{selected.size} selected</span>
+          <button
+            disabled={busy}
+            onClick={() => restore(Array.from(selected))}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-colors ml-auto"
+          >
+            Restore
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-black">
+            <tr>
+              <th className="py-2 px-3 w-8">
+                <input
+                  type="checkbox"
+                  checked={selected.size === bids.length}
+                  onChange={() => setSelected(selected.size === bids.length ? new Set() : new Set(bids.map((b) => b.bidNo)))}
+                />
+              </th>
+              <th className="py-2 px-3 text-left whitespace-nowrap">Bid No</th>
+              <th className="py-2 px-3 text-left">Items</th>
+              <th className="py-2 px-3 text-left whitespace-nowrap">Deleted At</th>
+              <th className="py-2 px-3 text-left whitespace-nowrap">Purges In</th>
+              <th className="py-2 px-3 w-24"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {bids.map((b) => {
+              const deletedAt = b.deletedAt ? new Date(b.deletedAt) : null;
+              const daysLeft = deletedAt
+                ? Math.max(0, Math.ceil((deletedAt.getTime() + SEVEN_DAYS_MS - Date.now()) / (24 * 60 * 60 * 1000)))
+                : null;
+              return (
+                <tr key={b.bidNo} className="hover:bg-slate-50">
+                  <td className="py-2 px-3">
+                    <input type="checkbox" checked={selected.has(b.bidNo)} onChange={() => toggle(b.bidNo)} />
+                  </td>
+                  <td className="py-2 px-3 font-bold text-slate-700 whitespace-nowrap">{b.bidNo}</td>
+                  <td className="py-2 px-3 max-w-[300px] truncate text-slate-500" title={b.items || ""}>
+                    {b.items || "—"}
+                  </td>
+                  <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
+                    {deletedAt ? deletedAt.toLocaleDateString() : "—"}
+                  </td>
+                  <td className="py-2 px-3 text-rose-600 font-bold whitespace-nowrap">
+                    {daysLeft === null ? "—" : daysLeft === 0 ? "Today" : `${daysLeft} day${daysLeft === 1 ? "" : "s"}`}
+                  </td>
+                  <td className="py-2 px-3">
+                    <button
+                      disabled={busy}
+                      onClick={() => restore([b.bidNo])}
+                      className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 disabled:opacity-40 text-[10px] font-black uppercase px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      Restore
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

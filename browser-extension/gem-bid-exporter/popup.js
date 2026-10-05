@@ -48,6 +48,8 @@
       beneficiary: r["Beneficiary :"] || "",
       address: r["Address"] || "",
       buyerAddedBidSpecificAtcUrl: r["Buyer Added Bid Specific ATC"] || "",
+      specificationDocumentUrl: r["Specification Document"] || "",
+      boqDetailDocumentUrl: r["BOQ Detail Document"] || "",
     };
   }
 
@@ -62,6 +64,8 @@
     "Beneficiary :",
     "Address",
     "Buyer Added Bid Specific ATC",
+    "Specification Document",
+    "BOQ Detail Document",
   ];
 
   const EXPORT_HEADERS = [
@@ -76,6 +80,8 @@
   ];
   const BID_LINK_COL = EXPORT_HEADERS.indexOf("Bid Link");
   const ATC_COL = EXPORT_HEADERS.indexOf("Buyer Added Bid Specific ATC");
+  const SPEC_COL = EXPORT_HEADERS.indexOf("Specification Document");
+  const BOQ_COL = EXPORT_HEADERS.indexOf("BOQ Detail Document");
   const ITEMS_COL = EXPORT_HEADERS.indexOf("Items");
 
   const rowCountEl = document.getElementById("rowCount");
@@ -463,7 +469,7 @@
     });
     const bytes = buildXlsx(EXPORT_HEADERS, outRows, {
       highlightRows,
-      hyperlinkColumns: [BID_LINK_COL, ATC_COL],
+      hyperlinkColumns: [BID_LINK_COL, ATC_COL, SPEC_COL, BOQ_COL],
     });
     const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);

@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     for (let i = 0; i < parts.length; i++) {
       const key = `firms/${firmId}/generated/${timestamp}/${names[i]}`;
       await uploadFileToR2(parts[i], key, "application/pdf");
-      downloads.push({ fileName: names[i], url: await getSignedDownloadUrl(key) });
+      downloads.push({ fileName: names[i], url: await getSignedDownloadUrl(key, 3600, names[i]) });
     }
 
     return NextResponse.json({ partCount: parts.length, downloads });

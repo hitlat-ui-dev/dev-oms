@@ -66,22 +66,28 @@
     "Beneficiary :",
     "Address",
     "Buyer Added Bid Specific ATC",
+    "Specification Document",
+    "BOQ Detail Document",
   ];
 
   const LISTING_LABELS = ["Items:", "Quantity:", "Department Name And Address:", "Start Date:", "End Date:"];
 
-  // For this field, only the actual "Click here to view the file" hyperlink
-  // target is wanted in the export - not the surrounding sentence, and not
-  // the disclaimer paragraph that follows it. pdf-extract.js tags every
-  // page's clickable-link URLs onto that page's text (see LINK_MARK in
-  // lib/pdf-extract.js) and returns them back as "<label>__links" alongside
-  // the plain-text fields. When a bid's PDF has a real link annotation for
-  // this field, that URL is what goes in the cell. Many GeM bid PDFs don't
-  // actually embed a real link here at all (the download is a JavaScript
-  // action on GeM's website, not something written into the static PDF) -
-  // in that case the cell is left blank rather than showing any text,
-  // since a plain sentence isn't what was asked for.
+  // For these three fields, only the actual "Click here to view the file"
+  // hyperlink target is wanted in the export - not the surrounding
+  // sentence, and not the disclaimer paragraph that follows it. pdf-
+  // extract.js tags every page's clickable-link URLs onto that page's text
+  // (see LINK_MARK in lib/pdf-extract.js) and returns them back as
+  // "<label>__links" alongside the plain-text fields. When a bid's PDF has
+  // a real link annotation for one of these, that URL is what goes in the
+  // cell. Many GeM bid PDFs don't actually embed a real link here at all
+  // (the download is a JavaScript action on GeM's website, not something
+  // written into the static PDF) - in that case the cell is left blank
+  // rather than showing any text, since a plain sentence isn't what was
+  // asked for. Specification Document and BOQ Detail Document aren't on
+  // every bid (only ones GeM's buyer actually attached one to).
   const ATC_LABEL = "Buyer Added Bid Specific ATC";
+  const SPEC_LABEL = "Specification Document";
+  const BOQ_LABEL = "BOQ Detail Document";
 
   // Mirrors popup.js's EXPORT_HEADERS/export mapping exactly, so a batch
   // finishing on its own (GeM tab open, popup closed) produces the same
@@ -100,6 +106,8 @@
   ];
   const BID_LINK_COL = EXPORT_HEADERS.indexOf("Bid Link");
   const ATC_COL = EXPORT_HEADERS.indexOf(ATC_LABEL);
+  const SPEC_COL = EXPORT_HEADERS.indexOf(SPEC_LABEL);
+  const BOQ_COL = EXPORT_HEADERS.indexOf(BOQ_LABEL);
   const ITEMS_COL = EXPORT_HEADERS.indexOf("Items");
 
   async function exportRowsToXlsx(filenameTag) {
@@ -130,7 +138,7 @@
     });
     const bytes = buildXlsx(EXPORT_HEADERS, outRows, {
       highlightRows,
-      hyperlinkColumns: [BID_LINK_COL, ATC_COL],
+      hyperlinkColumns: [BID_LINK_COL, ATC_COL, SPEC_COL, BOQ_COL],
     });
     const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);
@@ -338,6 +346,10 @@
       const merged = { ...row, pdfStatus: pdfResult.status, pdfDirectUrl: pdfResult.pdfUrl || "", ...pdfResult.fields };
       const atcLinks = pdfResult.fields[ATC_LABEL + "__links"];
       merged[ATC_LABEL] = atcLinks && atcLinks.length ? atcLinks[0] : "";
+      const specLinks = pdfResult.fields[SPEC_LABEL + "__links"];
+      merged[SPEC_LABEL] = specLinks && specLinks.length ? specLinks[0] : "";
+      const boqLinks = pdfResult.fields[BOQ_LABEL + "__links"];
+      merged[BOQ_LABEL] = boqLinks && boqLinks.length ? boqLinks[0] : "";
       const total = omsRunId ? await appendOmsBatchRow(merged) : await appendRow(merged);
       await setStatus({ scanning: true, scanned: total, lastAction: omsRunId ? "city_batch" : "pdf", lastBidNo: row.bidNo });
     }
@@ -1022,6 +1034,8 @@
       beneficiary: r["Beneficiary :"] || "",
       address: r["Address"] || "",
       buyerAddedBidSpecificAtcUrl: r["Buyer Added Bid Specific ATC"] || "",
+      specificationDocumentUrl: r["Specification Document"] || "",
+      boqDetailDocumentUrl: r["BOQ Detail Document"] || "",
     };
   }
 
@@ -1105,6 +1119,18 @@
         }
       })();
       return true; // keep the message channel open for the async sendResponse above
+    }
+
+    // Nudges this script to (re-)check CITY_BATCH_KEY right now, rather than
+    // waiting for its own unconditional runBatchStepIfActive() call at the
+    // bottom of this file - needed when background.js sets that key *after*
+    // this script already loaded and ran that initial check (e.g. while it
+    // was still resolving an empty city cache for an "All Cities" run via
+    // GET_CITY_LIST above, on this same tab).
+    if (msg.action === "KICK_BATCH") {
+      runBatchStepIfActive();
+      sendResponse({ ok: true });
+      return true;
     }
 
     if (msg.action === "RUN_CONSIGNEE_SEARCH") {

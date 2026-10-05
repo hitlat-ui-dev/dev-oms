@@ -239,6 +239,21 @@ async function clearOrphanedClaimIfAny() {
   }
 }
 
+// Retries a chrome.tabs.sendMessage a few times (content.js may not have
+// injected/finished its own setup yet right after the tab was just created
+// or navigated) - shared by the city-list fetch and the batch-kick below so
+// neither has to hand-roll the same retry loop.
+async function sendTabMessageWithRetry(tabId, message, attempts = 12, delayMs = 1000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (e) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return null;
+}
+
 async function pollAndMaybeStartAutoSync() {
   try {
     await clearOrphanedClaimIfAny();
@@ -264,29 +279,78 @@ async function pollAndMaybeStartAutoSync() {
     // that happens to be the most recent one in the collection.
     if (!run || run.status !== "scraping" || run.phase !== "starting") return;
 
-    const state = run.filterState || "Gujarat";
-    let cities;
-    if (Array.isArray(run.filterCities) && run.filterCities.length) {
-      cities = run.filterCities;
+    // Claimed immediately, before the (possibly slow - see below) city-list
+    // resolution, so a second alarm tick a minute from now can't pick the
+    // same run up again and open a second tab/batch for it.
+    await chrome.storage.local.set({ [CLAIMED_RUN_KEY]: { runId: run._id, claimedAt: Date.now() } });
+
+    const existingTabs = await chrome.tabs.query({ url: "https://bidplus.gem.gov.in/*" });
+    const existingTab = existingTabs.find((t) => t.active) || existingTabs[0];
+    let tabId;
+    if (existingTab) {
+      await chrome.tabs.update(existingTab.id, { url: GEM_URL, active: true });
+      tabId = existingTab.id;
     } else {
-      // "All Cities" in the Start Sync modal sends filterCities as [] -
-      // this used to fall straight back to [""], a single search with no
-      // city filter at all, which for "All Cities" in Gujarat meant one
-      // continuous 330+ page, 3000+ bid scan. That turned out to be
-      // unreliable (it would eventually die with an error well into the
-      // scan, losing everything past that point) - expanding to the real
-      // per-city list and reusing the existing one-city-at-a-time batch
-      // loop (same code path as picking specific cities manually) means
-      // one city failing only costs that city, and each city's own scan is
-      // far shorter and less likely to hit whatever was killing the
-      // combined scan. If the cache is empty (nobody's ever clicked "Load
-      // All Cities From GeM" in the popup for this state yet), fall back
-      // to the old combined search rather than running an empty batch.
-      const cached = await getCachedCities(state);
-      cities = cached.length ? cached : [""];
+      const created = await chrome.tabs.create({ url: GEM_URL, active: true });
+      tabId = created.id;
     }
 
-    await chrome.storage.local.set({ [CLAIMED_RUN_KEY]: { runId: run._id, claimedAt: Date.now() } });
+    const state = run.filterState || "Gujarat";
+    let cities = Array.isArray(run.filterCities) && run.filterCities.length ? run.filterCities : null;
+
+    if (!cities) {
+      // "All Cities" in the Start Sync modal sends filterCities as [] - try
+      // the cache first (fast, no tab round trip).
+      const cached = await getCachedCities(state);
+      if (cached.length) {
+        cities = cached;
+      } else {
+        // Cache empty (nobody's ever clicked "Load All Cities From GeM" in
+        // the popup for this state) - fetch the real list straight from the
+        // tab just opened/navigated above, via the same GET_CITY_LIST path
+        // the popup's own button uses. This used to fall back to [""] here
+        // instead - one combined search with no city filter at all, which
+        // for "All Cities" in Gujarat meant a single continuous 300+ page
+        // scan. That path has now died mid-scan on its own twice (not a
+        // one-off) - removed entirely rather than kept as a "safety net"
+        // that was actually the least reliable option available.
+        const cityResult = await sendTabMessageWithRetry(tabId, { action: "GET_CITY_LIST", state });
+        if (cityResult && cityResult.ok && Array.isArray(cityResult.cities) && cityResult.cities.length) {
+          cities = cityResult.cities;
+          // Cache it so the next "All Cities" run for this state skips this
+          // wait entirely - best-effort, a failed cache write here doesn't
+          // block this run from using the list it already has.
+          fetch(`${apiBase}/api/gem-bids/cities`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state, cities }),
+          }).catch(() => {});
+        }
+      }
+    }
+
+    if (!cities || !cities.length) {
+      console.error(
+        "[GeM Bid Exporter] couldn't resolve a city list for",
+        state,
+        "- stopping this run rather than falling back to the unreliable combined search"
+      );
+      await chrome.storage.local.remove(CLAIMED_RUN_KEY);
+      await fetch(`${apiBase}/api/gem-bids/sync/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: run._id }),
+      }).catch(() => {});
+      chrome.notifications.create({
+        type: "basic",
+        iconUrl: "icons/icon128.png",
+        title: "GeM Bid Sync couldn't start",
+        message: `Couldn't load the city list for ${state}. Open the extension popup, click "Load All Cities From GeM" once, then try Start Sync again.`,
+        priority: 2,
+      });
+      return;
+    }
+
     await chrome.storage.local.set({
       [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
       [BID_START_DATE_TO_KEY]: run.dateTo || "",
@@ -301,13 +365,12 @@ async function pollAndMaybeStartAutoSync() {
       },
     });
 
-    const existing = await chrome.tabs.query({ url: "https://bidplus.gem.gov.in/*" });
-    if (existing.length) {
-      const tab = existing.find((t) => t.active) || existing[0];
-      await chrome.tabs.update(tab.id, { url: GEM_URL, active: true });
-    } else {
-      await chrome.tabs.create({ url: GEM_URL, active: true });
-    }
+    // content.js's own unconditional runBatchStepIfActive() call at the
+    // bottom of its file may already have run (and found nothing) before
+    // CITY_BATCH_KEY was set just now, especially on the "All Cities, empty
+    // cache" path above which can take a few seconds - nudge it explicitly
+    // rather than relying on that one-shot call alone having won the race.
+    sendTabMessageWithRetry(tabId, { action: "KICK_BATCH" }, 6, 500);
   } catch (e) {
     console.error("[GeM Bid Exporter] background sync poll failed:", e);
   }
