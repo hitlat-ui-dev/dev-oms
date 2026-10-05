@@ -344,6 +344,7 @@ export default function PurchaseLogisticsPage() {
           {activeTab === "Order Place" && (
             <OrderPlaceTable
               data={orderRequests}
+              vendors={vendors}
               onRefresh={fetchTabData}
               onCancel={handleCancel}
             />

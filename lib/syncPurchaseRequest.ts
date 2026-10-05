@@ -14,11 +14,31 @@ export async function syncPurchaseRequest(
   if (!stockDoc) return;
 
   const availableStock = Number(stockDoc.quantity || 0);
-  const totalReQty = Number(stockDoc.reQty || 0);
 
   // Calculate active purchase orders (ordered stock on the way)
   const opOrders = await db.collection("Order place Purchase").find({ sku: sku }).toArray();
   const orderedStock = opOrders.reduce((sum: number, o: any) => sum + Number(o.orderQty || 0), 0);
+
+  // Get all pending seller orders for this item SKU to aggregate remarks.
+  // Every pending order gets a line - institute, item name and the rate it
+  // was ordered at - not just the ones that happen to carry their own custom
+  // remark text; the order's own remark (if any) is appended after that.
+  const pendingOrders = await db.collection("sellerorders").find({ sku: sku, status: "TO CHECK" }).toArray();
+
+  // Re-derive the pending-demand qty from these live TO CHECK orders instead
+  // of trusting stock.reQty's stored value - that counter is only ever
+  // maintained by scattered $inc/$set calls across order create/edit/
+  // status-change paths, and any one of them drifting (confirmed happening
+  // for several SKUs - e.g. an order sitting in TO CHECK for real qty while
+  // stock.reQty read 0) silently made a real deficit compute as zero and
+  // never raise a Purchase Request. Self-heals the stored counter back to
+  // the correct value on every call - the same recalculation the DELETE
+  // route below already does from scratch, just run proactively here too.
+  const totalReQty = pendingOrders.reduce((sum: number, o: any) => sum + Number(o.reQty || 0), 0);
+  if (Number(stockDoc.reQty || 0) !== totalReQty) {
+    await db.collection("stock").updateOne({ sku: sku }, { $set: { reQty: totalReQty } });
+    await db.collection("items").updateOne({ sku: sku }, { $set: { reQty: totalReQty } });
+  }
 
   const deficit = totalReQty - (availableStock + orderedStock);
 
@@ -27,11 +47,6 @@ export async function syncPurchaseRequest(
     status: "Purchase Request"
   });
 
-  // Get all pending seller orders for this item SKU to aggregate remarks.
-  // Every pending order gets a line - institute, item name and the rate it
-  // was ordered at - not just the ones that happen to carry their own custom
-  // remark text; the order's own remark (if any) is appended after that.
-  const pendingOrders = await db.collection("sellerorders").find({ sku: sku, status: "TO CHECK" }).toArray();
   const aggregatedRemark = pendingOrders
     .map((o: any) => {
       const base = `• ${o.instituteName || "Unknown Buyer"}: ${o.itemName || itemDetails?.itemName || ""} @ ₹${o.rate ?? 0}`;

@@ -36,11 +36,12 @@ interface PurchaseOrder {
 
 interface OrderPlaceTableProps {
   data: PurchaseOrder[];
+  vendors: any[];
   onRefresh: () => void;
   onCancel: (req: PurchaseOrder) => void;
 }
 
-export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlaceTableProps) {
+export default function OrderPlaceTable({ data, vendors, onRefresh, onCancel }: OrderPlaceTableProps) {
   const [selectedRequest, setSelectedRequest] = useState<PurchaseOrder | null>(null);
   const [receivedQty, setReceivedQty] = useState<number>(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -56,6 +57,13 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
   const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
   const notePopoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Per-row vendor edit popover - lets a wrong vendor picked at order-creation
+  // time get fixed while the order still sits in Order Place.
+  const [editVendorId, setEditVendorId] = useState<string | null>(null);
+  const [vendorDraft, setVendorDraft] = useState("");
+  const [savingVendorId, setSavingVendorId] = useState<string | null>(null);
+  const vendorPopoverRef = useRef<HTMLDivElement | null>(null);
 
   // Filter States
   const [filterDate, setFilterDate] = useState("");
@@ -104,6 +112,50 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [openNoteId]);
+
+  // Same outside-click-to-close pattern as the note popover above.
+  useEffect(() => {
+    if (!editVendorId) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (vendorPopoverRef.current && !vendorPopoverRef.current.contains(e.target as Node)) {
+        setEditVendorId(null);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [editVendorId]);
+
+  const openVendorEdit = (req: PurchaseOrder) => {
+    setEditVendorId(req._id);
+    setVendorDraft(req.vendor || "");
+  };
+
+  const saveVendor = async (req: PurchaseOrder) => {
+    const vendor = vendorDraft.trim();
+    if (!vendor) {
+      alert("Vendor khali nahi ho sakta.");
+      return;
+    }
+    setSavingVendorId(req._id);
+    try {
+      const res = await fetch(`/api/orders/${req._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendor }),
+      });
+      if (res.ok) {
+        setEditVendorId(null);
+        onRefresh();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Vendor update nahi hua, dubara try karo.");
+      }
+    } catch {
+      alert("Network error - vendor update nahi hua.");
+    } finally {
+      setSavingVendorId(null);
+    }
+  };
 
   const openNote = (req: PurchaseOrder) => {
     setOpenNoteId(req._id);
@@ -415,7 +467,60 @@ export default function OrderPlaceTable({ data, onRefresh, onCancel }: OrderPlac
                   <td className="py-3 px-4 text-center text-xs font-bold text-slate-500">{req.prQty}</td>
                   <td className="py-3 px-4 text-center font-black text-slate-800 text-xs">{req.orderQty}</td>
                   <td className="py-3 px-4 font-bold text-blue-600 text-xs">₹{req.rate}</td>
-                  <td className="py-3 px-4 text-[10px] font-black text-slate-600 uppercase">{req.vendor}</td>
+                  <td className="py-3 px-4 relative">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-black text-slate-600 uppercase">{req.vendor}</span>
+                      <button
+                        type="button"
+                        onClick={() => (editVendorId === req._id ? setEditVendorId(null) : openVendorEdit(req))}
+                        title="Vendor change karo"
+                        className="p-1 rounded-md text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                      >
+                        <FiEdit3 size={12} />
+                      </button>
+                    </div>
+
+                    {editVendorId === req._id && (
+                      <div
+                        ref={vendorPopoverRef}
+                        className="absolute z-20 left-4 mt-2 w-60 bg-white border border-slate-200 rounded-xl shadow-2xl p-3 text-left"
+                      >
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-1.5">Change Vendor</p>
+                        <input
+                          type="text"
+                          list={`order-vendor-options-${req._id}`}
+                          value={vendorDraft}
+                          onChange={(e) => setVendorDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && saveVendor(req)}
+                          autoFocus
+                          placeholder="Search vendor..."
+                          className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 uppercase font-bold"
+                        />
+                        <datalist id={`order-vendor-options-${req._id}`}>
+                          {vendors.map((v: any) => (
+                            <option key={v._id} value={v.name} />
+                          ))}
+                        </datalist>
+                        <div className="flex items-center justify-end gap-2 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditVendorId(null)}
+                            className="text-[10px] font-bold text-slate-400 hover:text-slate-600"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => saveVendor(req)}
+                            disabled={savingVendorId === req._id}
+                            className="text-[10px] font-black text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg disabled:bg-slate-300"
+                          >
+                            {savingVendorId === req._id ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-[10px] text-slate-600">{req.remark}</td>
                   <td className="py-3 px-4 text-center relative">
                     <button
