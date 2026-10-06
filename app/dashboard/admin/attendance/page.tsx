@@ -1,6 +1,8 @@
 ﻿"use client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import BlockGuard from "@/components/BlockGuard";
 import PinGate from "@/components/PinGate";
 import {
@@ -18,6 +20,7 @@ import {
   FiCreditCard,
   FiCheckCircle,
   FiBookOpen,
+  FiDownload,
 } from "react-icons/fi";
 
 interface Employee {
@@ -385,6 +388,117 @@ export default function AttendancePage() {
     } catch (err: any) {
       alert("Undo nahi hua: " + err.message);
     }
+  };
+
+  // Salary Slip PDF - one page per employee for the month on screen. Pulls
+  // only from data already on screen (attendance counts, the calculated
+  // Net Payable, and this month's approval row if one exists) rather than a
+  // fresh fetch, so what's in the slip always matches what's visible in the
+  // table it was downloaded from.
+  const downloadSalarySlip = (p: {
+    id: string;
+    name: string;
+    emp?: Employee;
+    counts: Record<string, number>;
+    otTotal: number;
+    payableDays: number;
+    perDayRate: number;
+    netPayable: number;
+    balance: Balance;
+  }) => {
+    const approval = approvals[p.id];
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(10, 37, 64);
+    doc.text("SALARY SLIP", pageWidth / 2, 18, { align: "center" });
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(120);
+    doc.text("Dev OMS Internal Management System", pageWidth / 2, 24, { align: "center" });
+
+    doc.setDrawColor(220);
+    doc.line(14, 29, pageWidth - 14, 29);
+
+    doc.setFontSize(10);
+    doc.setTextColor(30);
+    doc.setFont("helvetica", "bold");
+    doc.text(p.name.toUpperCase(), 14, 38);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const infoLines = [
+      p.emp?.employeeCode ? `Employee Code: ${p.emp.employeeCode}` : "",
+      p.emp?.designation ? `Designation: ${p.emp.designation}` : "",
+      p.emp?.joiningDate ? `Joined: ${prettyDate(p.emp.joiningDate)}` : "",
+    ].filter(Boolean);
+    doc.text(infoLines, 14, 44);
+
+    doc.setFont("helvetica", "bold");
+    doc.text(`Month: ${monthLabel(month)}`, pageWidth - 14, 38, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.text(`Generated: ${prettyDate(todayLocal())}`, pageWidth - 14, 44, { align: "right" });
+
+    const attendanceStartY = 56 + (infoLines.length > 1 ? (infoLines.length - 1) * 4 : 0);
+    autoTable(doc, {
+      startY: attendanceStartY,
+      head: [["Present", "Absent", "Half Day", "Leave", "Holiday", "OT (hrs)", "Payable Days"]],
+      body: [[
+        p.counts["present"] || 0,
+        p.counts["absent"] || 0,
+        p.counts["half_day"] || 0,
+        p.counts["leave"] || 0,
+        p.counts["holiday"] || 0,
+        p.otTotal || 0,
+        p.payableDays,
+      ]],
+      theme: "grid",
+      styles: { fontSize: 9, halign: "center", cellPadding: 3 },
+      headStyles: { fillColor: [10, 37, 64], textColor: 255 },
+    });
+
+    const afterAttendanceY = (doc as any).lastAutoTable.finalY + 8;
+    const earningsRows: (string | number)[][] = [
+      ["Monthly Salary", inr(p.emp?.monthlySalary || 0)],
+      ["Per Day Rate (÷ 30)", inr(p.perDayRate)],
+      ["Payable Days", String(p.payableDays)],
+      ["Net Payable (Calculated)", inr(p.netPayable)],
+    ];
+    if (approval) {
+      earningsRows.push(["Approved Amount", inr(approval.finalSalary ?? approval.amount)]);
+      const recovered = (approval.finalSalary ?? approval.amount) - approval.amount;
+      if (recovered > 0) earningsRows.push(["Advance/Loan Deducted", `- ${inr(recovered)}`]);
+      earningsRows.push(["Amount Paid (Cash)", inr(approval.amount)]);
+    }
+    autoTable(doc, {
+      startY: afterAttendanceY,
+      body: earningsRows,
+      theme: "plain",
+      styles: { fontSize: 10, cellPadding: 2.5 },
+      columnStyles: { 0: { fontStyle: "normal", textColor: 90 }, 1: { fontStyle: "bold", halign: "right", textColor: 20 } },
+      didParseCell: (data) => {
+        const isFinalRow = data.row.index === earningsRows.length - 1;
+        if (isFinalRow && data.section === "body") {
+          data.cell.styles.fontSize = 12;
+          data.cell.styles.textColor = approval ? [16, 110, 60] : [10, 37, 64];
+        }
+      },
+    });
+
+    const afterEarningsY = (doc as any).lastAutoTable.finalY + 4;
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    if (!approval) {
+      doc.text("This month's salary has not been approved yet - figures above are the calculated estimate.", 14, afterEarningsY);
+    }
+    doc.text(
+      `Reference only (not deducted here): Advance Baki ${inr(p.balance.advanceBalance)} · Loan Baki ${inr(p.balance.loanBalance)}`,
+      14,
+      afterEarningsY + (approval ? 0 : 5)
+    );
+
+    doc.save(`SalarySlip_${p.name.replace(/[^a-zA-Z0-9]/g, "_")}_${month}.pdf`);
   };
 
   const setRow = (empId: string, patch: Partial<DraftRow>) => {
@@ -944,6 +1058,7 @@ export default function AttendancePage() {
                         <th className="py-2 px-3 text-center">Net Payable</th>
                         <th className="py-2 px-3 text-center">Adv/Loan Baki</th>
                         <th className="py-2 px-3 text-center">Approval</th>
+                        <th className="py-2 px-3 text-center">Slip</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1034,6 +1149,27 @@ export default function AttendancePage() {
                                   Approve
                                 </button>
                               )}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <button
+                                onClick={() =>
+                                  downloadSalarySlip({
+                                    id: person.id,
+                                    name: person.name,
+                                    emp,
+                                    counts,
+                                    otTotal,
+                                    payableDays,
+                                    perDayRate,
+                                    netPayable,
+                                    balance: bal,
+                                  })
+                                }
+                                title="Salary Slip PDF download karo"
+                                className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-800 hover:text-white transition-all"
+                              >
+                                <FiDownload size={13} />
+                              </button>
                             </td>
                           </tr>
                         );
