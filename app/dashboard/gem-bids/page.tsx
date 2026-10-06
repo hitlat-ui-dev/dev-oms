@@ -16,6 +16,7 @@ interface LastRun {
   expiredDeletedCount?: number;
   protectedSkippedCount?: number;
   tombstoneSkippedCount?: number;
+  fieldConflictCount?: number;
 }
 
 interface ChangeHistoryRow {
@@ -545,6 +546,12 @@ export default function GemBidsPage() {
                 <span>
                   Deleted bids kept out: <span className="text-slate-800">{lastRun.tombstoneSkippedCount ?? 0}</span>
                 </span>
+                <span>
+                  Field conflicts (manual edit vs GeM):{" "}
+                  <span className={lastRun.fieldConflictCount ? "text-rose-600 font-black" : "text-slate-800"}>
+                    {lastRun.fieldConflictCount ?? 0}
+                  </span>
+                </span>
               </div>
             )}
           </div>
@@ -571,7 +578,7 @@ export default function GemBidsPage() {
 
       {startSyncModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl p-5">
             <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 mb-1">Start Sync — GeM filters</h3>
             <p className="text-[11px] text-slate-500 mb-4">
               The GeM Bid Exporter extension will open GeM&apos;s Advance Search page on its own and apply these

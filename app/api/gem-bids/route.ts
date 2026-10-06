@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { EDITABLE_FIELD_KEYS, DATA_FIELD_KEYS } from "@/lib/gemBids/columns";
+import { normalizeForCompare } from "@/lib/gemBids/diffEngine";
 
 const DB_NAME = "dev_oms_db";
 
@@ -59,6 +60,14 @@ export async function GET(req: Request) {
 // Method, Bid To RA, RA Qualification Rule - the scrape gets these right and
 // other logic depends on them), and internal workflow fields (currentSection,
 // tag, etc.) can't be touched from here even if sent.
+//
+// Every field genuinely changed here (not just submitted - the Edit Bid
+// modal sends the whole form, most of it unchanged) is added to
+// manuallyEditedFields, a standing per-field allowlist applyImport.ts
+// checks on every future sync: a field on that list keeps the user's value
+// instead of being silently overwritten by GeM's own data for it, even if
+// GeM's data has since changed (see applyImport.ts's own comment for the
+// "but still flag it" half of that).
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
@@ -80,11 +89,17 @@ export async function PATCH(req: Request) {
     }
 
     const setDoc: Record<string, string> = {};
+    const newlyEditedFields: string[] = [];
     for (const key of EDITABLE_FIELD_KEYS) {
       if (Object.prototype.hasOwnProperty.call(fields, key)) {
-        setDoc[key] = String(fields[key] ?? "").trim();
+        const nextVal = String(fields[key] ?? "").trim();
+        setDoc[key] = nextVal;
+        if (normalizeForCompare(existing[key]) !== normalizeForCompare(nextVal)) {
+          newlyEditedFields.push(key);
+        }
       }
     }
+    const manuallyEditedFields = Array.from(new Set([...(existing.manuallyEditedFields || []), ...newlyEditedFields]));
 
     const now = new Date();
     await bidsCollection.updateOne(
@@ -95,6 +110,7 @@ export async function PATCH(req: Request) {
           manuallyEdited: true,
           manuallyEditedAt: now,
           manuallyEditedBy: editedBy || "",
+          manuallyEditedFields,
           updatedAt: now,
         },
       }

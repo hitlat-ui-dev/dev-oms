@@ -2,7 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import { getFileFromR2 } from "@/lib/cloudflareR2";
 import { generateAtcContentPage, AtcBidFields } from "./pdfEngine";
 import { renderPdfPagesToImages, buildImageBasedAtc } from "./imageAtcEngine";
-import { buildImagePagesDocx } from "./docxEngine";
+import { buildAtcTextDocx } from "./docxEngine";
 
 export interface BuildAtcResult {
   pdfDoc: PDFDocument;
@@ -11,20 +11,14 @@ export interface BuildAtcResult {
   note?: string;
 }
 
-async function buildTextFallback(
-  bid: any,
-  letterheadBytes: Buffer,
-  signBytes: Buffer | null,
-  stampBytes: Buffer | null
-): Promise<PDFDocument> {
-  const fields: AtcBidFields = {
+function atcFieldsFor(bid: any): AtcBidFields {
+  return {
     bidNo: bid.bidNo,
     items: bid.items,
     departmentNameAndAddress: bid.departmentNameAndAddress,
     address: bid.address,
     bidEndDateTime: bid.bidEndDateTime,
   };
-  return generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
 }
 
 /**
@@ -33,16 +27,22 @@ async function buildTextFallback(
  * ZIP bundle route, so both always produce the exact same ATC rather than
  * two slightly-diverging implementations.
  *
- * Image-based when the bid's real ATC document has been fetched (see
- * app/api/gem-bids/fetch-documents - bid.bidSpecificAtc.fileKey): the real
- * document's pages are rasterized and pasted onto the firm's letterhead,
- * one letterhead page per ATC page, with sign+stamp on every page. Falls
- * back to the old single-page text summary cover (just the bid's key
+ * The PDF is image-based when the bid's real ATC document has been fetched
+ * (see app/api/gem-bids/fetch-documents - bid.bidSpecificAtc.fileKey): the
+ * real document's pages are rasterized and pasted onto the firm's
+ * letterhead, one letterhead page per ATC page, with sign+stamp on every
+ * page. Falls back to a single-page text summary cover (just the bid's key
  * fields filled onto the letterhead) when there's no fetched ATC document
  * yet, or the fetched one failed to render for any reason - ATC generation
  * should never hard-fail just because the optional real-document step
  * hasn't happened, since GeM's ATC download is often not even a real link
  * to fetch in the first place (see fetch-documents/finish/route.ts's note).
+ *
+ * The Word copy is always the bid's key fields as genuinely editable text
+ * (see docxEngine.ts's buildAtcTextDocx) regardless of which PDF path ran -
+ * the real multi-page ATC's own pages are scans, not something that can
+ * honestly become "editable" without OCR, so the Word file covers the one
+ * part that's actual structured data either way.
  */
 export async function buildAtcDocument(
   bid: any,
@@ -53,6 +53,7 @@ export async function buildAtcDocument(
   let pdfDoc: PDFDocument;
   let mode: "image" | "text_fallback" = "text_fallback";
   let note: string | undefined;
+  const fields = atcFieldsFor(bid);
 
   const atcFileKey = bid.bidSpecificAtc?.fileKey;
   if (atcFileKey) {
@@ -64,25 +65,15 @@ export async function buildAtcDocument(
     } catch (err: any) {
       console.error("Image-based ATC generation failed, falling back to text cover:", err);
       note = `Couldn't use the fetched ATC document (${err.message || "unknown error"}) — used a text summary cover page instead.`;
-      pdfDoc = await buildTextFallback(bid, letterheadBytes, signBytes, stampBytes);
+      pdfDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
     }
   } else {
     note =
-      'No ATC document has been fetched for this bid yet — used a text summary cover page instead. Click "Fetch Bid Documents" first to enable the real multi-page ATC (not every bid has one available - see the note on that button).';
-    pdfDoc = await buildTextFallback(bid, letterheadBytes, signBytes, stampBytes);
+      "No ATC document has been fetched for this bid yet — used a text summary cover page instead (not every bid has a real ATC document available on GeM).";
+    pdfDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
   }
 
-  // Word version mirrors whatever the final PDF pages actually look like -
-  // re-rasterizing the generated PDF itself (not the raw source ATC) is
-  // correct for both the image-based and text-fallback path alike, since
-  // the text cover is also just a PDF page by the time this runs.
-  const finalBytes = Buffer.from(await pdfDoc.save());
-  const finalPageImages = await renderPdfPagesToImages(finalBytes);
-  const firstPage = pdfDoc.getPages()[0];
-  const docxBytes = await buildImagePagesDocx(finalPageImages, {
-    width: firstPage.getWidth(),
-    height: firstPage.getHeight(),
-  });
+  const docxBytes = await buildAtcTextDocx(fields, signBytes, stampBytes);
 
   return { pdfDoc, docxBytes, mode, note };
 }

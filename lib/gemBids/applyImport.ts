@@ -18,6 +18,7 @@ export interface ApplyImportResult {
   expiredDeletedCount: number;
   protectedSkippedCount: number;
   tombstoneSkippedCount: number;
+  fieldConflictCount: number;
   runId: string;
 }
 
@@ -108,6 +109,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
   let oldCount = 0;
   let protectedSkippedCount = 0;
   let tombstoneSkippedCount = 0;
+  let fieldConflictCount = 0;
   const changeHistoryDocs: any[] = [];
   const bulkOps: any[] = [];
 
@@ -183,10 +185,43 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       continue;
     }
 
-    const changed = diffBidFields(existing, incoming);
+    // A field the user has manually corrected (Edit Bid) keeps that value on
+    // every future sync, rather than GeM's own data for it silently winning
+    // back on the next scrape - substituted back to the existing (user's)
+    // value before diffing/building setDoc, so it's treated as unchanged no
+    // matter what GeM says. If GeM's current value for that field has
+    // actually diverged from the user's edit since the edit was made, that's
+    // flagged (hasFieldConflict/fieldConflicts) rather than silently
+    // dropped, so the user can go decide whether to keep their edit or
+    // accept GeM's newer data - never resolved automatically either way.
+    const manuallyEditedFields: string[] = existing.manuallyEditedFields || [];
+    const fieldConflicts: { field: string; yourValue: string; gemValue: string }[] = [];
+    const effectiveIncoming = { ...incoming };
+    for (const field of manuallyEditedFields) {
+      const gemValue = incoming[field];
+      const yourValue = existing[field];
+      if (normalizeForCompare(gemValue) !== normalizeForCompare(yourValue)) {
+        fieldConflicts.push({ field, yourValue: String(yourValue ?? ""), gemValue: String(gemValue ?? "") });
+      }
+      effectiveIncoming[field] = yourValue;
+    }
+    if (fieldConflicts.length > 0) fieldConflictCount++;
+
+    const changed = diffBidFields(existing, effectiveIncoming);
     if (changed.length === 0) {
       bulkOps.push({
-        updateOne: { filter: { bidNo }, update: { $set: { tag: "Old", lastSeenRun: runAt, updatedAt: runAt } } },
+        updateOne: {
+          filter: { bidNo },
+          update: {
+            $set: {
+              tag: "Old",
+              lastSeenRun: runAt,
+              updatedAt: runAt,
+              hasFieldConflict: fieldConflicts.length > 0,
+              fieldConflicts,
+            },
+          },
+        },
       });
       oldCount++;
       continue;
@@ -204,13 +239,15 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     );
 
     const setDoc: Record<string, any> = {
-      ...incoming,
+      ...effectiveIncoming,
       isHighlighted,
       tag: "Updated/Extended",
       lastSeenRun: runAt,
       updatedAt: runAt,
       changedFields: changed.map((c) => c.field),
       lastChangedAt: runAt,
+      hasFieldConflict: fieldConflicts.length > 0,
+      fieldConflicts,
     };
     // A bid already progressed past section 1 keeps its place — fields refresh in place,
     // just flagged with the "Updated" badge, instead of being pulled back to section 1.
@@ -242,6 +279,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
         expiredDeletedCount,
         protectedSkippedCount,
         tombstoneSkippedCount,
+        fieldConflictCount,
       },
     }
   );
@@ -255,6 +293,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     expiredDeletedCount,
     protectedSkippedCount,
     tombstoneSkippedCount,
+    fieldConflictCount,
     runId: runId.toString(),
   };
 }

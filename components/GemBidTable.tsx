@@ -791,6 +791,16 @@ export default function GemBidTable({
                         Updated
                       </span>
                     )}
+                    {b.hasFieldConflict && (
+                      <span
+                        className="inline-block mt-1 ml-1 bg-rose-50 border border-rose-200 text-rose-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        title={(b.fieldConflicts || [])
+                          .map((c: any) => `${c.field}: you set "${c.yourValue}", GeM now shows "${c.gemValue}"`)
+                          .join(" | ")}
+                      >
+                        Conflict
+                      </span>
+                    )}
                   </td>
                   {showSectionCol && (
                     <td className="py-2 px-2">

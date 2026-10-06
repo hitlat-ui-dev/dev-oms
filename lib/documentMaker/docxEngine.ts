@@ -1,87 +1,68 @@
-import { Document, Packer, Paragraph, ImageRun } from "docx";
-
-// PDF points -> docx's pixel-equivalent unit (ImageRun's transformation is
-// in pixels at a 96dpi-equivalent scale internally) and -> twips (1pt = 20
-// twips, the unit Document page size/margins use) - two different target
-// units for the same physical page size, kept as two small converters
-// rather than one shared constant so each call site stays readable.
-const PT_TO_PX96 = 96 / 72;
-const PT_TO_TWIP = 20;
-
-// A standard 0.5in margin on every side (matches docx's own PageMargin
-// defaults for header/footer distance, see node_modules/docx's
-// PageMarginDefault). The first version of this used 0 margins to get a
-// true full-bleed page-for-page mirror of the PDF, which turned out to
-// produce a .docx Word couldn't open - Word enforces a printer-driver
-// minimum margin on open in some installations, and 0 fell under it on at
-// least one. A normal margin with the image scaled to fit inside it (same
-// "fit, don't stretch" approach as the PDF's own content-area placement in
-// imageAtcEngine.ts) is the safe, broadly-compatible choice.
-const MARGIN_TWIP = 720;
-
-function scaledToFit(imgWidthPx: number, imgHeightPx: number, maxWidthPx: number, maxHeightPx: number) {
-  const scale = Math.min(maxWidthPx / imgWidthPx, maxHeightPx / imgHeightPx, 1);
-  return { width: Math.round(imgWidthPx * scale), height: Math.round(imgHeightPx * scale) };
-}
+import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType } from "docx";
+import type { AtcBidFields } from "./pdfEngine";
 
 /**
- * Builds a Word document that's a page-for-page mirror of an already-
- * rendered PDF: one page image per page, scaled to fit inside a standard
- * margin at the same physical page size (so it looks the same as the PDF,
- * just not full-bleed to the paper edge). Used for the ATC's Word copy -
- * the ATC itself is image-based (the real multi-page ATC document's pages
- * pasted onto the firm's letterhead, see lib/documentMaker/imageAtcEngine.ts),
- * so a faithful Word version is this same per-page image approach rather
- * than attempting to reconstruct editable text from what's fundamentally a
- * scanned/rendered document.
+ * Builds the ATC's Word copy as a genuinely editable text document - same
+ * content/layout as generateAtcContentPage's PDF cover (lib/documentMaker/
+ * pdfEngine.ts), just as real paragraphs/headings instead of a rendered
+ * image. Used for the Word download regardless of whether the PDF ATC
+ * itself ended up image-based or the text-summary fallback (see
+ * buildAtcDocument.ts) - the real multi-page ATC document's own pages are
+ * pasted-in scans, not something that can become "editable text" without
+ * OCR (which loses structure and often garbles tables), so this covers the
+ * bid's own key fields: the one part that's always real structured data,
+ * not a scan, and so the one part that can honestly be offered as an
+ * editable Word document. Deliberately no letterhead graphic - keeping
+ * this a plain document is what makes it freely re-formattable; a firm
+ * wanting their own letterhead design in Word can paste this text into
+ * their own template.
  */
-export async function buildImagePagesDocx(
-  pageImages: Buffer[],
-  pageSizePt: { width: number; height: number }
+export async function buildAtcTextDocx(
+  fields: AtcBidFields,
+  signBytes?: Buffer | Uint8Array | null,
+  stampBytes?: Buffer | Uint8Array | null
 ): Promise<Buffer> {
-  if (pageImages.length === 0) {
-    throw new Error("No page images to build a Word document from");
+  const rows: [string, string][] = [
+    ["Bid No", fields.bidNo || "-"],
+    ["Item(s)", fields.items || "-"],
+    ["Department & Address", fields.departmentNameAndAddress || fields.address || "-"],
+    ["Bid End Date/Time", fields.bidEndDateTime || "-"],
+  ];
+
+  const children: Paragraph[] = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun({ text: "ACCEPTANCE OF TERMS & CONDITIONS", bold: true })],
+      spacing: { after: 300 },
+    }),
+    ...rows.map(
+      ([label, value]) =>
+        new Paragraph({
+          spacing: { after: 120 },
+          children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun({ text: value })],
+        })
+    ),
+    new Paragraph({ text: "", spacing: { after: 200 } }),
+    new Paragraph({
+      spacing: { after: 300 },
+      children: [new TextRun("As per your requirement we accept your term and conditions of your bid.")],
+    }),
+    new Paragraph({ children: [new TextRun("Your Faithfully,")], spacing: { after: 200 } }),
+  ];
+
+  const imageRuns: ImageRun[] = [];
+  if (signBytes) {
+    imageRuns.push(new ImageRun({ type: "png", data: signBytes, transformation: { width: 120, height: 48 } }));
+  }
+  if (stampBytes) {
+    imageRuns.push(new ImageRun({ type: "png", data: stampBytes, transformation: { width: 90, height: 90 } }));
+  }
+  if (imageRuns.length > 0) {
+    children.push(new Paragraph({ children: imageRuns, alignment: AlignmentType.LEFT }));
   }
 
-  const pageWidthPx = Math.round(pageSizePt.width * PT_TO_PX96);
-  const pageHeightPx = Math.round(pageSizePt.height * PT_TO_PX96);
-  const marginPx = Math.round((MARGIN_TWIP / 20) * PT_TO_PX96);
-  const contentWidthPx = pageWidthPx - marginPx * 2;
-  const contentHeightPx = pageHeightPx - marginPx * 2;
-
-  const widthTwip = Math.round(pageSizePt.width * PT_TO_TWIP);
-  const heightTwip = Math.round(pageSizePt.height * PT_TO_TWIP);
-
   const doc = new Document({
-    sections: [
-      {
-        properties: {
-          page: {
-            size: { width: widthTwip, height: heightTwip },
-            margin: {
-              top: MARGIN_TWIP,
-              bottom: MARGIN_TWIP,
-              left: MARGIN_TWIP,
-              right: MARGIN_TWIP,
-              header: MARGIN_TWIP,
-              footer: MARGIN_TWIP,
-            },
-          },
-        },
-        children: pageImages.map((img) => {
-          const fitted = scaledToFit(pageWidthPx, pageHeightPx, contentWidthPx, contentHeightPx);
-          return new Paragraph({
-            children: [
-              new ImageRun({
-                type: "png",
-                data: img,
-                transformation: { width: fitted.width, height: fitted.height },
-              }),
-            ],
-          });
-        }),
-      },
-    ],
+    sections: [{ properties: {}, children }],
   });
 
   return Packer.toBuffer(doc);
