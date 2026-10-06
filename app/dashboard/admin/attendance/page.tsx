@@ -405,6 +405,7 @@ export default function AttendancePage() {
     perDayRate: number;
     netPayable: number;
     balance: Balance;
+    records: Map<string, AttendanceRecord>;
   }) => {
     const approval = approvals[p.id];
     const doc = new jsPDF();
@@ -497,6 +498,44 @@ export default function AttendancePage() {
       14,
       afterEarningsY + (approval ? 0 : 5)
     );
+
+    // Page 2 - exactly which dates were Absent / Half Day, not just the
+    // counts from page 1 - the detail someone checking a short Net Payable
+    // actually wants.
+    const dayRows = (status: AttendanceStatus) =>
+      Array.from(p.records.entries())
+        .filter(([, rec]) => rec.status === status)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, rec]) => [prettyDate(date), rec.note || "—"]);
+
+    const absentRows = dayRows("absent");
+    const halfDayRows = dayRows("half_day");
+
+    doc.addPage();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(10, 37, 64);
+    doc.text(`${p.name.toUpperCase()} — ${monthLabel(month)} — Attendance Detail`, 14, 18);
+
+    autoTable(doc, {
+      startY: 26,
+      head: [[`Absent Dates (${absentRows.length})`, "Note"]],
+      body: absentRows.length ? absentRows : [["No absent days this month", ""]],
+      theme: "grid",
+      headStyles: { fillColor: [185, 28, 28], textColor: 255 },
+      styles: { fontSize: 9, cellPadding: 3 },
+      columnStyles: { 0: { cellWidth: 60 } },
+    });
+
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 10,
+      head: [[`Half Day Dates (${halfDayRows.length})`, "Note"]],
+      body: halfDayRows.length ? halfDayRows : [["No half days this month", ""]],
+      theme: "grid",
+      headStyles: { fillColor: [217, 119, 6], textColor: 255 },
+      styles: { fontSize: 9, cellPadding: 3 },
+      columnStyles: { 0: { cellWidth: 60 } },
+    });
 
     doc.save(`SalarySlip_${p.name.replace(/[^a-zA-Z0-9]/g, "_")}_${month}.pdf`);
   };
@@ -1163,6 +1202,7 @@ export default function AttendancePage() {
                                     perDayRate,
                                     netPayable,
                                     balance: bal,
+                                    records: cells || new Map(),
                                   })
                                 }
                                 title="Salary Slip PDF download karo"
