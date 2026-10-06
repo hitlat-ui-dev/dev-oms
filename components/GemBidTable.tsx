@@ -785,7 +785,8 @@ export default function GemBidTable({
               </th>
               <th className="py-2 px-2 whitespace-nowrap">Tag</th>
               <th className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort("bidNo")}>
-                Bid No {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
+                Bid No / End Date{" "}
+                {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
               </th>
               {showSectionCol && <th className="py-2 px-2 whitespace-nowrap">Section</th>}
               {showBidStatusCol && (
@@ -847,6 +848,11 @@ export default function GemBidTable({
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-slate-700">
                     <div className="whitespace-nowrap">{b.bidNo}</div>
+                    {b.bidEndDateTime && (
+                      <div className="text-[10px] font-sans font-normal text-slate-400 whitespace-nowrap">
+                        {b.bidEndDateTime}
+                      </div>
+                    )}
                     {/* Any per-bid badge (not just "Updated") belongs here,
                         stacked under the Bid No, rather than inline beside
                         it - inline badges were widening this column and

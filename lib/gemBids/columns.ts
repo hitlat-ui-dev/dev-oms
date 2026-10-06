@@ -25,7 +25,10 @@ export const BID_COLUMNS: BidColumn[] = [
   { key: "bidNo", header: "Bid No", filterType: "text" },
   { key: "bidLink", header: "Bid Link", filterType: "text" },
   { key: "startDate", header: "Start Date", filterType: "dateRange", hiddenInTable: true },
-  { key: "bidEndDateTime", header: "Bid End Date/Time", filterType: "dateRange" },
+  // Stacked under the Bid No cell in the table (its own, still-visible
+  // filter box is unaffected - that's a separately hand-written
+  // filterField() in GemBidTable.tsx, not generated from this list).
+  { key: "bidEndDateTime", header: "Bid End Date/Time", filterType: "dateRange", hiddenInTable: true },
   // Folded into the Address column's cell (stacked as the third line, under
   // Department) and its filter dropdown stacked into that same header cell.
   { key: "consigneeCity", header: "Consignee City", filterType: "dropdown", hiddenInTable: true },
