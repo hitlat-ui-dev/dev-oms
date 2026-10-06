@@ -479,6 +479,18 @@ async function handleRetryGemDocument(payload) {
 // 2. INTERNAL MESSAGES — content script + the extension's OWN popup
 // ---------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "GEM_LOGIN") {
+    // Same handler GEM_LOGIN hits on the EXTERNAL listener above (the OMS
+    // webapp's "Login" button) - this is the internal path, for the
+    // extension's own popup "Login" button (popup/popup.js), which needs no
+    // OMS tab open at all. omsOrigin is sent in the payload here since there
+    // is no sender tab to derive it from.
+    handleGemLogin(message.payload, message.payload?.omsOrigin || "")
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "LINK_GMAIL_ACCOUNT") {
     // payload: { firmCode, knownEmail } — sent from popup/popup.js
     linkGmailAccountForFirm(message.payload.firmCode, message.payload.knownEmail)

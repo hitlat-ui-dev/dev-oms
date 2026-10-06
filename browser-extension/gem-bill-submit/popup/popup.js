@@ -62,9 +62,14 @@ async function init() {
             }
           </div>
         </div>
-        <button data-firm-code="${cred.firmCode}" ${!cred.gemMailId && !isLinked ? "disabled" : ""}>
-          ${isLinked ? "Re-link" : "Link Gmail"}
-        </button>
+        <div class="btnGroup">
+          <button class="loginBtn" data-login-firm-code="${cred.firmCode}" ${!cred.gemUserId || !cred.gemPassword ? "disabled" : ""} title="GeM tab khol ke User ID/Password bhar dega — Captcha abhi bhi haath se bharna hoga">
+            Login
+          </button>
+          <button data-firm-code="${cred.firmCode}" ${!cred.gemMailId && !isLinked ? "disabled" : ""}>
+            ${isLinked ? "Re-link" : "Link Gmail"}
+          </button>
+        </div>
       `;
       listEl.appendChild(row);
     });
@@ -73,12 +78,50 @@ async function init() {
       listEl.innerHTML = `<p style="color:#666;font-size:12px;">Koi GeM login nahi mila — pehle OMS ke "GeM Login Setup" page se firm add karo.</p>`;
     }
 
-    listEl.querySelectorAll("button").forEach((btn) => {
+    listEl.querySelectorAll("button[data-firm-code]").forEach((btn) => {
       btn.addEventListener("click", () => handleLink(btn.dataset.firmCode));
+    });
+    listEl.querySelectorAll("button[data-login-firm-code]").forEach((btn) => {
+      btn.addEventListener("click", () => handleLogin(btn.dataset.loginFirmCode));
     });
   } catch (err) {
     listEl.innerHTML = `<p style="color:#C5221F;font-size:12px;">Load nahi hua: ${err.message}</p>`;
   }
+}
+
+// Opens a GeM tab and fills in this firm's saved Username/Password - the
+// same automation the OMS webapp's own "GeM Login Setup" page triggers via
+// lib/triggerGemSubmit.ts's triggerGemLogin(), just reached straight from
+// this popup instead, so GeM can be opened without OMS being open in any
+// tab/profile at all. Captcha (and OTP, if GeM asks for one) still need a
+// human - see content-gem.js's fillGemLoginForm() for the actual filling.
+async function handleLogin(firmCode) {
+  const statusEl = document.getElementById("status");
+  const cred = credsCache.find((c) => c.firmCode === firmCode);
+  if (!cred?.gemUserId || !cred?.gemPassword) {
+    statusEl.textContent = `⚠️ ${firmNameByCode[firmCode] || firmCode} ke liye User ID/Password OMS ke "GeM Login Setup" me pehle save karo.`;
+    return;
+  }
+  statusEl.textContent = `${firmNameByCode[firmCode] || firmCode} ke liye GeM tab khola ja raha hai...`;
+
+  chrome.runtime.sendMessage(
+    {
+      type: "GEM_LOGIN",
+      payload: {
+        gemUserId: cred.gemUserId,
+        gemPassword: cred.gemPassword,
+        gemMailId: cred.gemMailId || "",
+        omsOrigin: OMS_ORIGIN,
+      },
+    },
+    (response) => {
+      if (response?.success) {
+        statusEl.textContent = `✅ GeM tab khul gaya — Captcha bharke login complete karo.`;
+      } else {
+        statusEl.textContent = `❌ Login fail: ${response?.error || "unknown error"}`;
+      }
+    }
+  );
 }
 
 async function handleLink(firmCode) {
