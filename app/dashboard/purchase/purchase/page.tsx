@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { FiDownload, FiPlus, FiRefreshCw } from "react-icons/fi";
+import { FiDownload, FiPlus, FiRefreshCw, FiUserPlus } from "react-icons/fi";
 import PurchaseRequestModal from "@/components/PurchaseRequestModal";
 import ReceivedQtyModal from "@/components/ReceivedQtyModal";
+import AddVendorModal from "@/components/AddVendorModal";
 import PurchaseRequestTable from "@/components/purchase/PurchaseRequestTable";
 import OrderPlaceTable from "@/components/purchase/OrderPlaceTable";
 import ReceivedPurchaseTable from "@/components/purchase/ReceivedPurchaseTable";
@@ -48,6 +49,7 @@ export default function PurchaseLogisticsPage() {
   const [activeTab, setActiveTab] = useState("Purchase Request");
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isReceivedModalOpen, setIsReceivedModalOpen] = useState(false);
+  const [isAddVendorModalOpen, setIsAddVendorModalOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
   const [editData, setEditData] = useState<Record<string, any>>({});
 
@@ -317,6 +319,14 @@ export default function PurchaseLogisticsPage() {
               <span className="truncate">Excel Report</span>
             </button>
 
+            <button
+              onClick={() => setIsAddVendorModalOpen(true)}
+              className="flex-1 lg:flex-none bg-[#8b2ef5] hover:bg-purple-700 text-white px-4 lg:px-6 py-3 rounded-2xl font-black text-[10px] flex items-center justify-center gap-2 tracking-widest shadow-xl shadow-purple-100 transition-all active:scale-95 uppercase"
+            >
+              <FiUserPlus className="text-sm shrink-0" />
+              <span className="truncate">Add Vendor</span>
+            </button>
+
             {activeTab === "Purchase Request" && (
               <button
                 onClick={() => setIsRequestModalOpen(true)}
@@ -387,6 +397,17 @@ export default function PurchaseLogisticsPage() {
           onClose={() => {
             setIsRequestModalOpen(false);
             fetchTabData(); // Refresh both stock and requests
+          }}
+        />
+
+        <AddVendorModal
+          isOpen={isAddVendorModalOpen}
+          onClose={() => setIsAddVendorModalOpen(false)}
+          onCreated={(vendor) => {
+            // Merged in directly rather than refetching - the new vendor is
+            // then immediately selectable in every vendor dropdown on this
+            // page (Purchase Request's and Order Place's), no reload needed.
+            setVendors((prev) => [...prev, vendor]);
           }}
         />
 
