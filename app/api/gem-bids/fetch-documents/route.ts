@@ -81,6 +81,7 @@ export async function GET() {
           bidNo: bid.bidNo,
           bidLink: bid.bidLink || "",
           buyerAddedBidSpecificAtcUrl: bid.buyerAddedBidSpecificAtcUrl || "",
+          boqDetailDocumentUrl: bid.boqDetailDocumentUrl || "",
         },
       },
       { headers: corsHeaders }

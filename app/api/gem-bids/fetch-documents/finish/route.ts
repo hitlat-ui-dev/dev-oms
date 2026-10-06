@@ -14,14 +14,15 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 200, headers: corsHeaders });
 }
 
-// POST { bidId, errors?: { atc?: string, bidLink?: string } } — called by
-// the extension's background worker once it's attempted both source PDFs
-// (see ../upload/route.ts) for a claimed job, whether or not either one
-// actually succeeded. The buyer-added ATC link is blank on many bids (GeM's
-// ATC download is often a JS action, not a real link in the PDF — see
-// content.js's ATC_LABEL comment), so an atc error there is routine, not a
-// genuine failure; status still lands on "done" as long as the Bid Link
-// document itself came through, since that alone is enough for the ZIP
+// POST { bidId, errors?: { atc?: string, bidLink?: string, boq?: string } } —
+// called by the extension's background worker once it's attempted every
+// source document (see ../upload/route.ts) for a claimed job, whether or
+// not any of them actually succeeded. The buyer-added ATC link and the BOQ
+// Detail Document are both blank on many bids (not every bid has either -
+// GeM's ATC download is often a JS action, not a real link in the PDF, see
+// content.js's ATC_LABEL comment), so an error on either there is routine,
+// not a genuine failure; status still lands on "done" as long as the Bid
+// Link document itself came through, since that alone is enough for the ZIP
 // bundle and the image-based ATC pipeline's text-cover fallback.
 export async function POST(req: Request) {
   try {
@@ -42,7 +43,11 @@ export async function POST(req: Request) {
 
     const bidLinkFailed = !bid.bidLinkDoc?.fileKey;
     const status = bidLinkFailed ? "failed" : "done";
-    const errorMsg = [errors?.bidLink && `Bid document: ${errors.bidLink}`, errors?.atc && `ATC link: ${errors.atc}`]
+    const errorMsg = [
+      errors?.bidLink && `Bid document: ${errors.bidLink}`,
+      errors?.atc && `ATC link: ${errors.atc}`,
+      errors?.boq && `BOQ: ${errors.boq}`,
+    ]
       .filter(Boolean)
       .join(" | ");
 

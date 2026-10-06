@@ -29,6 +29,46 @@ interface Company {
   firmCode?: string;
 }
 
+interface Seller {
+  _id: string;
+  instituteName?: string;
+  buyerName?: string;
+  gemLocationText?: string;
+}
+
+// Mirrors guessBuyerForOrder in app/dashboard/orders/fetch-gem-orders/page.tsx
+// exactly (substring-containment either direction, same minimum-length
+// guard against a short/generic string hijacking every bid's guess) - a
+// Seller's gemLocationText can hold more than one GeM-shown location
+// variant for the same institute, comma-separated (GeM doesn't always word
+// it identically across bids), each checked in turn.
+const MIN_INSTITUTE_MATCH_LEN = 8;
+function guessInstituteForAddress(rawAddress: string, sellers: Seller[]): string | null {
+  const rawLoc = (rawAddress || "").toLowerCase();
+  if (!rawLoc) return null;
+
+  for (const s of sellers) {
+    const name = s.instituteName || s.buyerName || "";
+    if (!name) continue;
+    const variants = (s.gemLocationText || "")
+      .split(",")
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean);
+    for (const gemLoc of variants) {
+      if (gemLoc.length >= MIN_INSTITUTE_MATCH_LEN && (rawLoc.includes(gemLoc) || gemLoc.includes(rawLoc))) {
+        return name;
+      }
+    }
+  }
+  for (const s of sellers) {
+    const name = (s.instituteName || s.buyerName || "").trim();
+    if (name.length >= MIN_INSTITUTE_MATCH_LEN && (rawLoc.includes(name.toLowerCase()) || name.toLowerCase().includes(rawLoc))) {
+      return name;
+    }
+  }
+  return null;
+}
+
 interface Props {
   bids: GemBid[];
   currentUsername: string;
@@ -127,6 +167,18 @@ export default function GemBidTable({
       .then((res) => res.json())
       .then((data) => setCompanies(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load companies", err));
+  }, []);
+
+  // Sellers list backs the Address column's institute auto-match (see
+  // guessInstituteForAddress below) - same /api/sellers + gemLocationText
+  // data the Fetch GeM Orders page already uses to turn a raw scraped
+  // location into a clean Institute Name.
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  useEffect(() => {
+    fetch("/api/sellers")
+      .then((res) => res.json())
+      .then((data) => setSellers(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load sellers", err));
   }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -249,6 +301,19 @@ export default function GemBidTable({
     });
     return map;
   }, [bids]);
+
+  // One guessInstituteForAddress pass per bid up front (keyed by bidNo),
+  // not re-run per render per row - sellers rarely changes and bids can run
+  // into the thousands.
+  const matchedInstituteByBidNo = useMemo(() => {
+    const map = new Map<string, string>();
+    if (sellers.length === 0) return map;
+    for (const b of bids) {
+      const guess = guessInstituteForAddress(b.address, sellers);
+      if (guess) map.set(b.bidNo, guess);
+    }
+    return map;
+  }, [bids, sellers]);
 
   const filtered = useMemo(() => {
     let list = bids.filter((b) => {
@@ -842,8 +907,17 @@ export default function GemBidTable({
                       // Address gets more room than the others (per request) - it's
                       // also the only 3-line group, so it needs it more.
                       const wide = col.key === "address";
+                      const matchedInstitute = col.key === "address" ? matchedInstituteByBidNo.get(b.bidNo) : undefined;
                       return (
                         <td key={col.key} className={`py-2 px-2 ${wide ? "max-w-[300px]" : "max-w-[220px]"}`}>
+                          {matchedInstitute && (
+                            <div
+                              className="text-emerald-700 font-black text-[10px] truncate"
+                              title={`Matched via this institute's GeM Location (for auto-match) in Sellers`}
+                            >
+                              {matchedInstitute}
+                            </div>
+                          )}
                           {group.map((fieldKey, i) => {
                             if (LINK_COLUMNS.has(fieldKey)) {
                               const prefix = STACKED_LINK_PREFIX[fieldKey];

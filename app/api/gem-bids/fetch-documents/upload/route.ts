@@ -18,13 +18,22 @@ export async function OPTIONS() {
 const KIND_FIELD: Record<string, string> = {
   atc: "bidSpecificAtc",
   bidLink: "bidLinkDoc",
+  boq: "boqDetailDoc",
+};
+// BOQ Detail Document is an Excel sheet, not a PDF - everything else about
+// this route (fetched by the extension, cached in R2) is identical.
+const KIND_EXT: Record<string, string> = { atc: "pdf", bidLink: "pdf", boq: "xlsx" };
+const KIND_CONTENT_TYPE: Record<string, string> = {
+  atc: "application/pdf",
+  bidLink: "application/pdf",
+  boq: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-// POST multipart/form-data { bidId, kind: "atc" | "bidLink", file } — called
-// by the extension's background worker once it's fetched one of the two
-// source PDFs for a claimed fetch-documents job (see ../route.ts's GET).
-// Called once per kind that succeeded; a kind that failed to fetch is never
-// uploaded (left null, see ../finish/route.ts for how that's reported).
+// POST multipart/form-data { bidId, kind: "atc" | "bidLink" | "boq", file } —
+// called by the extension's background worker once it's fetched one of the
+// source documents for a claimed fetch-documents job (see ../route.ts's
+// GET). Called once per kind that succeeded; a kind that failed to fetch is
+// never uploaded (left null, see ../finish/route.ts for how that's reported).
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
@@ -36,15 +45,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Valid bidId is required" }, { status: 400, headers: corsHeaders });
     }
     if (!KIND_FIELD[kind]) {
-      return NextResponse.json({ error: "kind must be atc or bidLink" }, { status: 400, headers: corsHeaders });
+      return NextResponse.json({ error: "kind must be atc, bidLink, or boq" }, { status: 400, headers: corsHeaders });
     }
     if (!file) {
       return NextResponse.json({ error: "file is required" }, { status: 400, headers: corsHeaders });
     }
 
     const bytes = Buffer.from(await file.arrayBuffer());
-    const key = `bids/${bidId}/source-docs/${kind}.pdf`;
-    await uploadFileToR2(bytes, key, "application/pdf");
+    const key = `bids/${bidId}/source-docs/${kind}.${KIND_EXT[kind]}`;
+    await uploadFileToR2(bytes, key, KIND_CONTENT_TYPE[kind]);
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);

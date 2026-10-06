@@ -7,6 +7,7 @@ import FirmDocumentVault from "@/models/FirmDocumentVault";
 import { getFileFromR2, uploadFileToR2, getSignedDownloadUrl } from "@/lib/cloudflareR2";
 import { mergePdfs, overlaySignStamp, splitBySizeAndPages } from "@/lib/documentMaker/pdfEngine";
 import { buildAtcDocument } from "@/lib/documentMaker/buildAtcDocument";
+import { parseBoqXlsx, buildFilledBoqXlsx } from "@/lib/documentMaker/boqEngine";
 
 // Rendering the ATC (image-based) plus merging/splitting/zipping everything
 // else can take a while for a bid with a multi-page ATC and several
@@ -107,6 +108,27 @@ export async function POST(req: Request) {
       }
     } else {
       notes.push("ATC Link document not included — either not fetched yet, or this bid has no buyer-added ATC link on GeM.");
+    }
+
+    // BOQ Detail Document - the raw fetched sheet, plus a filled copy (Rate
+    // column added, see boqEngine.ts) if rates have been saved for this bid
+    // via the BOQ Rates panel. Neither is required - many bids have no BOQ.
+    if (bid.boqDetailDoc?.fileKey) {
+      try {
+        const boqBytes = await getFileFromR2(bid.boqDetailDoc.fileKey);
+        zip.file("BOQ Detail Document.xlsx", boqBytes);
+        if (bid.boqRates && bid.boqRates.length > 0) {
+          const parsedItems = parseBoqXlsx(boqBytes);
+          const rateByItemNumber = new Map<string, string>(
+            (bid.boqRates || []).map((r: any) => [String(r.itemNumber), String(r.rate || "")])
+          );
+          const filledItems = parsedItems.map((it) => ({ ...it, rate: rateByItemNumber.get(it.itemNumber) || "" }));
+          zip.file("BOQ Filled (with Rates).xlsx", buildFilledBoqXlsx(filledItems));
+        }
+      } catch (err) {
+        console.error("Failed to fetch/build BOQ from R2:", err);
+        notes.push("BOQ Detail Document couldn't be fetched/built — left out of the ZIP.");
+      }
     }
 
     // Selected vault documents - fetched in the exact order the caller's

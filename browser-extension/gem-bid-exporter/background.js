@@ -427,11 +427,32 @@ async function fetchGemPdfBytes(url) {
   return resp2.arrayBuffer();
 }
 
+// BOQ Detail Document is an .xlsx (a zip archive, "PK" magic header) rather
+// than a PDF - no HTML-wrapper resolution step like fetchGemPdfBytes above,
+// GeM's BOQ download links have been a direct file in practice.
+async function fetchGemXlsxBytes(url) {
+  const resp = await fetch(url, { credentials: "include" });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const buf = await resp.arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 2));
+  if (head[0] !== 0x50 || head[1] !== 0x4b) {
+    throw new Error("Response wasn't an Excel file (session may have expired)");
+  }
+  return buf;
+}
+
+const KIND_EXT = { atc: "pdf", bidLink: "pdf", boq: "xlsx" };
+const KIND_MIME = {
+  atc: "application/pdf",
+  bidLink: "application/pdf",
+  boq: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
 async function uploadFetchedBidDoc(apiBase, bidId, kind, arrayBuffer) {
   const fd = new FormData();
   fd.append("bidId", bidId);
   fd.append("kind", kind);
-  fd.append("file", new Blob([arrayBuffer], { type: "application/pdf" }), `${kind}.pdf`);
+  fd.append("file", new Blob([arrayBuffer], { type: KIND_MIME[kind] }), `${kind}.${KIND_EXT[kind]}`);
   const res = await fetch(`${apiBase}/api/gem-bids/fetch-documents/upload`, { method: "POST", body: fd });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -477,6 +498,18 @@ async function pollAndMaybeFetchBidDocuments() {
       }
     } else {
       errors.atc = "No buyer-added ATC link on this bid";
+    }
+
+    // Also blank on many bids - not every bid has a BOQ requirement.
+    if (bid.boqDetailDocumentUrl) {
+      try {
+        const bytes = await fetchGemXlsxBytes(bid.boqDetailDocumentUrl);
+        await uploadFetchedBidDoc(apiBase, bid._id, "boq", bytes);
+      } catch (e) {
+        errors.boq = String((e && e.message) || e);
+      }
+    } else {
+      errors.boq = "No BOQ Detail Document on this bid";
     }
 
     await fetch(`${apiBase}/api/gem-bids/fetch-documents/finish`, {
