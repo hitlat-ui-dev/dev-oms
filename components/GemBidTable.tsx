@@ -141,6 +141,19 @@ const STACKED_GROUPS: Record<string, string[]> = {
   ],
 };
 
+// A per-column max-width, sized to what each stacked cell actually tends to
+// hold - a single "max-w-[220px] for everything but address" used to leave
+// Evaluation/EMD and Bid To RA/RA (both short: a word or two, a percentage/
+// grade) with a wide gap of empty space before the next column, since
+// table-layout:auto hands a column however much room its max-w allows
+// regardless of whether the content fills it.
+const STACKED_CELL_MAX_WIDTH: Record<string, string> = {
+  address: "max-w-[300px]",
+  bidToRaEnabled: "max-w-[110px]",
+  evaluationMethod: "max-w-[110px]",
+  documentRequiredFromSeller: "max-w-[260px]",
+};
+
 export default function GemBidTable({
   bids,
   currentUsername,
@@ -910,12 +923,9 @@ export default function GemBidTable({
                     // STACKED_GROUPS/MERGED_COLUMN_LABELS above for why these keys.
                     const group = STACKED_GROUPS[col.key];
                     if (group) {
-                      // Address gets more room than the others (per request) - it's
-                      // also the only 3-line group, so it needs it more.
-                      const wide = col.key === "address";
                       const matchedInstitute = col.key === "address" ? matchedInstituteByBidNo.get(b.bidNo) : undefined;
                       return (
-                        <td key={col.key} className={`py-2 px-2 ${wide ? "max-w-[300px]" : "max-w-[220px]"}`}>
+                        <td key={col.key} className={`py-2 px-2 ${STACKED_CELL_MAX_WIDTH[col.key] || "max-w-[220px]"}`}>
                           {matchedInstitute && (
                             <div
                               className="text-emerald-700 font-black text-[10px] truncate"
