@@ -131,19 +131,32 @@ const LEDGER_ROW_CAP_FULL = 30;
 function OrderLedgerMini({
   orders,
   highlightAmount,
+  highlightOrderNos,
   fullWidth,
 }: {
   orders: OrderLite[];
   highlightAmount?: number;
+  // Specific order numbers that make up a COMBO match (several orders
+  // together, no single one equal to the credited amount) - takes priority
+  // over highlightAmount, since an amount-only check can never find them
+  // individually (confirmed live: a 4-order combo showed no highlight at
+  // all under the old amount-only logic).
+  highlightOrderNos?: string[];
   fullWidth?: boolean;
 }) {
   if (orders.length === 0) {
     return <p className="text-[9px] text-slate-400 italic px-1 py-1">No open orders for this institute.</p>;
   }
+  const highlightSet = new Set((highlightOrderNos || []).map((n) => n.trim().toUpperCase()));
+  const isHighlighted = (o: OrderLite, remaining: number) =>
+    highlightSet.size > 0
+      ? highlightSet.has((o.orderNo || "").trim().toUpperCase())
+      : highlightAmount != null && Math.abs(remaining - highlightAmount) < 1;
+
   const withRemaining = orders.map((o) => ({ o, remaining: (o.totalAmount || 0) - (o.paidAmount || 0) }));
   const sorted = [...withRemaining].sort((a, b) => {
-    const aMatch = highlightAmount != null && Math.abs(a.remaining - highlightAmount) < 1;
-    const bMatch = highlightAmount != null && Math.abs(b.remaining - highlightAmount) < 1;
+    const aMatch = isHighlighted(a.o, a.remaining);
+    const bMatch = isHighlighted(b.o, b.remaining);
     if (aMatch !== bMatch) return aMatch ? -1 : 1;
     const aDate = a.o.contractDate || a.o.createdAt || "";
     const bDate = b.o.contractDate || b.o.createdAt || "";
@@ -165,7 +178,7 @@ function OrderLedgerMini({
         </thead>
         <tbody className="divide-y divide-slate-100">
           {shown.map(({ o, remaining }) => {
-            const isMatch = highlightAmount != null && Math.abs(remaining - highlightAmount) < 1;
+            const isMatch = isHighlighted(o, remaining);
             return (
               <tr key={o._id} className={isMatch ? "bg-emerald-50" : ""}>
                 <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">{o.orderNo}</td>
@@ -236,11 +249,22 @@ export default function ReconciliationPage() {
   // Opens the order-ledger popup for one (transaction, candidate institute)
   // pair - shown alongside the full bank statement entry so the two can be
   // compared side by side instead of a cramped inline table.
-  const [ledgerModalFor, setLedgerModalFor] = useState<{ match: Match; sellerId: string; instituteName: string } | null>(null);
+  const [ledgerModalFor, setLedgerModalFor] = useState<{
+    match: Match;
+    sellerId: string;
+    instituteName: string;
+    matchedBillNos?: string[];
+  } | null>(null);
   const [runningMatching, setRunningMatching] = useState(false);
   const [detailsFor, setDetailsFor] = useState<Match | null>(null);
   const [detailsBills, setDetailsBills] = useState<BillLineDetail[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  // Checked rows in the Pending Review (institute+bill already assigned)
+  // table, for bulk Confirm/Reject - cleared whenever the underlying list
+  // changes shape (tab/firm switch) so a stale selection can't silently
+  // apply to rows the user never looked at.
+  const [selectedResolvedIds, setSelectedResolvedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
@@ -327,6 +351,7 @@ export default function ReconciliationPage() {
   useEffect(() => {
     fetchMatches();
     fetchCorrectionAlerts();
+    setSelectedResolvedIds(new Set());
   }, [fetchMatches, fetchCorrectionAlerts]);
 
   // Matching used to re-run automatically inside every fetchMatches() call,
@@ -496,6 +521,85 @@ export default function ReconciliationPage() {
     if (!confirm("Reject this suggested match?")) return;
     runAction(m._id, `/api/reconciliation/matches/${m._id}`, { action: "reject", userName: currentUsername });
   };
+
+  const toggleSelectResolved = (id: string) => {
+    setSelectedResolvedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllResolved = () => {
+    setSelectedResolvedIds((prev) =>
+      prev.size === pendingResolved.length ? new Set() : new Set(pendingResolved.map((m) => m._id))
+    );
+  };
+
+  // Shared by both bulk actions - PATCHes one match, no per-row confirm/alert
+  // (the caller shows one combined dialog/summary for the whole batch
+  // instead of N stacked browser popups). Resolves the id on success so the
+  // caller can remove exactly the ones that actually succeeded.
+  const patchMatch = async (id: string, body: any): Promise<string> => {
+    const res = await fetch(`/api/reconciliation/matches/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Action failed");
+    return id;
+  };
+
+  const runBulkAction = async (
+    action: "confirm" | "reject",
+    confirmMessage: string,
+    bodyFor: (m: Match) => any
+  ) => {
+    const selected = pendingResolved.filter((m) => selectedResolvedIds.has(m._id));
+    if (selected.length === 0) return;
+    if (!confirm(confirmMessage.replace("{n}", String(selected.length)))) return;
+
+    setBulkBusy(true);
+    const results = await Promise.allSettled(selected.map((m) => patchMatch(m._id, bodyFor(m))));
+    const succeededIds = new Set(
+      results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value)
+    );
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+
+    if (succeededIds.size > 0) {
+      setMatches((prev) => prev.filter((m) => !succeededIds.has(m._id)));
+      refreshSellers();
+    }
+    setSelectedResolvedIds(new Set());
+    setBulkBusy(false);
+
+    if (failures.length > 0) {
+      alert(
+        `${succeededIds.size} ${action}ed, ${failures.length} failed:\n` +
+          failures.map((f) => f.reason?.message || "Unknown error").join("\n")
+      );
+    }
+  };
+
+  const handleBulkConfirm = () =>
+    runBulkAction("confirm", "Confirm {n} selected match(es)?", (m) => {
+      const edit = getEdit(m);
+      return {
+        action: "confirm",
+        correctedType: edit.correctedType || null,
+        deductionAmount: Number(edit.deductionAmount) || 0,
+        deductionReason: edit.deductionReason,
+        userName: currentUsername,
+      };
+    });
+
+  const handleBulkReject = () =>
+    runBulkAction("reject", "Reject {n} selected match(es)?", () => ({
+      action: "reject",
+      userName: currentUsername,
+    }));
 
   const handleReverse = (m: Match) => {
     if (!confirm("Reverse this confirmed match? The bill's payment status will be rolled back.")) return;
@@ -710,13 +814,41 @@ export default function ReconciliationPage() {
                   pendingUnresolved below) and never lands here. */}
               {tab === "pending" && (
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-slate-100">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                     <FiCheckCircle className="text-blue-600" size={14} /> Pending Review
                     <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
                       {pendingResolved.length}
                     </span>
                   </h3>
+                  {selectedResolvedIds.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wide">
+                        {selectedResolvedIds.size} selected
+                      </span>
+                      <button
+                        disabled={bulkBusy}
+                        onClick={handleBulkConfirm}
+                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                      >
+                        <FiCheckCircle size={12} /> Confirm Selected
+                      </button>
+                      <button
+                        disabled={bulkBusy}
+                        onClick={handleBulkReject}
+                        className="flex items-center gap-1 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-600 border border-red-200 font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                      >
+                        <FiXCircle size={12} /> Reject Selected
+                      </button>
+                      <button
+                        disabled={bulkBusy}
+                        onClick={() => setSelectedResolvedIds(new Set())}
+                        className="text-[10px] font-black uppercase text-slate-400 hover:text-slate-700 tracking-wide px-2"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {pendingResolved.length === 0 ? (
                   <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
@@ -727,6 +859,15 @@ export default function ReconciliationPage() {
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+                          <th className="py-2.5 px-3">
+                            <input
+                              type="checkbox"
+                              checked={pendingResolved.length > 0 && selectedResolvedIds.size === pendingResolved.length}
+                              onChange={toggleSelectAllResolved}
+                              className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                              title="Select all"
+                            />
+                          </th>
                           <th className="py-2.5 px-3">Firm</th>
                           <th className="py-2.5 px-3">Bill No</th>
                           <th className="py-2.5 px-3">Institute</th>
@@ -743,7 +884,20 @@ export default function ReconciliationPage() {
                           const edit = getEdit(m);
                           const isKasar = edit.correctedType === "Kasar";
                           return (
-                            <tr key={m._id} className="hover:bg-blue-50/40 transition-colors align-top">
+                            <tr
+                              key={m._id}
+                              className={`transition-colors align-top ${
+                                selectedResolvedIds.has(m._id) ? "bg-blue-50" : "hover:bg-blue-50/40"
+                              }`}
+                            >
+                              <td className="py-2.5 px-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedResolvedIds.has(m._id)}
+                                  onChange={() => toggleSelectResolved(m._id)}
+                                  className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                />
+                              </td>
                               <td className="py-2.5 px-3 font-black text-slate-700 uppercase">
                                 {m.firmCode}
                                 {m.statementId && accountLast4ByStatementId[m.statementId] && (
@@ -946,7 +1100,14 @@ export default function ReconciliationPage() {
                                           </button>
                                           <button
                                             type="button"
-                                            onClick={() => setLedgerModalFor({ match: m, sellerId: c.sellerId, instituteName: c.instituteName })}
+                                            onClick={() =>
+                                              setLedgerModalFor({
+                                                match: m,
+                                                sellerId: c.sellerId,
+                                                instituteName: c.instituteName,
+                                                matchedBillNos: c.matchedBillNos,
+                                              })
+                                            }
                                             className="shrink-0 text-[8px] font-black uppercase text-blue-600 hover:text-blue-800 whitespace-nowrap"
                                           >
                                             View Orders ▾
@@ -1262,6 +1423,7 @@ export default function ReconciliationPage() {
                 <OrderLedgerMini
                   orders={openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)}
                   highlightAmount={ledgerModalFor.match.creditedAmount}
+                  highlightOrderNos={ledgerModalFor.matchedBillNos}
                   fullWidth
                 />
               </div>
