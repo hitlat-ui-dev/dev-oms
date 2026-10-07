@@ -5,6 +5,17 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SETTINGS_COLLECTION = "gem_bid_settings";
 const LAST_RUN_KEY = "lastExpireBidsJobDate";
 
+// Vercel's serverless functions run in UTC regardless of where the request
+// came from - plain Date#getHours() was silently reading UTC, so "evening"
+// (hour >= 18) only ever matched a site visit between ~11:30pm and
+// midnight IST, which in practice almost never happened (confirmed: this
+// job had run zero times despite months of real usage, Expired Bids stuck
+// at 0 the whole time). Read the hour in India time explicitly instead of
+// trusting the runtime's local clock.
+function istHour(date: Date): number {
+  return parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }).format(date), 10);
+}
+
 export interface ExpireBidsJobResult {
   ran: boolean;
   reason?: string;
@@ -25,10 +36,14 @@ export interface ExpireBidsJobResult {
  */
 export async function runExpireBidsJobIfDue(db: any, eveningHour = 18): Promise<ExpireBidsJobResult> {
   const now = new Date();
-  if (now.getHours() < eveningHour) {
+  if (istHour(now) < eveningHour) {
     return { ran: false, reason: "not evening yet" };
   }
 
+  // Safe as a plain UTC date slice (not IST-converted) specifically because
+  // this only ever runs once the IST hour is >= 18 - that window (18:00-
+  // 23:59 IST) never crosses a UTC midnight relative to the IST calendar
+  // day, so the UTC and IST dates agree the whole time this check can fire.
   const todayKey = now.toISOString().slice(0, 10);
   const settingsCollection = db.collection(SETTINGS_COLLECTION);
   const settingsDoc = await settingsCollection.findOne({ key: LAST_RUN_KEY });

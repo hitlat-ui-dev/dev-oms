@@ -272,10 +272,15 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     }
     const updateOp: Record<string, any> = { $set: setDoc };
     if (unexpiring) {
-      // GeM's own date for it moved - back into Fetched Bid Data (not
-      // wherever it happened to be sitting before it expired), tag already
-      // "Updated/Extended" above per spec.
-      setDoc.currentSection = "fetched_bid_data";
+      // GeM's own date for it moved - back into New Bids (not wherever it
+      // happened to be sitting before it expired), tag already "Updated/
+      // Extended" above per spec. firstSeenAt is reset to this run too, so
+      // it gets its own fresh 24h New Bids staging window instead of
+      // runExpirySweep (which checks firstSeenAt age, not section-entry
+      // time) immediately re-promoting it straight past New Bids using its
+      // original, months-old firstSeenAt.
+      setDoc.currentSection = "new_bids";
+      setDoc.firstSeenAt = runAt;
       setDoc.hasPendingUpdate = true;
       updateOp.$unset = { expiredAt: "" };
     }

@@ -663,24 +663,35 @@ function DocumentMakerPageInner() {
                 Rate Filling, Firm Document Vault &amp; ATC Generation
               </p>
             </div>
-            <button
-              onClick={() => setVaultModalOpen(true)}
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
-            >
-              <FiFolder size={13} /> Document Vault
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setTab("variant")}
+                className={`flex items-center gap-1.5 font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors ${
+                  tab === "variant" ? "bg-purple-600 hover:bg-purple-700 text-white" : "bg-slate-900 hover:bg-slate-800 text-white"
+                }`}
+              >
+                <FiPercent size={13} /> Rate Variant Tool
+              </button>
+              <button
+                onClick={() => setVaultModalOpen(true)}
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2.5 px-4 rounded-xl transition-colors"
+              >
+                <FiFolder size={13} /> Document Vault
+              </button>
+            </div>
           </div>
 
           {/* Tabs, bid picker (shared - both tabs react to it), and firm -
               all one row. Selecting a bid also auto-picks its firm (see the
               effect above), so the firm dropdown here is mostly a display/
-              override rather than something to set by hand every time. */}
+              override rather than something to set by hand every time. Rate
+              Variant Tool isn't in this row - it's its own button up top
+              (by request), since it doesn't need a bid/firm selected at all. */}
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1">
               {([
                 { key: "rate", label: "Rate" },
                 { key: "generate", label: "Generate" },
-                { key: "variant", label: "Rate Variant Tool" },
               ] as { key: Tab; label: string }[]).map((t) => (
                 <button
                   key={t.key}

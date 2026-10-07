@@ -14,7 +14,13 @@ import { guessInstituteForAddress } from "@/lib/gemBids/instituteMatch";
 // for those anyway.
 const DATE_SORT_KEYS = new Set(["bidEndDateTime", "startDate"]);
 const NUMERIC_SORT_KEYS = new Set(["quantityListing", "emdAmount"]);
-function compareForSort(a: any, b: any, key: string): number {
+// Sorting the Address column by its own raw value sorted by whatever GeM's
+// free-text address happens to start with (usually a PIN code) - not
+// remotely meaningful next to the clean matched-institute name actually
+// shown in that cell (see matchedInstituteByBidNo below). When a match
+// lookup is passed in, that resolved name is what gets compared instead,
+// falling back to the raw address only for a bid with no match.
+function compareForSort(a: any, b: any, key: string, matchedInstituteByBidNo?: Map<string, string>): number {
   if (DATE_SORT_KEYS.has(key)) {
     const da = parseGemDate(a[key])?.getTime();
     const db = parseGemDate(b[key])?.getTime();
@@ -30,6 +36,11 @@ function compareForSort(a: any, b: any, key: string): number {
     if (isNaN(na)) return 1;
     if (isNaN(nb)) return -1;
     return na - nb;
+  }
+  if (key === "address" && matchedInstituteByBidNo) {
+    const va = matchedInstituteByBidNo.get(a.bidNo) || a.address || "";
+    const vb = matchedInstituteByBidNo.get(b.bidNo) || b.address || "";
+    return String(va).localeCompare(String(vb));
   }
   return String(a[key] || "").localeCompare(String(b[key] || ""));
 }
@@ -164,7 +175,11 @@ const STACKED_LINK_PREFIX: Record<string, string> = {
 // filter row cell and cell rendering here instead of a plain column):
 // Address (+ Department), Bid To RA (+ RA), Evaluation (+ EMD Amount).
 const MERGED_COLUMN_LABELS: Record<string, string> = {
-  bidLink: "Bid Link / Spec / BOQ",
+  // Short on purpose - the header's own whitespace-nowrap forces the whole
+  // column at least as wide as this text, and the cell underneath is just
+  // short "Link"/"Spec"/"BOQ" lines (see STACKED_LINK_PREFIX), so a long
+  // header label was the one thing actually inflating this column's width.
+  bidLink: "Link",
   address: "Address / Dept / City",
   bidToRaEnabled: "Bid To RA / RA",
   evaluationMethod: "Evaluation / EMD",
@@ -192,8 +207,8 @@ const STACKED_GROUPS: Record<string, string[]> = {
 // table-layout:auto hands a column however much room its max-w allows
 // regardless of whether the content fills it.
 const STACKED_CELL_MAX_WIDTH: Record<string, string> = {
-  bidLink: "max-w-[90px]",
-  address: "max-w-[300px]",
+  bidLink: "max-w-[56px]",
+  address: "max-w-[220px]",
   bidToRaEnabled: "max-w-[110px]",
   evaluationMethod: "max-w-[110px]",
   documentRequiredFromSeller: "max-w-[200px]",
@@ -498,7 +513,7 @@ export default function GemBidTable({
     });
     if (sort) {
       list = [...list].sort((a, b) => {
-        const cmp = compareForSort(a, b, sort.key);
+        const cmp = compareForSort(a, b, sort.key, matchedInstituteByBidNo);
         return sort.dir === "asc" ? cmp : -cmp;
       });
     } else {
