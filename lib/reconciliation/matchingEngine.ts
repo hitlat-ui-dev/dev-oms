@@ -100,6 +100,22 @@ const STOPWORDS = new Set([
   "in", "at", "for", "a", "an", "on", "via", "payment", "pymt", "pmt",
 ]);
 
+// Generic banking/transaction jargon that is never a real institute
+// identifier, no matter who it got registered against - it would false-
+// match almost any transaction of that type, from any payer. Unlike
+// STOPWORDS (filters individual tokens out of a longer auto-learned
+// keyword), this blocks a registered statementDescriptionName entry
+// outright when it's ONLY one of these phrases (exact match, not
+// substring) - confirmed live: "CHQ DEP" / "CHQ DEP CTS" registered
+// against BHESAN ITI matched a ₹10,00,000 cheque deposit from the firm
+// owner himself, nothing to do with BHESAN ITI.
+export const GENERIC_REGISTERED_KEYWORDS = new Set([
+  "chq dep", "chq dep cts", "cheque deposit", "cash dep", "cash deposit",
+  "neft", "rtgs", "imps", "upi", "clg", "clg chq", "cts clg1", "transfer", "credit",
+  "payment", "cr.for", "by transfer", "to transfer", "deposit", "withdrawal",
+  "cash withdrawal", "atm", "pos", "txn", "bank charges", "sms charges",
+]);
+
 export function normalizeText(text?: string): string {
   return (text || "")
     .toUpperCase()
@@ -128,50 +144,6 @@ export function extractKeywords(description?: string): string[] {
   if (tokens.length >= 3) candidates.add(tokens.slice(0, 3).join(" "));
 
   return [...candidates];
-}
-
-// Narration lines that are pure bank fees/charges — there is no institute/payer
-// name to extract from these, so they should fall straight to "Unmatched".
-const BANK_CHARGE_PATTERNS = [
-  /\bDD\s*ISSUE\s*CHARGES?\b/,
-  /\bCOMMN\s*DEBIT\b/,
-  /\bCOMMISSION\b/,
-  /\b(?:BANK\s*)?CHARGES?\b/,
-  /\bSMS\s*CHARGES?\b/,
-  /\bGST\s*ON\s*CHARGES?\b/,
-  /\bMIN\s*BAL(?:ANCE)?\s*CHARGES?\b/,
-  /\bPENAL(?:TY)?\s*CHARGES?\b/,
-];
-
-/**
- * Extracts the trailing payer-name fragment from a bank-statement narration:
- * the free text after a UTR code (e.g. "Cr.for UTR:RBISH00803362582 GOGJSPARSH S"
- * -> "GOGJSPARSH S"), or the last "/"-separated segment of a NEFT/RTGS/IMPS/UPI
- * reference (e.g. "NEFT/MSNUX26226205063/BLUE EXIM INNOVATI" -> "BLUE EXIM INNOVATI").
- * Returns null for bank-fee lines with no payer name to extract, or when neither
- * pattern applies (callers should fall back to extractKeywords()'s generic tokenizer).
- */
-export function extractPayerKeyword(description?: string): string | null {
-  if (!description) return null;
-  const raw = description.trim();
-  if (!raw) return null;
-  if (BANK_CHARGE_PATTERNS.some((re) => re.test(normalizeText(raw)))) return null;
-
-  const utrMatch = raw.match(/UTR:?\s*[A-Z0-9]{6,}\s+(.+)$/i);
-  if (utrMatch && utrMatch[1].trim()) {
-    const fragment = normalizeText(utrMatch[1]);
-    if (fragment) return fragment;
-  }
-
-  if (/^(NEFT|RTGS|IMPS|UPI)\//i.test(raw)) {
-    const segments = raw.split("/").map((s) => s.trim()).filter(Boolean);
-    if (segments.length >= 2) {
-      const fragment = normalizeText(segments[segments.length - 1]);
-      if (fragment) return fragment;
-    }
-  }
-
-  return null;
 }
 
 // ============================================================
@@ -228,34 +200,25 @@ function collectInstituteCandidates(
   // match once manually selected). A shared/generic treasury code is reused
   // by different real institutes across different transactions; one past
   // rejection is evidence about that ONE transaction, never a permanent ban.
+  // Only a literal match: the exact word/phrase registered in the
+  // institute's own Statement Description Name must actually appear in the
+  // transaction description. No fuzzy fallback (there used to be a second
+  // pass here that prefix-matched a heuristically-extracted payer fragment
+  // against registered keywords even when the registered text never
+  // literally appeared) - that was the system guessing beyond what was
+  // explicitly registered, and every false-match case found in this engine
+  // (DIET MEHSANA, VADANAGAR ITI, BHESAN ITI) traced back to some form of
+  // the system inferring a match instead of requiring the literal
+  // registered text. If nothing literally matches, the transaction is
+  // surfaced as unmatched for a manual pick - never guessed.
   if (desc) {
     for (const seller of sellers) {
       for (const raw of seller.statementDescriptionName || []) {
         const candidate = (raw || "").trim().toLowerCase();
         if (candidate.length < 3) continue;
+        if (GENERIC_REGISTERED_KEYWORDS.has(candidate)) continue;
         if (!desc.includes(candidate)) continue;
         consider(seller, raw, candidate, candidate.length);
-      }
-    }
-  }
-
-  // Second pass: nothing in the full description contained a registered keyword
-  // outright — likely a truncated bank narration (e.g. "DISTRICT TRE"). Fall back
-  // to the UTR/NEFT-extracted payer fragment and match it bidirectionally, since
-  // either the narration or the registered keyword could be the shorter/truncated one.
-  if (bySeller.size === 0) {
-    const fragment = extractPayerKeyword(description);
-    if (fragment) {
-      const fragmentLower = fragment.toLowerCase();
-      for (const seller of sellers) {
-        for (const raw of seller.statementDescriptionName || []) {
-          const candidate = (raw || "").trim().toLowerCase();
-          if (candidate.length < 3) continue;
-          const isPrefixMatch =
-            candidate.startsWith(fragmentLower) || fragmentLower.startsWith(candidate);
-          if (!isPrefixMatch) continue;
-          consider(seller, raw, candidate, candidate.length);
-        }
       }
     }
   }
@@ -264,12 +227,12 @@ function collectInstituteCandidates(
 }
 
 /**
- * Richer sibling of lib/institutMatcher.ts's matchInstituteFromDescription: also honors
- * per-institute negativeKeywords (past rejections) and returns confidence info instead
- * of just the institute name, so the caller can persist a scored suggestion.
- * Returns only the single best candidate — use findInstituteMatches when a keyword
- * might legitimately belong to more than one institute and the caller wants to
- * disambiguate rather than silently pick one.
+ * Richer sibling of lib/institutMatcher.ts's matchInstituteFromDescription:
+ * returns confidence info instead of just the institute name, so the caller
+ * can persist a scored suggestion. Returns only the single best candidate -
+ * use findInstituteMatches when a keyword might legitimately belong to more
+ * than one institute and the caller wants to disambiguate rather than
+ * silently pick one.
  */
 export function findInstituteMatch(
   description: string,

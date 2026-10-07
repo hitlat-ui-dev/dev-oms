@@ -15,7 +15,6 @@ import {
   FiClock,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
-import { matchInstituteFromDescription, SellerLite } from "@/lib/institutMatcher";
 
 interface Transaction {
   sno: string;
@@ -270,7 +269,6 @@ function parseStatementRows(rows: any[][]): ParsedStatement {
 
 export default function StatementPage() {
   const [companies, setCompanies] = useState<any[]>([]);
-  const [sellers, setSellers] = useState<SellerLite[]>([]);
   const [selectedFirmId, setSelectedFirmId] = useState("");
   const [statements, setStatements] = useState<StatementRecord[]>([]);
   const [loadingStatements, setLoadingStatements] = useState(true);
@@ -282,6 +280,13 @@ export default function StatementPage() {
   const [showUploadHistoryFor, setShowUploadHistoryFor] = useState<string | null>(null);
   const [libraryFirmFilter, setLibraryFirmFilter] = useState("");
   const [viewingStatement, setViewingStatement] = useState<StatementRecord | null>(null);
+  // Keyed by the same `${statementId}|${txnKey}` fingerprint reconciliation
+  // stores on a match - only a CONFIRMED match's institute shows here. This
+  // used to live-compute a guess from the raw keyword matcher on every
+  // render, which looked exactly like a real match even though nothing had
+  // been reviewed; now it only ever reflects what a human actually approved
+  // in Reconciliation.
+  const [confirmedInstituteByKey, setConfirmedInstituteByKey] = useState<Record<string, string>>({});
   const [txnSearch, setTxnSearch] = useState("");
   const [currentUsername, setCurrentUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
@@ -309,13 +314,32 @@ export default function StatementPage() {
       .then((data) => setCompanies(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load firms", err));
 
-    fetch("/api/sellers")
-      .then((res) => res.json())
-      .then((data) => setSellers(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Failed to load sellers", err));
-
     fetchStatements();
   }, []);
+
+  // Loads the confirmed institute for every transaction in the statement
+  // currently open in the viewer - fetched fresh each time so a match
+  // confirmed just now in Reconciliation shows up without a full page reload.
+  useEffect(() => {
+    if (!viewingStatement) {
+      setConfirmedInstituteByKey({});
+      return;
+    }
+    const params = new URLSearchParams({ status: "confirmed" });
+    if (viewingStatement.firmCode) params.set("firmCode", viewingStatement.firmCode);
+    fetch(`/api/reconciliation/matches?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data: { transactionKey?: string; instituteName?: string | null }[]) => {
+        const map: Record<string, string> = {};
+        if (Array.isArray(data)) {
+          for (const m of data) {
+            if (m.transactionKey && m.instituteName) map[m.transactionKey] = m.instituteName;
+          }
+        }
+        setConfirmedInstituteByKey(map);
+      })
+      .catch((err) => console.error("Failed to load confirmed matches", err));
+  }, [viewingStatement]);
 
   const fetchStatements = () => {
     setLoadingStatements(true);
@@ -931,7 +955,7 @@ export default function StatementPage() {
                     <th className="py-2.5 px-3">#</th>
                     <th className="py-2.5 px-3">Date</th>
                     <th className="py-2.5 px-3">Description</th>
-                    <th className="py-2.5 px-3">Matched Institute</th>
+                    <th className="py-2.5 px-3">Confirmed Institute</th>
                     <th className="py-2.5 px-3 text-right">Debit</th>
                     <th className="py-2.5 px-3 text-right">Credit</th>
                     <th className="py-2.5 px-3">Cheque No</th>
@@ -951,7 +975,7 @@ export default function StatementPage() {
                       const gapBefore = viewingStatement.gaps?.find(
                         (g) => g.beforeDate === t.date && g.beforeDescription === t.description
                       );
-                      const matchedInstitute = t.credit > 0 ? matchInstituteFromDescription(t.description, sellers) : null;
+                      const matchedInstitute = t.credit > 0 ? confirmedInstituteByKey[`${viewingStatement._id}|${txnKey(t)}`] || null : null;
                       return (
                         <Fragment key={idx}>
                           {gapBefore && (
@@ -968,11 +992,14 @@ export default function StatementPage() {
                             <td className="py-2.5 px-3 text-slate-700">{t.description || "—"}</td>
                             <td className="py-2.5 px-3">
                               {matchedInstitute ? (
-                                <span className="bg-purple-50 border border-purple-200 text-purple-700 text-[10px] font-black px-2 py-0.5 rounded-full">
-                                  {matchedInstitute}
+                                <span
+                                  title="Confirmed in Reconciliation"
+                                  className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full"
+                                >
+                                  ✓ {matchedInstitute}
                                 </span>
                               ) : t.credit > 0 ? (
-                                <span className="text-slate-300 text-[10px] italic">unmatched</span>
+                                <span className="text-slate-300 text-[10px] italic">unconfirmed</span>
                               ) : (
                                 <span className="text-slate-300">—</span>
                               )}
