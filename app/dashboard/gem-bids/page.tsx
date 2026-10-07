@@ -463,16 +463,16 @@ export default function GemBidsPage() {
                   </button>
                 )}
                 <Link
-                  href="/dashboard/gem-bids/rate-variant-tool"
+                  href="/dashboard/gem-bids/final-rates"
                   className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
                 >
-                  <FiPercent size={13} /> Rate Variant Tool →
+                  <FiPercent size={13} /> Final Rates →
                 </Link>
                 <Link
                   href="/dashboard/gem-bids/document-maker"
                   className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
                 >
-                  <FiFileText size={13} /> Open Document Maker →
+                  <FiFileText size={13} /> Open Bid Rate →
                 </Link>
               </div>
             </div>

@@ -25,8 +25,14 @@ export async function OPTIONS() {
 // which is meant to show where a bid currently sits even if that's one of
 // those two holding areas, without counting them in its own badge (the
 // frontend keeps that count from the plain unfiltered fetch separately).
-// ?light=1 returns just {_id, bidNo, items, currentSection} - the Bid Document Maker
-// page's ATC bid picker only needs enough to populate and filter its dropdown, not
+// ?light=1 returns just {_id, bidNo, items, currentSection, address,
+// departmentNameAndAddress, boqDetailDoc, selectedPartyIds, selectedPartyId,
+// bidLink, buyerAddedBidSpecificAtcUrl, bidToRaEnabled, raQualificationRule,
+// typeOfBid, evaluationMethod, emdAmount} - the Bid Rate page's bid picker
+// needs enough to populate/filter its dropdown, guess the matched institute
+// client-side (see lib/gemBids/instituteMatch.ts), know whether a BOQ
+// source file already exists for a bid, auto-pick the firm a bid's party
+// was already set to, and show the bid's own key details once picked, not
 // full bid documents.
 // ?section=<key> narrows to one section server-side - used by the sync bridge to
 // fetch just the Submitted Bids bidNos it needs to status-check, without pulling
@@ -52,7 +58,30 @@ export async function GET(req: Request) {
         : liveOnly;
     const bids = await db
       .collection("gem_bids")
-      .find(query, light ? { projection: { bidNo: 1, items: 1, currentSection: 1 } } : undefined)
+      .find(
+        query,
+        light
+          ? {
+              projection: {
+                bidNo: 1,
+                items: 1,
+                currentSection: 1,
+                address: 1,
+                departmentNameAndAddress: 1,
+                boqDetailDoc: 1,
+                selectedPartyIds: 1,
+                selectedPartyId: 1,
+                bidLink: 1,
+                buyerAddedBidSpecificAtcUrl: 1,
+                bidToRaEnabled: 1,
+                raQualificationRule: 1,
+                typeOfBid: 1,
+                evaluationMethod: 1,
+                emdAmount: 1,
+              },
+            }
+          : undefined
+      )
       .sort({ updatedAt: -1 })
       .toArray();
     return NextResponse.json(bids, { headers: corsHeaders });

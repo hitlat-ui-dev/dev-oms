@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
 import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX, FiRefreshCw } from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS } from "@/lib/gemBids/columns";
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
+import { guessInstituteForAddress } from "@/lib/gemBids/instituteMatch";
 
 // Plain string sort (localeCompare) is wrong for the handful of columns
 // that aren't really text - a GeM date string ("16-10-2026 11:00:00") sorts
@@ -79,48 +80,10 @@ interface BoqItem {
   suggestedFromBidNo: string;
 }
 
-// Mirrors guessBuyerForOrder in app/dashboard/orders/fetch-gem-orders/page.tsx
-// (substring-containment either direction, same minimum-length guard
-// against a short/generic string hijacking every bid's guess), with two
-// changes learned from a real false-positive this caused: a real address
-// is itself full of commas as ordinary punctuation ("Institute, Street,
-// Taluka, District"), and splitting gemLocationText on comma to support
-// multiple variants ended up carving out generic fragments like "Govt.
-// Industrial Training Institute" as their own "variant" - long enough to
-// pass the length guard, but common to nearly every government ITI's
-// address, so it matched (and returned) the wrong institute entirely. A
-// seller listing more than one GeM-shown variant now separates them with
-// " | " instead, which doesn't collide with normal address text. Second,
-// among every candidate that matches at all, the LONGEST (most specific)
-// one wins rather than whichever happened to be checked first - a longer
-// match is far less likely to be a coincidental generic-phrase collision.
-const MIN_INSTITUTE_MATCH_LEN = 8;
-function bestInstituteMatch(rawLoc: string, sellers: Seller[], candidatesFor: (s: Seller) => string[]): string | null {
-  let best: { name: string; len: number } | null = null;
-  for (const s of sellers) {
-    const name = s.instituteName || s.buyerName || "";
-    if (!name) continue;
-    for (const raw of candidatesFor(s)) {
-      const candidate = raw.trim().toLowerCase();
-      if (candidate.length < MIN_INSTITUTE_MATCH_LEN) continue;
-      if (!rawLoc.includes(candidate) && !candidate.includes(rawLoc)) continue;
-      if (!best || candidate.length > best.len) best = { name, len: candidate.length };
-    }
-  }
-  return best ? best.name : null;
-}
-
-function guessInstituteForAddress(rawAddress: string, sellers: Seller[]): string | null {
-  const rawLoc = (rawAddress || "").toLowerCase();
-  if (!rawLoc) return null;
-
-  // gemLocationText is the deliberate, GeM-specific signal - tried first,
-  // falling back to a plain institute-name match only if nothing there matched.
-  const viaLocation = bestInstituteMatch(rawLoc, sellers, (s) => (s.gemLocationText || "").split("|"));
-  if (viaLocation) return viaLocation;
-
-  return bestInstituteMatch(rawLoc, sellers, (s) => [s.instituteName || s.buyerName || ""]);
-}
+// Matching algorithm itself now lives in lib/gemBids/instituteMatch.ts
+// (shared with the Bid Rate page, which needs the exact same guess for the
+// exact same bid) - Seller here is a structural match for that module's
+// SellerLite, so no adapter is needed at the one call site below.
 
 interface Props {
   bids: GemBid[];
