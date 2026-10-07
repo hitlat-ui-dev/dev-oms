@@ -135,6 +135,22 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       continue;
     }
 
+    // Sitting in Expired Bids - also frozen in place, UNLESS GeM's own Bid
+    // End Date/Time for it has genuinely changed (extended/moved) since it
+    // expired, in which case it's pulled back into Fetched Bid Data with
+    // the Updated badge (handled below, once diffBidFields confirms the
+    // date is what changed) rather than staying expired forever even
+    // though GeM itself has revived the tender.
+    let unexpiring = false;
+    if (existing && existing.expiredAt) {
+      const dateChanged = normalizeForCompare(existing.bidEndDateTime) !== normalizeForCompare(incoming.bidEndDateTime);
+      if (!dateChanged) {
+        tombstoneSkippedCount++;
+        continue;
+      }
+      unexpiring = true;
+    }
+
     // Not currently in gem_bids at all (soft-delete window has lapsed and
     // it was purged, or purged by an older flow) - a tombstone means it was
     // deliberately deleted, so it only comes back if GeM's data for it has
@@ -254,7 +270,16 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     if (existing.currentSection !== "fetched_bid_data") {
       setDoc.hasPendingUpdate = true;
     }
-    bulkOps.push({ updateOne: { filter: { bidNo }, update: { $set: setDoc } } });
+    const updateOp: Record<string, any> = { $set: setDoc };
+    if (unexpiring) {
+      // GeM's own date for it moved - back into Fetched Bid Data (not
+      // wherever it happened to be sitting before it expired), tag already
+      // "Updated/Extended" above per spec.
+      setDoc.currentSection = "fetched_bid_data";
+      setDoc.hasPendingUpdate = true;
+      updateOp.$unset = { expiredAt: "" };
+    }
+    bulkOps.push({ updateOne: { filter: { bidNo }, update: updateOp } });
     updatedCount++;
   }
 

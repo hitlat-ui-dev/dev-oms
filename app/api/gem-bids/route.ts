@@ -17,9 +17,14 @@ export async function OPTIONS() {
 
 // GET: every stored bid (client filters/sorts/paginates per section — same convention as
 // the Orders board, no server-side pagination anywhere else in this app either).
-// Deleted bids (deletedAt set - see DELETE below) are left out by default,
-// same as a real delete used to look from every other tab's perspective -
-// ?section=deleted_bids is the one way to see them, for the Deleted Bids tab.
+// Deleted bids (deletedAt set) and Expired bids (expiredAt set) are left out
+// by default, same as either one used to look from every other tab's
+// perspective - ?section=deleted_bids / ?section=expired_bids are the ways
+// to see them, for their own tabs. ?section=with_deleted_and_expired
+// includes everything (no filtering at all) - used by the All Bids tab,
+// which is meant to show where a bid currently sits even if that's one of
+// those two holding areas, without counting them in its own badge (the
+// frontend keeps that count from the plain unfiltered fetch separately).
 // ?light=1 returns just {_id, bidNo, items, currentSection} - the Bid Document Maker
 // page's ATC bid picker only needs enough to populate and filter its dropdown, not
 // full bid documents.
@@ -34,12 +39,17 @@ export async function GET(req: Request) {
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);
+    const liveOnly = { deletedAt: { $exists: false }, expiredAt: { $exists: false } };
     const query =
       section === "deleted_bids"
         ? { deletedAt: { $exists: true, $ne: null } }
+        : section === "expired_bids"
+        ? { expiredAt: { $exists: true, $ne: null } }
+        : section === "with_deleted_and_expired"
+        ? {}
         : section
-        ? { currentSection: section, deletedAt: { $exists: false } }
-        : { deletedAt: { $exists: false } };
+        ? { currentSection: section, ...liveOnly }
+        : liveOnly;
     const bids = await db
       .collection("gem_bids")
       .find(query, light ? { projection: { bidNo: 1, items: 1, currentSection: 1 } } : undefined)

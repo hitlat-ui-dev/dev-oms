@@ -68,19 +68,6 @@ interface BundleResult {
   notes: string[];
 }
 
-interface BoqItem {
-  itemNumber: string;
-  itemTitle: string;
-  itemDescription: string;
-  quantity: string;
-  unit: string;
-  consigneeId: string;
-  deliveryPeriod: string;
-  rate: string;
-  suggestedRate: string;
-  suggestedFromBidNo: string;
-}
-
 type Tab = "vault" | "generate";
 
 export default function DocumentMakerPage() {
@@ -123,12 +110,6 @@ export default function DocumentMakerPage() {
 
   const [bundling, setBundling] = useState(false);
   const [bundleResult, setBundleResult] = useState<BundleResult | null>(null);
-
-  const [boqModalOpen, setBoqModalOpen] = useState(false);
-  const [loadingBoq, setLoadingBoq] = useState(false);
-  const [boqItems, setBoqItems] = useState<BoqItem[]>([]);
-  const [savingBoq, setSavingBoq] = useState(false);
-  const [boqExportUrl, setBoqExportUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/companies")
@@ -353,67 +334,8 @@ export default function DocumentMakerPage() {
     setHasBoqDocument(false);
     setAtcResult(null);
     setBundleResult(null);
-    setBoqModalOpen(false);
-    setBoqItems([]);
-    setBoqExportUrl(null);
     fetchDocStatus();
   }, [selectedBidId, fetchDocStatus]);
-
-  const openBoqRates = async () => {
-    if (!selectedBidId) return;
-    setLoadingBoq(true);
-    setBoqExportUrl(null);
-    try {
-      const res = await fetch(`/api/gem-bids/boq?bidId=${selectedBidId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to load BOQ");
-      setBoqItems(data.items || []);
-      setBoqModalOpen(true);
-    } catch (err: any) {
-      alert(err.message || "Failed to load BOQ");
-    } finally {
-      setLoadingBoq(false);
-    }
-  };
-
-  const updateBoqRate = (itemNumber: string, rate: string) => {
-    setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, rate } : it)));
-  };
-
-  const saveBoqRates = async () => {
-    if (!selectedBidId) return;
-    setSavingBoq(true);
-    try {
-      const res = await fetch("/api/gem-bids/boq/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bidId: selectedBidId,
-          items: boqItems.map((it) => ({ itemNumber: it.itemNumber, itemTitle: it.itemTitle, rate: it.rate })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to save BOQ rates");
-      alert(`Saved ${data.savedCount} rate(s).`);
-    } catch (err: any) {
-      alert(err.message || "Failed to save BOQ rates");
-    } finally {
-      setSavingBoq(false);
-    }
-  };
-
-  const exportBoq = async () => {
-    if (!selectedBidId) return;
-    try {
-      const res = await fetch(`/api/gem-bids/boq/export?bidId=${selectedBidId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to export BOQ");
-      setBoqExportUrl(data.url);
-      window.open(data.url, "_blank", "noopener,noreferrer");
-    } catch (err: any) {
-      alert(err.message || "Failed to export BOQ");
-    }
-  };
 
   const runBundle = async () => {
     if (!firmId || !selectedBidId) return;
@@ -718,7 +640,9 @@ export default function DocumentMakerPage() {
                         {hasAtcDocument ? "✓ ATC Link document fetched" : "— ATC Link document not fetched yet"}
                       </span>
                       <span className={hasBoqDocument ? "text-emerald-600" : "text-slate-400"}>
-                        {hasBoqDocument ? "✓ BOQ Detail Document fetched" : "— BOQ Detail Document not fetched yet"}
+                        {hasBoqDocument
+                          ? "✓ BOQ Detail Document fetched (fill rates from Bids to Fill)"
+                          : "— BOQ Detail Document not fetched yet"}
                       </span>
                     </div>
                   )}
@@ -758,36 +682,6 @@ export default function DocumentMakerPage() {
                         </a>
                       ))}
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* BOQ Rates */}
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-slate-100">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                    <FiCheckSquare className="text-amber-600" size={14} /> BOQ Rates
-                  </h3>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Fill a rate per item on this bid&apos;s BOQ Detail Document (when it has one) - saved rates are
-                    remembered per bid and also saved into a shared rate directory, so a matching item on a future
-                    bid shows a suggestion from what you filled before. Fetched automatically by Generate ATC above,
-                    no separate fetch needed.
-                  </p>
-                </div>
-                <div className="p-5 flex flex-col gap-2">
-                  <button
-                    disabled={loadingBoq || !selectedBidId || !hasBoqDocument}
-                    onClick={openBoqRates}
-                    className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
-                  >
-                    <FiCheckSquare size={13} /> {loadingBoq ? "Loading..." : "Open BOQ Rates"}
-                  </button>
-                  {selectedBidId && !hasBoqDocument && (
-                    <p className="text-[10px] text-slate-400">
-                      No BOQ fetched yet for this bid — click &quot;Generate ATC&quot; above first (it fetches this
-                      too), or this bid simply has no BOQ Detail Document on GeM.
-                    </p>
                   )}
                 </div>
               </div>
@@ -836,90 +730,6 @@ export default function DocumentMakerPage() {
         </div>
       </div>
 
-      {boqModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
-              <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">BOQ Rates</h3>
-              <button onClick={() => setBoqModalOpen(false)} className="text-slate-400 hover:text-slate-700">
-                <FiArrowLeft className="rotate-180" size={16} />
-              </button>
-            </div>
-            <div className="p-5 flex flex-col gap-3">
-              {boqItems.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">No items found in this BOQ.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-black">
-                      <tr>
-                        <th className="py-2 px-2 text-left">#</th>
-                        <th className="py-2 px-2 text-left">Item Title</th>
-                        <th className="py-2 px-2 text-left">Qty</th>
-                        <th className="py-2 px-2 text-left">Unit</th>
-                        <th className="py-2 px-2 text-left">Delivery</th>
-                        <th className="py-2 px-2 text-left w-36">Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {boqItems.map((it) => (
-                        <tr key={it.itemNumber}>
-                          <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
-                          <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px]" title={it.itemDescription}>
-                            {it.itemTitle}
-                          </td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.quantity}</td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
-                          <td className="py-2 px-2">
-                            <input
-                              value={it.rate}
-                              onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
-                              placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
-                              className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
-                            />
-                            {it.suggestedRate && (
-                              <button
-                                type="button"
-                                onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
-                                className="text-[9px] text-amber-700 underline mt-0.5"
-                                title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
-                              >
-                                Use {it.suggestedRate}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            <div className="p-5 border-t border-slate-100 flex flex-wrap items-center gap-2 justify-end sticky bottom-0 bg-white">
-              {boqExportUrl && (
-                <a href={boqExportUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 underline font-bold mr-auto">
-                  Download ready
-                </a>
-              )}
-              <button
-                onClick={exportBoq}
-                disabled={boqItems.length === 0}
-                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
-              >
-                Download Filled BOQ
-              </button>
-              <button
-                onClick={saveBoqRates}
-                disabled={savingBoq || boqItems.length === 0}
-                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white transition-colors"
-              >
-                {savingBoq ? "Saving..." : "Save Rates"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </BlockGuard>
   );
 }

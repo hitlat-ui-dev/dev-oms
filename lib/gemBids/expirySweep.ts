@@ -1,5 +1,3 @@
-import { AUTO_DELETE_EXPIRED_SECTIONS } from "./columns";
-
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 // GeM's exported Bid End Date/Time is always "DD-MM-YYYY HH:mm:ss" (24h clock),
@@ -17,15 +15,23 @@ export function parseGemDate(value?: string | null): Date | null {
 
 export interface SweepResult {
   promotedCount: number;
+  // No longer computed here - see expireBidsJob.ts's own once-daily sweep.
+  // Kept on the result/stats shape for backward compatibility with the
+  // last-run stats panel rather than threading a type change through every
+  // caller for a field that's always 0 now.
   expiredDeletedCount: number;
 }
 
 /**
- * Runs after every apply (see applyImport.ts): promotes New Bids past their 24h
- * staging window into Fetched Bid Data (flagged so the UI can show the one-time
- * blue background), deletes bids whose Bid End Date/Time has passed in the
- * sections where that's safe (see AUTO_DELETE_EXPIRED_SECTIONS), and clears
- * highlight flags that have aged out.
+ * Runs after every apply (see applyImport.ts): promotes New Bids past their
+ * 24h staging window into Fetched Bid Data (flagged so the UI can show the
+ * one-time blue background), and clears highlight flags that have aged out.
+ * Expiry (Bid End Date/Time has passed) used to also be handled here, as an
+ * immediate hard-delete on every sync - moved to expireBidsJob.ts's own
+ * once-daily sweep instead, which soft-moves into a 7-day-retention Expired
+ * Bids holding section rather than deleting outright (same reasoning as
+ * Deleted Bids' own retention window - an immediate hard-delete gave no
+ * chance to notice/undo a bid expiring at a bad time).
  */
 export async function runExpirySweep(db: any): Promise<SweepResult> {
   const bidsCollection = db.collection("gem_bids");
@@ -46,26 +52,7 @@ export async function runExpirySweep(db: any): Promise<SweepResult> {
     promotedCount = res.modifiedCount || toPromote.length;
   }
 
-  // 2. Delete expired bids, only in sections where auto-delete is safe. Every
-  // remaining bid in those sections is fetched and checked in JS (bidEndDateTime
-  // is a free-text string, not reliably comparable via a Mongo query operator).
-  const candidates = await bidsCollection
-    .find({ currentSection: { $in: AUTO_DELETE_EXPIRED_SECTIONS } })
-    .project({ bidNo: 1, bidEndDateTime: 1 })
-    .toArray();
-  const expiredBidNos = candidates
-    .filter((b: any) => {
-      const end = parseGemDate(b.bidEndDateTime);
-      return end !== null && end.getTime() < now.getTime();
-    })
-    .map((b: any) => b.bidNo);
-  let expiredDeletedCount = 0;
-  if (expiredBidNos.length > 0) {
-    const res = await bidsCollection.deleteMany({ bidNo: { $in: expiredBidNos } });
-    expiredDeletedCount = res.deletedCount || 0;
-  }
-
-  // 3. Clear highlight flags that have aged past 24h.
+  // 2. Clear highlight flags that have aged past 24h.
   await bidsCollection.updateMany(
     { justPromoted: true, promotedAt: { $lte: dayAgo } },
     { $set: { justPromoted: false } }
@@ -75,5 +62,5 @@ export async function runExpirySweep(db: any): Promise<SweepResult> {
     { $set: { changedFields: [], hasPendingUpdate: false } }
   );
 
-  return { promotedCount, expiredDeletedCount };
+  return { promotedCount, expiredDeletedCount: 0 };
 }

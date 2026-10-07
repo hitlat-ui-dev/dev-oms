@@ -2,6 +2,36 @@
 import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
 import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX, FiRefreshCw } from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS } from "@/lib/gemBids/columns";
+import { parseGemDate } from "@/lib/gemBids/expirySweep";
+
+// Plain string sort (localeCompare) is wrong for the handful of columns
+// that aren't really text - a GeM date string ("16-10-2026 11:00:00") sorts
+// lexicographically by day first, not year, so it doesn't come out
+// chronological, and a quantity/amount sorts "10" before "2" as text. Both
+// get a real typed comparison; everything else (names, addresses, dropdown
+// values) stays a plain string compare, which is what "low to high" means
+// for those anyway.
+const DATE_SORT_KEYS = new Set(["bidEndDateTime", "startDate"]);
+const NUMERIC_SORT_KEYS = new Set(["quantityListing", "emdAmount"]);
+function compareForSort(a: any, b: any, key: string): number {
+  if (DATE_SORT_KEYS.has(key)) {
+    const da = parseGemDate(a[key])?.getTime();
+    const db = parseGemDate(b[key])?.getTime();
+    if (da == null && db == null) return 0;
+    if (da == null) return 1; // blank/unparseable sorts last regardless of direction
+    if (db == null) return -1;
+    return da - db;
+  }
+  if (NUMERIC_SORT_KEYS.has(key)) {
+    const na = parseFloat(String(a[key] || "").replace(/[^\d.-]/g, ""));
+    const nb = parseFloat(String(b[key] || "").replace(/[^\d.-]/g, ""));
+    if (isNaN(na) && isNaN(nb)) return 0;
+    if (isNaN(na)) return 1;
+    if (isNaN(nb)) return -1;
+    return na - nb;
+  }
+  return String(a[key] || "").localeCompare(String(b[key] || ""));
+}
 
 export interface GemBid {
   _id: string;
@@ -34,6 +64,19 @@ interface Seller {
   instituteName?: string;
   buyerName?: string;
   gemLocationText?: string;
+}
+
+interface BoqItem {
+  itemNumber: string;
+  itemTitle: string;
+  itemDescription: string;
+  quantity: string;
+  unit: string;
+  consigneeId: string;
+  deliveryPeriod: string;
+  rate: string;
+  suggestedRate: string;
+  suggestedFromBidNo: string;
 }
 
 // Mirrors guessBuyerForOrder in app/dashboard/orders/fetch-gem-orders/page.tsx
@@ -115,6 +158,23 @@ const TAG_SHORT_LABELS: Record<string, string> = {
   "Updated/Extended": "U/E",
 };
 
+// A holding-area badge overrides the normal tag badge entirely wherever a
+// bid can show up alongside live ones (currently just the All Bids tab,
+// via allIncludingHoldingAreas) - "EX"/"D" instead of whatever its last
+// real sync tag happened to be, since that's the more useful fact once a
+// bid is sitting in Expired or Deleted Bids. Deliberately not part of
+// TAG_STYLES/TAG_SHORT_LABELS above - those drive the Tag filter dropdown,
+// which filters on the stored b.tag field, and "Expired"/"Deleted" are
+// never real values of that field.
+const HOLDING_TAG_STYLES: Record<string, string> = {
+  Expired: "bg-orange-50 border-orange-200 text-orange-700",
+  Deleted: "bg-rose-50 border-rose-200 text-rose-700",
+};
+const HOLDING_TAG_SHORT_LABELS: Record<string, string> = {
+  Expired: "EX",
+  Deleted: "D",
+};
+
 const LINK_COLUMNS = new Set(["bidLink", "buyerAddedBidSpecificAtcUrl", "specificationDocumentUrl", "boqDetailDocumentUrl"]);
 // Short prefix for a stacked link line, so three link lines in the same
 // cell (ATC/Spec/BOQ, all under Document required from seller) read as
@@ -131,24 +191,25 @@ const STACKED_LINK_PREFIX: Record<string, string> = {
 // filter row cell and cell rendering here instead of a plain column):
 // Address (+ Department), Bid To RA (+ RA), Evaluation (+ EMD Amount).
 const MERGED_COLUMN_LABELS: Record<string, string> = {
+  bidLink: "Bid Link / Spec / BOQ",
   address: "Address / Dept / City",
   bidToRaEnabled: "Bid To RA / RA",
   evaluationMethod: "Evaluation / EMD",
-  documentRequiredFromSeller: "Doc Required / ATC / Spec / BOQ",
+  documentRequiredFromSeller: "Doc Required / ATC",
 };
 
 // Body-row rendering for the merged (stacked) columns - each maps its
 // header key to every field key stacked inside that one cell, first on top.
+// Specification Document and BOQ Detail Document sit right under Bid Link
+// (by request - they're the same kind of "open the file GeM has for this
+// bid" link Bid Link already is, so it reads as one family of document
+// links rather than being buried under Document Required's own text).
 const STACKED_GROUPS: Record<string, string[]> = {
+  bidLink: ["bidLink", "specificationDocumentUrl", "boqDetailDocumentUrl"],
   address: ["address", "departmentNameAndAddress", "consigneeCity"],
   bidToRaEnabled: ["bidToRaEnabled", "raQualificationRule"],
   evaluationMethod: ["evaluationMethod", "emdAmount"],
-  documentRequiredFromSeller: [
-    "documentRequiredFromSeller",
-    "buyerAddedBidSpecificAtcUrl",
-    "specificationDocumentUrl",
-    "boqDetailDocumentUrl",
-  ],
+  documentRequiredFromSeller: ["documentRequiredFromSeller", "buyerAddedBidSpecificAtcUrl"],
 };
 
 // A per-column max-width, sized to what each stacked cell actually tends to
@@ -158,10 +219,11 @@ const STACKED_GROUPS: Record<string, string[]> = {
 // table-layout:auto hands a column however much room its max-w allows
 // regardless of whether the content fills it.
 const STACKED_CELL_MAX_WIDTH: Record<string, string> = {
+  bidLink: "max-w-[90px]",
   address: "max-w-[300px]",
   bidToRaEnabled: "max-w-[110px]",
   evaluationMethod: "max-w-[110px]",
-  documentRequiredFromSeller: "max-w-[260px]",
+  documentRequiredFromSeller: "max-w-[200px]",
 };
 
 export default function GemBidTable({
@@ -209,9 +271,95 @@ export default function GemBidTable({
     scrollRef.current?.scrollBy({ left: dir * 400, behavior: "smooth" });
   };
 
+  // The column-header row (<thead>) needs to stick right under the filter
+  // panel above it, not just under the page's own chrome (stickyTop) -
+  // previously only the filter boxes stayed put on scroll and the actual
+  // column labels scrolled away with the rows, losing context past the
+  // first screenful. Measured live (same ResizeObserver approach the
+  // page's own stickyTop uses) since the filter panel's height varies
+  // (responsive column wrapping, the bulk-action bar appearing/
+  // disappearing, "more filters" expanding) rather than a guessed pixel value.
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const [filterPanelHeight, setFilterPanelHeight] = useState(0);
+  useEffect(() => {
+    const el = filterPanelRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setFilterPanelHeight(el.getBoundingClientRect().height));
+    ro.observe(el);
+    setFilterPanelHeight(el.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, []);
+
   const [editingBid, setEditingBid] = useState<GemBid | null>(null);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [editSaving, setEditSaving] = useState(false);
+
+  // BOQ Rates (Bids to Fill only) - lives here rather than Document Maker,
+  // right where the Party is picked, since filling rates is part of
+  // deciding/working the bid, not a document-generation step.
+  const [boqBidId, setBoqBidId] = useState<string | null>(null);
+  const [boqBidNo, setBoqBidNo] = useState<string>("");
+  const [boqItems, setBoqItems] = useState<BoqItem[]>([]);
+  const [loadingBoq, setLoadingBoq] = useState(false);
+  const [savingBoq, setSavingBoq] = useState(false);
+  const [boqExportUrl, setBoqExportUrl] = useState<string | null>(null);
+
+  const openBoqRates = async (bidId: string, bidNo: string) => {
+    setBoqBidId(bidId);
+    setBoqBidNo(bidNo);
+    setBoqExportUrl(null);
+    setLoadingBoq(true);
+    try {
+      const res = await fetch(`/api/gem-bids/boq?bidId=${bidId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load BOQ");
+      setBoqItems(data.items || []);
+    } catch (err: any) {
+      alert(err.message || "Failed to load BOQ");
+      setBoqBidId(null);
+    } finally {
+      setLoadingBoq(false);
+    }
+  };
+
+  const updateBoqRate = (itemNumber: string, rate: string) => {
+    setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, rate } : it)));
+  };
+
+  const saveBoqRates = async () => {
+    if (!boqBidId) return;
+    setSavingBoq(true);
+    try {
+      const res = await fetch("/api/gem-bids/boq/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bidId: boqBidId,
+          items: boqItems.map((it) => ({ itemNumber: it.itemNumber, itemTitle: it.itemTitle, rate: it.rate })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to save BOQ rates");
+      alert(`Saved ${data.savedCount} rate(s).`);
+    } catch (err: any) {
+      alert(err.message || "Failed to save BOQ rates");
+    } finally {
+      setSavingBoq(false);
+    }
+  };
+
+  const exportBoq = async () => {
+    if (!boqBidId) return;
+    try {
+      const res = await fetch(`/api/gem-bids/boq/export?bidId=${boqBidId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to export BOQ");
+      setBoqExportUrl(data.url);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      alert(err.message || "Failed to export BOQ");
+    }
+  };
 
   // Shared master list of document-type names (also used by Document
   // Maker's per-firm vault, see /api/gem-bids/document-types) that backs
@@ -309,8 +457,9 @@ export default function GemBidTable({
   // be in that section - these used to also show in All Bids mode (matching
   // each row's own section), which turned out to be more confusing than
   // useful; reverted to simple single-section visibility by request.
+  const PARTY_COL_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
   const showBidStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
-  const showPartyCol = !allSectionsMode && currentSectionKey === "bids_to_fill";
+  const showPartyCol = !allSectionsMode && PARTY_COL_SECTIONS.has(currentSectionKey);
   const extraColCount = [showSectionCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
 
   const dropdownOptions = useMemo(() => {
@@ -347,7 +496,12 @@ export default function GemBidTable({
       if (addressOrDeptTerm) {
         const addressHit = String(b.address || "").toLowerCase().includes(addressOrDeptTerm);
         const deptHit = String(b.departmentNameAndAddress || "").toLowerCase().includes(addressOrDeptTerm);
-        if (!addressHit && !deptHit) return false;
+        // Also matches the auto-matched Institute Name shown above the raw
+        // address (see guessInstituteForAddress) - searching "SAYLA" should
+        // find a bid whose raw scraped address doesn't literally say that,
+        // if its matched institute's name does.
+        const matchedHit = (matchedInstituteByBidNo.get(b.bidNo) || "").toLowerCase().includes(addressOrDeptTerm);
+        if (!addressHit && !deptHit && !matchedHit) return false;
       }
       // Tag isn't a BID_COLUMNS entry (it's a workflow field rendered
       // specially by this table, not scraped data), so it's filtered here
@@ -370,12 +524,19 @@ export default function GemBidTable({
     });
     if (sort) {
       list = [...list].sort((a, b) => {
-        const cmp = String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""));
+        const cmp = compareForSort(a, b, sort.key);
         return sort.dir === "asc" ? cmp : -cmp;
       });
+    } else {
+      // No explicit sort chosen (including right after filters are
+      // cleared/the page reloads) - default view is chronological by Bid
+      // End Date/Time, soonest first, so the most time-sensitive bids are
+      // naturally at the top rather than whatever order the DB happened to
+      // return them in.
+      list = [...list].sort((a, b) => compareForSort(a, b, "bidEndDateTime"));
     }
     return list;
-  }, [bids, filters, sort]);
+  }, [bids, filters, sort, matchedInstituteByBidNo]);
 
   const visible = filtered.slice(0, displayLimit);
 
@@ -621,7 +782,11 @@ export default function GemBidTable({
           else. Also sticky (stacked right under the page's own sticky
           title/tabs chrome, see stickyTop) so it stays put on the page's
           vertical scroll too, while only the actual bid rows scroll past. */}
-      <div className="sticky z-30 p-3 border-b border-slate-100 bg-slate-50/95 backdrop-blur-sm rounded-t-2xl" style={{ top: stickyTop }}>
+      <div
+        ref={filterPanelRef}
+        className="sticky z-30 p-3 border-b border-slate-100 bg-slate-50/95 backdrop-blur-sm rounded-t-2xl"
+        style={{ top: stickyTop }}
+      >
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
           {filterField(
             "Tag",
@@ -798,7 +963,10 @@ export default function GemBidTable({
         <div ref={scrollRef} className="overflow-x-auto no-scrollbar">
         <table className="w-full text-left text-[11px] border-collapse">
           <thead>
-            <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+            <tr
+              className="sticky z-20 bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200"
+              style={{ top: stickyTop + filterPanelHeight }}
+            >
               <th className="py-2 px-2">
                 <input
                   type="checkbox"
@@ -807,9 +975,10 @@ export default function GemBidTable({
                 />
               </th>
               <th className="py-2 px-2 whitespace-nowrap">Tag</th>
-              <th className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort("bidNo")}>
+              <th className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort("bidEndDateTime")}>
                 Bid No / End Date{" "}
-                {sort?.key === "bidNo" && (sort.dir === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
+                {(sort?.key === "bidEndDateTime" || !sort) &&
+                  ((sort?.dir ?? "asc") === "asc" ? <FiChevronUp className="inline" size={10} /> : <FiChevronDown className="inline" size={10} />)}
               </th>
               {showSectionCol && <th className="py-2 px-2 whitespace-nowrap">Section</th>}
               {showBidStatusCol && (
@@ -849,13 +1018,25 @@ export default function GemBidTable({
             ) : (
               visible.map((b) => {
                 const changedSet = new Set(b.changedFields || []);
+                // Within the next 3 days (and not already past) - a plain
+                // left-edge accent + a small inline note under the date
+                // rather than taking over the whole row's background, since
+                // that's already how justPromoted/isHighlighted read and a
+                // third full-row color would start colliding with those
+                // instead of standing out from them.
+                const endDate = parseGemDate(b.bidEndDateTime);
+                const daysLeft = endDate ? (endDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000) : null;
+                const isExpiringSoon = daysLeft !== null && daysLeft >= 0 && daysLeft <= 3;
+                const holdingTag = b.deletedAt ? "Deleted" : b.expiredAt ? "Expired" : null;
                 return (
                 <tr
                   key={b.bidNo}
                   // justPromoted (blue background, New Bids -> Fetched Bid Data arrival) and
                   // isHighlighted (yellow, the extension's own "paper-based printing" rule) are
                   // deliberately different colors so the two never look the same.
-                  className={`hover:bg-blue-50/40 transition-colors ${b.justPromoted ? "bg-blue-50" : b.isHighlighted ? "bg-yellow-50" : ""}`}
+                  className={`hover:bg-blue-50/40 transition-colors ${b.justPromoted ? "bg-blue-50" : b.isHighlighted ? "bg-yellow-50" : ""} ${
+                    isExpiringSoon ? "border-l-4 border-l-rose-500" : ""
+                  }`}
                 >
                   <td className="py-2 px-2">
                     <input type="checkbox" checked={selected.has(b.bidNo)} onChange={() => toggleSelectOne(b.bidNo)} />
@@ -863,17 +1044,24 @@ export default function GemBidTable({
                   <td className="py-2 px-2">
                     <button
                       onClick={() => onViewHistory(b.bidNo)}
-                      title={b.tag}
-                      className={`border text-[9px] font-black uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${TAG_STYLES[b.tag]}`}
+                      title={holdingTag || b.tag}
+                      className={`border text-[9px] font-black uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${
+                        holdingTag ? HOLDING_TAG_STYLES[holdingTag] : TAG_STYLES[b.tag]
+                      }`}
                     >
-                      {TAG_SHORT_LABELS[b.tag] || b.tag}
+                      {holdingTag ? HOLDING_TAG_SHORT_LABELS[holdingTag] : TAG_SHORT_LABELS[b.tag] || b.tag}
                     </button>
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-slate-700">
                     <div className="whitespace-nowrap">{b.bidNo}</div>
                     {b.bidEndDateTime && (
-                      <div className="text-[10px] font-sans font-normal text-slate-400 whitespace-nowrap">
+                      <div className={`text-[10px] font-sans font-normal whitespace-nowrap ${isExpiringSoon ? "text-rose-600 font-bold" : "text-slate-400"}`}>
                         {b.bidEndDateTime}
+                        {isExpiringSoon && (
+                          <span className="ml-1 text-rose-600">
+                            ⏰ {daysLeft! < 1 ? "today" : `${Math.ceil(daysLeft!)}d`}
+                          </span>
+                        )}
                       </div>
                     )}
                     {/* Any per-bid badge (not just "Updated") belongs here,
@@ -926,6 +1114,15 @@ export default function GemBidTable({
                         onChange={(ids) => quickUpdate(b.bidNo, "selectedPartyIds", ids)}
                       />
                       {b.lastModifiedBy && <span className="block text-[9px] text-slate-400 mt-0.5">by {b.lastModifiedBy}</span>}
+                      {effectiveSectionFor(b) === "bids_to_fill" && b.boqDetailDoc?.fileKey && (
+                        <button
+                          type="button"
+                          onClick={() => openBoqRates(b._id, b.bidNo)}
+                          className="block mt-1 text-[9px] text-amber-700 underline font-bold"
+                        >
+                          BOQ Rates
+                        </button>
+                      )}
                     </td>
                   )}
                   {otherColumns.map((col) => {
@@ -1146,6 +1343,95 @@ export default function GemBidTable({
                 className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors"
               >
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {boqBidId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">BOQ Rates — {boqBidNo}</h3>
+              <button onClick={() => setBoqBidId(null)} className="text-slate-400 hover:text-slate-700">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-3">
+              {loadingBoq ? (
+                <div className="flex justify-center items-center py-12">
+                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-amber-500"></div>
+                </div>
+              ) : boqItems.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-8">No items found in this BOQ.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-black">
+                      <tr>
+                        <th className="py-2 px-2 text-left">#</th>
+                        <th className="py-2 px-2 text-left">Item Title</th>
+                        <th className="py-2 px-2 text-left">Qty</th>
+                        <th className="py-2 px-2 text-left">Unit</th>
+                        <th className="py-2 px-2 text-left">Delivery</th>
+                        <th className="py-2 px-2 text-left w-36">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {boqItems.map((it) => (
+                        <tr key={it.itemNumber}>
+                          <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
+                          <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px]" title={it.itemDescription}>
+                            {it.itemTitle}
+                          </td>
+                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.quantity}</td>
+                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
+                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
+                          <td className="py-2 px-2">
+                            <input
+                              value={it.rate}
+                              onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
+                              placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
+                              className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            />
+                            {it.suggestedRate && (
+                              <button
+                                type="button"
+                                onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
+                                className="text-[9px] text-amber-700 underline mt-0.5"
+                                title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
+                              >
+                                Use {it.suggestedRate}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-slate-100 flex flex-wrap items-center gap-2 justify-end sticky bottom-0 bg-white">
+              {boqExportUrl && (
+                <a href={boqExportUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 underline font-bold mr-auto">
+                  Download ready
+                </a>
+              )}
+              <button
+                onClick={exportBoq}
+                disabled={boqItems.length === 0}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
+              >
+                Download Filled BOQ
+              </button>
+              <button
+                onClick={saveBoqRates}
+                disabled={savingBoq || boqItems.length === 0}
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white transition-colors"
+              >
+                {savingBoq ? "Saving..." : "Save Rates"}
               </button>
             </div>
           </div>

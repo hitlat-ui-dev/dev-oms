@@ -45,14 +45,20 @@ interface SyncRun {
 
 export default function GemBidsPage() {
   const [bids, setBids] = useState<GemBid[]>([]);
+  const [expiredBids, setExpiredBids] = useState<GemBid[]>([]);
   const [deletedBids, setDeletedBids] = useState<GemBid[]>([]);
+  // Everything, including Expired/Deleted - only fetched for the All Bids
+  // tab's own table content (see fetchAllIncludingHoldingAreas), so a bid
+  // sitting in either holding area can still be found there without
+  // counting toward the All Bids tab's own badge (that stays bids.length).
+  const [allIncludingHoldingAreas, setAllIncludingHoldingAreas] = useState<GemBid[]>([]);
   const [loading, setLoading] = useState(true);
   // "all" is a combined search-everything view, not a real workflow stage a
   // bid can be *in* (see lib/gemBids/columns.ts's SECTIONS comment) - same
-  // for "deleted_bids", a 7-day holding area rather than one, see
-  // fetchDeletedBids. the default landing tab so search always starts from
-  // "show me everything" rather than one narrow stage.
-  const [activeSection, setActiveSection] = useState<SectionKey | "all" | "deleted_bids">("all");
+  // for "deleted_bids"/"expired_bids", 7-day holding areas rather than one,
+  // see fetchDeletedBids/fetchExpiredBids. the default landing tab so
+  // search always starts from "show me everything" rather than one narrow stage.
+  const [activeSection, setActiveSection] = useState<SectionKey | "all" | "expired_bids" | "deleted_bids">("all");
   const [currentUsername, setCurrentUsername] = useState("");
 
   const [historyBidNo, setHistoryBidNo] = useState<string | null>(null);
@@ -232,6 +238,27 @@ export default function GemBidsPage() {
       .catch((err) => console.error("Failed to load deleted GeM bids", err));
   }, []);
 
+  // A bid past its own Bid End Date/Time, auto-moved here once a day (evening
+  // only - see lib/gemBids/expireBidsJob.ts) - same 7-day-then-purged,
+  // restorable-meanwhile shape as Deleted Bids.
+  const fetchExpiredBids = useCallback(() => {
+    fetch("/api/gem-bids?section=expired_bids")
+      .then((res) => res.json())
+      .then((data) => setExpiredBids(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load expired GeM bids", err));
+  }, []);
+
+  // Only fetched/used for the All Bids tab's table content (see its badge
+  // count, which deliberately stays bids.length instead) - a bid sitting in
+  // Expired or Deleted still shows up here so "where is this bid right now"
+  // always has an answer from one tab.
+  const fetchAllIncludingHoldingAreas = useCallback(() => {
+    fetch("/api/gem-bids?section=with_deleted_and_expired")
+      .then((res) => res.json())
+      .then((data) => setAllIncludingHoldingAreas(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load all GeM bids", err));
+  }, []);
+
   const fetchLastRun = useCallback(() => {
     fetch("/api/gem-bids/last-run")
       .then((res) => res.json())
@@ -249,9 +276,11 @@ export default function GemBidsPage() {
   const refetchAll = useCallback(() => {
     fetchBids();
     fetchDeletedBids();
+    fetchExpiredBids();
+    fetchAllIncludingHoldingAreas();
     fetchLastRun();
     fetchSyncStatus();
-  }, [fetchBids, fetchDeletedBids, fetchLastRun, fetchSyncStatus]);
+  }, [fetchBids, fetchDeletedBids, fetchExpiredBids, fetchAllIncludingHoldingAreas, fetchLastRun, fetchSyncStatus]);
 
   useEffect(() => {
     refetchAll();
@@ -350,11 +379,13 @@ export default function GemBidsPage() {
   const bidsInActiveSection = useMemo(
     () =>
       activeSection === "all"
-        ? bids
+        ? allIncludingHoldingAreas
         : activeSection === "deleted_bids"
         ? deletedBids
+        : activeSection === "expired_bids"
+        ? expiredBids
         : bids.filter((b) => b.currentSection === activeSection),
-    [bids, deletedBids, activeSection]
+    [bids, deletedBids, expiredBids, allIncludingHoldingAreas, activeSection]
   );
 
   const openHistory = async (bidNo: string) => {
@@ -464,6 +495,14 @@ export default function GemBidsPage() {
                 </button>
               ))}
               <button
+                onClick={() => setActiveSection("expired_bids")}
+                className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
+                  activeSection === "expired_bids" ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Expired Bids <span className="ml-1 opacity-70">({expiredBids.length})</span>
+              </button>
+              <button
                 onClick={() => setActiveSection("deleted_bids")}
                 className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
                   activeSection === "deleted_bids" ? "bg-rose-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
@@ -562,7 +601,17 @@ export default function GemBidsPage() {
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-blue-500"></div>
             </div>
           ) : activeSection === "deleted_bids" ? (
-            <DeletedBidsPanel bids={deletedBids} onRestored={() => { fetchDeletedBids(); fetchBids(); }} />
+            <DeletedBidsPanel
+              bids={deletedBids}
+              dateField="deletedAt"
+              onRestored={() => { fetchDeletedBids(); fetchBids(); fetchAllIncludingHoldingAreas(); }}
+            />
+          ) : activeSection === "expired_bids" ? (
+            <DeletedBidsPanel
+              bids={expiredBids}
+              dateField="expiredAt"
+              onRestored={() => { fetchExpiredBids(); fetchBids(); fetchAllIncludingHoldingAreas(); }}
+            />
           ) : (
             <GemBidTable
               bids={bidsInActiveSection}
@@ -848,14 +897,26 @@ export default function GemBidsPage() {
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-// A simple, deliberately separate view (not GemBidTable) - deleted bids
-// have none of the workflow actions a live section's rows do (Edit, Send
-// To, Send Back), just Restore and a days-remaining-until-permanent-delete
-// countdown, so reusing that heavier component would mean suppressing most
-// of what it does rather than genuinely fitting it.
-function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: () => void }) {
+// A simple, deliberately separate view (not GemBidTable) - deleted/expired
+// bids have none of the workflow actions a live section's rows do (Edit,
+// Send To, Send Back), just Restore and a days-remaining-until-permanent-
+// delete countdown, so reusing that heavier component would mean
+// suppressing most of what it does rather than genuinely fitting it. One
+// component serves both Deleted Bids and Expired Bids - dateField picks
+// which holding-area timestamp drives the "Purges In" countdown and which
+// one restore clears (see api/gem-bids/restore's own kind param).
+function DeletedBidsPanel({
+  bids,
+  dateField,
+  onRestored,
+}: {
+  bids: GemBid[];
+  dateField: "deletedAt" | "expiredAt";
+  onRestored: () => void;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const isExpired = dateField === "expiredAt";
 
   const toggle = (bidNo: string) => {
     setSelected((prev) => {
@@ -873,7 +934,7 @@ function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: ()
       const res = await fetch("/api/gem-bids/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidNos }),
+        body: JSON.stringify({ bidNos, kind: isExpired ? "expired" : "deleted" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Restore failed");
@@ -889,7 +950,7 @@ function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: ()
   if (bids.length === 0) {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-10 text-center text-slate-400 text-xs font-bold uppercase tracking-widest">
-        No deleted bids
+        No {isExpired ? "expired" : "deleted"} bids
       </div>
     );
   }
@@ -921,16 +982,16 @@ function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: ()
               </th>
               <th className="py-2 px-3 text-left whitespace-nowrap">Bid No</th>
               <th className="py-2 px-3 text-left">Items</th>
-              <th className="py-2 px-3 text-left whitespace-nowrap">Deleted At</th>
+              <th className="py-2 px-3 text-left whitespace-nowrap">{isExpired ? "Expired At" : "Deleted At"}</th>
               <th className="py-2 px-3 text-left whitespace-nowrap">Purges In</th>
               <th className="py-2 px-3 w-24"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {bids.map((b) => {
-              const deletedAt = b.deletedAt ? new Date(b.deletedAt) : null;
-              const daysLeft = deletedAt
-                ? Math.max(0, Math.ceil((deletedAt.getTime() + SEVEN_DAYS_MS - Date.now()) / (24 * 60 * 60 * 1000)))
+              const holdingAt = b[dateField] ? new Date(b[dateField] as any) : null;
+              const daysLeft = holdingAt
+                ? Math.max(0, Math.ceil((holdingAt.getTime() + SEVEN_DAYS_MS - Date.now()) / (24 * 60 * 60 * 1000)))
                 : null;
               return (
                 <tr key={b.bidNo} className="hover:bg-slate-50">
@@ -942,7 +1003,7 @@ function DeletedBidsPanel({ bids, onRestored }: { bids: GemBid[]; onRestored: ()
                     {b.items || "—"}
                   </td>
                   <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
-                    {deletedAt ? deletedAt.toLocaleDateString() : "—"}
+                    {holdingAt ? holdingAt.toLocaleDateString() : "—"}
                   </td>
                   <td className="py-2 px-3 text-rose-600 font-bold whitespace-nowrap">
                     {daysLeft === null ? "—" : daysLeft === 0 ? "Today" : `${daysLeft} day${daysLeft === 1 ? "" : "s"}`}

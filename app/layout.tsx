@@ -50,6 +50,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       fetch("/api/gem-bids/purge-deleted", { method: "POST" }).catch((err) =>
         console.error("GeM bid purge check failed silently:", err)
       );
+      // Evening-only: move any GeM bid past its own end date into Expired
+      // Bids, and purge any already past its 7-day window there
+      fetch("/api/gem-bids/expire-and-purge", { method: "POST" }).catch((err) =>
+        console.error("GeM bid expire-and-purge check failed silently:", err)
+      );
     }
   }, [isLoginPage, router]);
 

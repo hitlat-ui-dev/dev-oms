@@ -27,16 +27,19 @@ function atcFieldsFor(bid: any): AtcBidFields {
  * ZIP bundle route, so both always produce the exact same ATC rather than
  * two slightly-diverging implementations.
  *
- * The PDF is image-based when the bid's real ATC document has been fetched
- * (see app/api/gem-bids/fetch-documents - bid.bidSpecificAtc.fileKey): the
- * real document's pages are rasterized and pasted onto the firm's
- * letterhead, one letterhead page per ATC page, with sign+stamp on every
- * page. Falls back to a single-page text summary cover (just the bid's key
- * fields filled onto the letterhead) when there's no fetched ATC document
- * yet, or the fetched one failed to render for any reason - ATC generation
- * should never hard-fail just because the optional real-document step
- * hasn't happened, since GeM's ATC download is often not even a real link
- * to fetch in the first place (see fetch-documents/finish/route.ts's note).
+ * The PDF is image-based when either the bid's own Bid Document or its real
+ * ATC document (or both) have been fetched (see app/api/gem-bids/
+ * fetch-documents - bid.bidLinkDoc.fileKey / bid.bidSpecificAtc.fileKey):
+ * both documents' pages are rasterized and pasted onto the firm's
+ * letterhead, one letterhead page per source page, Bid Document pages first
+ * (what was actually bid on) followed by the ATC document's own pages (the
+ * acceptance paperwork for it), with sign+stamp on every page. Falls back
+ * to a single-page text summary cover (just the bid's key fields filled
+ * onto the letterhead) when neither document has been fetched yet, or
+ * both failed to render for any reason - ATC generation should never
+ * hard-fail just because the optional real-document step hasn't happened,
+ * since GeM's document downloads are often not even real links to fetch in
+ * the first place (see fetch-documents/finish/route.ts's note).
  *
  * The Word copy is always the bid's key fields as genuinely editable text
  * (see docxEngine.ts's buildAtcTextDocx) regardless of which PDF path ran -
@@ -55,25 +58,46 @@ export async function buildAtcDocument(
   let note: string | undefined;
   const fields = atcFieldsFor(bid);
 
+  const bidLinkFileKey = bid.bidLinkDoc?.fileKey;
   const atcFileKey = bid.bidSpecificAtc?.fileKey;
-  if (atcFileKey) {
+  if (bidLinkFileKey || atcFileKey) {
     try {
-      const atcBytes = await getFileFromR2(atcFileKey);
-      const pageImages = await renderPdfPagesToImages(atcBytes);
+      const pageImages: Buffer[] = [];
+      const failures: string[] = [];
+      if (bidLinkFileKey) {
+        try {
+          const bidLinkBytes = await getFileFromR2(bidLinkFileKey);
+          pageImages.push(...(await renderPdfPagesToImages(bidLinkBytes)));
+        } catch (err: any) {
+          failures.push(`Bid Document (${err.message || "unknown error"})`);
+        }
+      }
+      if (atcFileKey) {
+        try {
+          const atcBytes = await getFileFromR2(atcFileKey);
+          pageImages.push(...(await renderPdfPagesToImages(atcBytes)));
+        } catch (err: any) {
+          failures.push(`ATC Document (${err.message || "unknown error"})`);
+        }
+      }
+      if (pageImages.length === 0) throw new Error(failures.join("; ") || "no pages rendered");
       pdfDoc = await buildImageBasedAtc(letterheadBytes, pageImages, signBytes, stampBytes);
       mode = "image";
+      if (failures.length > 0) {
+        note = `Couldn't use: ${failures.join("; ")} — used the document(s) that did render.`;
+      }
     } catch (err: any) {
       console.error("Image-based ATC generation failed, falling back to text cover:", err);
-      note = `Couldn't use the fetched ATC document (${err.message || "unknown error"}) — used a text summary cover page instead.`;
+      note = `Couldn't use the fetched document(s) (${err.message || "unknown error"}) — used a text summary cover page instead.`;
       pdfDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
     }
   } else {
     note =
-      "No ATC document has been fetched for this bid yet — used a text summary cover page instead (not every bid has a real ATC document available on GeM).";
+      "No Bid Document or ATC document has been fetched for this bid yet — used a text summary cover page instead (not every bid has these available on GeM).";
     pdfDoc = await generateAtcContentPage(letterheadBytes, fields, signBytes, stampBytes);
   }
 
-  const docxBytes = await buildAtcTextDocx(fields, signBytes, stampBytes);
+  const docxBytes = await buildAtcTextDocx(fields, letterheadBytes, signBytes, stampBytes);
 
   return { pdfDoc, docxBytes, mode, note };
 }
