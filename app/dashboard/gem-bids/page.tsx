@@ -83,9 +83,17 @@ export default function GemBidsPage() {
   const chromeRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const [stickyTop, setStickyTop] = useState(0);
+  // The global <footer> (components/Footer.tsx) sits below <main>, always
+  // visible, eating into the viewport regardless of <main>'s own scroll
+  // state - GemBidTable needs this too (alongside stickyTop) to size its
+  // own internal row-scroll area to exactly what's left of the screen,
+  // rather than guessing a constant that'd drift if the footer's content
+  // ever changes.
+  const [footerHeight, setFooterHeight] = useState(0);
 
   useEffect(() => {
     const headerEl = document.querySelector("header");
+    const footerEl = document.querySelector("footer");
     const chromeEl = chromeRef.current;
     if (!headerEl || !chromeEl) return;
 
@@ -94,12 +102,14 @@ export default function GemBidsPage() {
       const cH = chromeEl.getBoundingClientRect().height;
       setHeaderHeight(hH);
       setStickyTop(hH + cH);
+      if (footerEl) setFooterHeight(footerEl.getBoundingClientRect().height);
     };
     recompute();
 
     const ro = new ResizeObserver(recompute);
     ro.observe(headerEl);
     ro.observe(chromeEl);
+    if (footerEl) ro.observe(footerEl);
     window.addEventListener("resize", recompute);
     return () => {
       ro.disconnect();
@@ -619,6 +629,7 @@ export default function GemBidsPage() {
               onBidsUpdated={setBids}
               onViewHistory={openHistory}
               stickyTop={stickyTop}
+              bottomReserve={footerHeight}
               allSectionsMode={activeSection === "all"}
             />
           )}

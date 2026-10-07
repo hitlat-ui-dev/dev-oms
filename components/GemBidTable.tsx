@@ -136,6 +136,16 @@ interface Props {
   // which measures it live via ResizeObserver. Defaults to 0 (sticks to the
   // very top) if not given.
   stickyTop?: number;
+  // Pixel height of the global <footer>, below <main> - also passed down
+  // from GemBidsPage (measured live, same ResizeObserver). Combined with
+  // stickyTop and the filter panel's own height, this sizes the row-scroll
+  // area (see scrollRef below) to exactly what's left of the viewport, so
+  // the rows scroll on their own and the page itself never needs to -
+  // required because position: sticky inside the table's own overflow-x
+  // (horizontal scroll) wrapper can't reliably stick to the page/viewport
+  // (see the comment above the component's root div), only to a real,
+  // bounded-height scroll container of its own.
+  bottomReserve?: number;
   // True for the "All Bids" tab - bids here come from every section mixed
   // together, so per-row actions read each row's own currentSection instead
   // of assuming one shared section, a "Section" column replaces the
@@ -232,6 +242,7 @@ export default function GemBidTable({
   onBidsUpdated,
   onViewHistory,
   stickyTop = 0,
+  bottomReserve = 0,
   allSectionsMode = false,
 }: Props) {
   const [filters, setFilters] = useState<Record<string, any>>({});
@@ -960,12 +971,36 @@ export default function GemBidTable({
         >
           <FiChevronRight size={16} />
         </button>
-        <div ref={scrollRef} className="overflow-x-auto no-scrollbar">
+        {/* Bounded height + overflow-y-auto (not just overflow-x) - the
+            thead's own sticky row below needs a *real* scroll container of
+            its own to stick within, since position: sticky computed via
+            this element's "top" only resolves correctly relative to the
+            viewport when nothing between it and the page has non-visible
+            overflow (see the root div's comment above); this div's
+            overflow-x-auto already makes it exactly that kind of ancestor
+            (overflow-x non-visible forces overflow-y non-visible too, per
+            spec), so rather than fight that, it's leaned into: given an
+            explicit bounded height, this becomes the thead's real,
+            self-contained scrollport, and "sticky top: 0" inside it just
+            works - the rows scroll within this box while everything above
+            (filter panel, column headers) stays put, matching the "only the
+            bids themselves should scroll" requirement directly instead of
+            relying on page-level scroll chasing it. Height is the viewport
+            minus everything else measured live above and below it
+            (stickyTop, the filter panel, the global footer) rather than a
+            guess, floored so it never collapses to nothing on a very short
+            viewport (outer page scroll still rescues that case). */}
+        <div
+          ref={scrollRef}
+          className="overflow-x-auto overflow-y-auto no-scrollbar"
+          style={{
+            height: `max(240px, calc(100dvh - ${Math.round(stickyTop + filterPanelHeight + bottomReserve + 32)}px))`,
+          }}
+        >
         <table className="w-full text-left text-[11px] border-collapse">
           <thead>
             <tr
-              className="sticky z-20 bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200"
-              style={{ top: stickyTop + filterPanelHeight }}
+              className="sticky top-0 z-20 bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200"
             >
               <th className="py-2 px-2">
                 <input
