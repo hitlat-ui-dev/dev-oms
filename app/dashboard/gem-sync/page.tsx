@@ -218,6 +218,12 @@ interface UploadedRow {
   // reload the same way isCompleted/notAvailable do - toggled from the Excel
   // Preview popup's checkbox column.
   addedToCart?: boolean;
+  // Who/when it was ticked - cleared on untick, so these only ever reflect
+  // the current tick, not a history of past toggles. Shown in the Excel
+  // export's Cart column so a buyer-facing query like "kab cart kiya tha"
+  // can be answered straight from the sheet.
+  addedToCartBy?: string;
+  addedToCartAt?: string;
   // Manual flag - link looks fine but doesn't actually work (buyer's cart
   // add fails, rate isn't L1, etc). Nothing here can be verified against
   // live GeM automatically, so this just marks the row for a human to
@@ -2709,6 +2715,9 @@ export default function GeMSyncPage() {
           // added to the cart on the live GeM portal has nothing to do with
           // whether it's cancelled/blanked here, so it goes out regardless.
           "Cart": mappedRow?.addedToCart ? "✓" : "",
+          "Cart Date/Time": mappedRow?.addedToCart && mappedRow?.addedToCartAt
+            ? new Date(mappedRow.addedToCartAt).toLocaleString("en-IN")
+            : "",
           // Comment sits ahead of the quote columns - it is about the item,
           // not about the quote, and reads next to the client's own columns.
           "Comment": mappedRow?.comment || "",
@@ -2733,6 +2742,9 @@ export default function GeMSyncPage() {
       return {
         ...row,
         "Cart": mappedRow?.addedToCart ? "✓" : "",
+        "Cart Date/Time": mappedRow?.addedToCart && mappedRow?.addedToCartAt
+          ? new Date(mappedRow.addedToCartAt).toLocaleString("en-IN")
+          : "",
         "Comment": mappedRow?.comment || "",
         "Quoted Rate (₹)": source?.rate ?? mappedRow!.rate,
         "Seller Register Address": sellerRegisterAddress,
@@ -3388,7 +3400,7 @@ export default function GeMSyncPage() {
   // move together - and so does whether that one listing has been added to
   // cart. Qty is deliberately NOT here - every row keeps its own, and only a
   // merged display total is shown next to it.
-  const GROUP_SHARED_FIELDS: (keyof UploadedRow)[] = ["gemLink", "firmCode", "rate", "minQty", "availGemStock", "addedToCart"];
+  const GROUP_SHARED_FIELDS: (keyof UploadedRow)[] = ["gemLink", "firmCode", "rate", "minQty", "availGemStock", "addedToCart", "addedToCartBy", "addedToCartAt"];
 
   // Single write path for row edits: the full patch lands on the edited row,
   // and only the shared subset spreads to its group siblings (so picking a
@@ -4392,8 +4404,19 @@ export default function GeMSyncPage() {
                                   <input
                                     type="checkbox"
                                     checked={!!row.addedToCart}
-                                    onChange={() => patchRow(row.index, { addedToCart: !row.addedToCart })}
-                                    title="Added to cart on GeM?"
+                                    onChange={() => {
+                                      const nowAdded = !row.addedToCart;
+                                      patchRow(row.index, {
+                                        addedToCart: nowAdded,
+                                        addedToCartBy: nowAdded ? (currentUsername || "Unknown") : undefined,
+                                        addedToCartAt: nowAdded ? new Date().toISOString() : undefined,
+                                      });
+                                    }}
+                                    title={
+                                      row.addedToCart && row.addedToCartAt
+                                        ? `Added to cart${row.addedToCartBy ? ` by ${row.addedToCartBy}` : ""} on ${new Date(row.addedToCartAt).toLocaleString("en-IN")}`
+                                        : "Added to cart on GeM?"
+                                    }
                                     className="w-2.5 h-2.5 accent-emerald-600 cursor-pointer"
                                   />
                                 </div>
@@ -6411,8 +6434,19 @@ export default function GeMSyncPage() {
                                 <input
                                   type="checkbox"
                                   checked={!!groupedRow?.addedToCart}
-                                  onChange={() => patchRow(i, { addedToCart: !groupedRow?.addedToCart })}
-                                  title="Added to cart on GeM?"
+                                  onChange={() => {
+                                    const nowAdded = !groupedRow?.addedToCart;
+                                    patchRow(i, {
+                                      addedToCart: nowAdded,
+                                      addedToCartBy: nowAdded ? (currentUsername || "Unknown") : undefined,
+                                      addedToCartAt: nowAdded ? new Date().toISOString() : undefined,
+                                    });
+                                  }}
+                                  title={
+                                    groupedRow?.addedToCart && groupedRow?.addedToCartAt
+                                      ? `Added to cart${groupedRow.addedToCartBy ? ` by ${groupedRow.addedToCartBy}` : ""} on ${new Date(groupedRow.addedToCartAt).toLocaleString("en-IN")}`
+                                      : "Added to cart on GeM?"
+                                  }
                                   className="w-3.5 h-3.5 accent-emerald-600 cursor-pointer"
                                 />
                               </td>
