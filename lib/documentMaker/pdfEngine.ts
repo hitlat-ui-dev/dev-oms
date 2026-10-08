@@ -1,5 +1,15 @@
 import { PDFDocument, StandardFonts, PDFFont } from "pdf-lib";
 
+// pdf-lib defaults to writing a compressed cross-reference STREAM (PDF
+// 1.5+), which is fully spec-valid but GeM's own upload validator (and a
+// number of other strict/older government portals) rejects outright with
+// "File type not supported" - it's evidently sniffing for a classic xref
+// TABLE + trailer rather than actually parsing the PDF. Forcing the
+// classic table here is the standard, widely-documented fix for exactly
+// this class of rejection. Applies to every .save() in this file and in
+// app/api/document-maker/bundle/route.ts's own two direct .save() calls.
+export const SAVE_OPTIONS = { useObjectStreams: false };
+
 // ============================================================
 // SIGN + STAMP OVERLAY
 // ============================================================
@@ -74,7 +84,7 @@ async function buildChunkFromIndices(pdfDoc: PDFDocument, indices: number[]): Pr
   const chunk = await PDFDocument.create();
   const pages = await chunk.copyPages(pdfDoc, indices);
   pages.forEach((p) => chunk.addPage(p));
-  return Buffer.from(await chunk.save());
+  return Buffer.from(await chunk.save(SAVE_OPTIONS));
 }
 
 /**

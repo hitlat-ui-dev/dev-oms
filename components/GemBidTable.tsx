@@ -1,7 +1,7 @@
 "use client";
 import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
 import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX, FiRefreshCw } from "react-icons/fi";
-import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS } from "@/lib/gemBids/columns";
+import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, RAW_DATA_SECTIONS } from "@/lib/gemBids/columns";
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
 import { guessInstituteForAddress } from "@/lib/gemBids/instituteMatch";
 
@@ -436,7 +436,7 @@ export default function GemBidTable({
   // In "All Bids" mode rows can each be in a different section, so anything
   // section-specific reads each row's own currentSection instead of this
   // shared value - see effectiveSectionFor() below.
-  const RAW_DATA_SECTIONS = new Set<SectionKey>(["new_bids", "fetched_bid_data"]);
+  const RAW_DATA_SECTIONS_SET = new Set<SectionKey>(RAW_DATA_SECTIONS);
   const otherColumns = useMemo(() => BID_COLUMNS.filter((c) => c.key !== "bidNo" && !c.hiddenInTable), []);
 
   const effectiveSectionFor = (b: GemBid): SectionKey => (allSectionsMode ? b.currentSection : currentSectionKey);
@@ -704,7 +704,7 @@ export default function GemBidTable({
   const sendToFromSection = allSectionsMode ? uniformSelectedSection : currentSectionKey;
   const otherSections = !sendToFromSection
     ? []
-    : RAW_DATA_SECTIONS.has(sendToFromSection)
+    : RAW_DATA_SECTIONS_SET.has(sendToFromSection)
     ? SECTIONS.filter((s) => s.key === "bids_to_fill")
     : SECTIONS.filter((s) => s.key !== sendToFromSection && !AUTO_ONLY_SECTIONS.includes(s.key));
 

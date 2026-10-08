@@ -5,7 +5,7 @@ import JSZip from "jszip";
 import clientPromise from "@/lib/mongodb";
 import FirmDocumentVault from "@/models/FirmDocumentVault";
 import { getFileFromR2, uploadFileToR2, getSignedDownloadUrl } from "@/lib/cloudflareR2";
-import { mergePdfs, overlaySignStamp, splitBySizeAndPages } from "@/lib/documentMaker/pdfEngine";
+import { mergePdfs, overlaySignStamp, splitBySizeAndPages, SAVE_OPTIONS } from "@/lib/documentMaker/pdfEngine";
 import { buildAtcDocument } from "@/lib/documentMaker/buildAtcDocument";
 import { parseBoqXlsx, buildFilledBoqXlsx } from "@/lib/documentMaker/boqEngine";
 
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
     // a text summary cover otherwise (see buildAtcDocument's own note).
     const atcResult = await buildAtcDocument(bid, letterheadBytes, signBytes, stampBytes);
     if (atcResult.note) notes.push(atcResult.note);
-    const atcBytes = Buffer.from(await atcResult.pdfDoc.save());
+    const atcBytes = Buffer.from(await atcResult.pdfDoc.save(SAVE_OPTIONS));
     zip.file("ATC.pdf", atcBytes);
     zip.file("ATC.docx", atcResult.docxBytes);
 
@@ -168,7 +168,7 @@ export async function POST(req: Request) {
     if (selectedBuffers.length > 0) {
       const selectedMerged = await mergePdfs(selectedBuffers);
       await overlaySignStamp(selectedMerged, signBytes, stampBytes);
-      stampedSelected = Buffer.from(await selectedMerged.save());
+      stampedSelected = Buffer.from(await selectedMerged.save(SAVE_OPTIONS));
     }
     const atcAllDoc = await mergePdfs(stampedSelected ? [atcBytes, stampedSelected] : [atcBytes]);
     const atcAllParts = await splitBySizeAndPages(atcAllDoc);

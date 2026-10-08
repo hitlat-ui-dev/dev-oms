@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     const db = client.db(DB_NAME);
     const bid = await db.collection("gem_bids").findOne(
       { _id: new ObjectId(bidId) },
-      { projection: { docFetch: 1, bidSpecificAtc: 1, bidLinkDoc: 1, boqDetailDoc: 1 } }
+      { projection: { docFetch: 1, bidSpecificAtc: 1, bidLinkDoc: 1, boqDetailDoc: 1, specificationDoc: 1 } }
     );
     if (!bid) {
       return NextResponse.json({ error: "Bid not found" }, { status: 404 });
@@ -32,6 +32,7 @@ export async function GET(req: Request) {
       hasBidDocument: !!bid.bidLinkDoc?.fileKey,
       hasAtcDocument: !!bid.bidSpecificAtc?.fileKey,
       hasBoqDocument: !!bid.boqDetailDoc?.fileKey,
+      hasSpecDocument: !!bid.specificationDoc?.fileKey,
     });
   } catch (error: any) {
     console.error("GeM bid fetch-documents status error:", error);

@@ -19,21 +19,26 @@ const KIND_FIELD: Record<string, string> = {
   atc: "bidSpecificAtc",
   bidLink: "bidLinkDoc",
   boq: "boqDetailDoc",
+  spec: "specificationDoc",
 };
 // BOQ Detail Document is an Excel sheet, not a PDF - everything else about
 // this route (fetched by the extension, cached in R2) is identical.
-const KIND_EXT: Record<string, string> = { atc: "pdf", bidLink: "pdf", boq: "xlsx" };
+const KIND_EXT: Record<string, string> = { atc: "pdf", bidLink: "pdf", boq: "xlsx", spec: "pdf" };
 const KIND_CONTENT_TYPE: Record<string, string> = {
   atc: "application/pdf",
   bidLink: "application/pdf",
   boq: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  spec: "application/pdf",
 };
 
-// POST multipart/form-data { bidId, kind: "atc" | "bidLink" | "boq", file } —
+// POST multipart/form-data { bidId, kind: "atc" | "bidLink" | "boq" | "spec", file } —
 // called by the extension's background worker once it's fetched one of the
 // source documents for a claimed fetch-documents job (see ../route.ts's
-// GET). Called once per kind that succeeded; a kind that failed to fetch is
-// never uploaded (left null, see ../finish/route.ts for how that's reported).
+// GET), and also by Bid Rate's own manual "Upload Specification Document"
+// button (spec) and BOQ upload (boq), which skip the claim/extension flow
+// entirely and just call this directly. Called once per kind that
+// succeeded; a kind that failed to fetch via the extension is never
+// uploaded (left null, see ../finish/route.ts for how that's reported).
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
@@ -45,7 +50,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Valid bidId is required" }, { status: 400, headers: corsHeaders });
     }
     if (!KIND_FIELD[kind]) {
-      return NextResponse.json({ error: "kind must be atc, bidLink, or boq" }, { status: 400, headers: corsHeaders });
+      return NextResponse.json({ error: "kind must be atc, bidLink, boq, or spec" }, { status: 400, headers: corsHeaders });
     }
     if (!file) {
       return NextResponse.json({ error: "file is required" }, { status: 400, headers: corsHeaders });

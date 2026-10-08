@@ -5,18 +5,22 @@ import { normalizeItemKey } from "@/lib/documentMaker/boqEngine";
 
 const DB_NAME = "dev_oms_db";
 
-// POST { bidId, items: [{ itemNumber, itemTitle, rate, quantity? }] } —
+// POST { bidId, items: [{ itemNumber, itemTitle, rate, quantity?, baseRate?, marginPercent? }] } —
 // saves the user's filled rates against this bid (boqRates, restored next
 // time this bid's BOQ is opened - see ../route.ts) and upserts each into
 // the shared rate directory (gem_bid_item_rate_history), keyed by the
 // item's normalized title, so the next bid with a matching item title gets
-// this as its suggestion. Only items with a non-blank rate are saved to the
-// directory - a cleared/blank rate updates this bid's own record but
-// doesn't overwrite a real historical rate with nothing. quantity is
-// stashed alongside the rate (not just itemNumber/itemTitle/rate) so a
-// per-bid final total (quantity × rate, every item) can be read straight
-// off the bid doc later - see /api/gem-bids/final-rates - without having
-// to re-fetch and re-parse the original BOQ file just to get it back.
+// this as its suggestion (the directory only ever stores the final rate,
+// not the base/margin breakdown - a suggestion is "what it sold for",
+// someone else's base cost isn't necessarily relevant to a different bid).
+// Only items with a non-blank rate are saved to the directory - a
+// cleared/blank rate updates this bid's own record but doesn't overwrite a
+// real historical rate with nothing. quantity, baseRate and marginPercent
+// are stashed alongside the rate (not just itemNumber/itemTitle/rate) so
+// reopening this bid's BOQ restores the full base-rate/margin breakdown,
+// and a per-bid final total (quantity × rate) can be read straight off the
+// bid doc later - see /api/gem-bids/final-rates - without re-fetching and
+// re-parsing the original BOQ file just to get it back.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -41,6 +45,8 @@ export async function POST(req: Request) {
       itemTitle: String(it.itemTitle || ""),
       rate: String(it.rate || "").trim(),
       quantity: String(it.quantity || "").trim(),
+      baseRate: String(it.baseRate || "").trim(),
+      marginPercent: String(it.marginPercent || "").trim(),
     }));
 
     await db.collection("gem_bids").updateOne({ _id: new ObjectId(bidId) }, { $set: { boqRates, boqRatesUpdatedAt: now } });

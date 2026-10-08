@@ -18,6 +18,7 @@ import {
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { guessInstituteForAddress, SellerLite } from "@/lib/gemBids/instituteMatch";
+import { parseGemDate } from "@/lib/gemBids/expirySweep";
 
 interface Company {
   _id: string;
@@ -57,6 +58,7 @@ interface GemBid {
   typeOfBid?: string;
   evaluationMethod?: string;
   emdAmount?: string;
+  bidEndDateTime?: string;
 }
 
 interface BoqItem {
@@ -67,9 +69,23 @@ interface BoqItem {
   unit: string;
   consigneeId: string;
   deliveryPeriod: string;
+  baseRate: string;
+  marginPercent: string;
   rate: string;
   suggestedRate: string;
   suggestedFromBidNo: string;
+}
+
+// Rate = Base Rate marked up by Margin % - recomputed live whenever either
+// changes, so Rate always reflects the two unless the base is blank (then
+// there's nothing to compute from, and Rate is left alone rather than
+// cleared - a directly-typed Rate, e.g. from "Use suggested rate" below,
+// stays valid without a base/margin behind it at all).
+function computeRateFromBase(baseRate: string, marginPercent: string): string {
+  const base = parseFloat(baseRate);
+  if (!base) return "";
+  const pct = parseFloat(marginPercent) || 0;
+  return String(Math.round(base * (1 + pct / 100) * 100) / 100);
 }
 
 // ATC/rate-filling only ever make sense for a bid that's actually being
@@ -170,7 +186,6 @@ function DocumentMakerPageInner() {
   // and both tabs react to it, rather than each having its own picker (the
   // old "Generate" tab used to have its own, now removed in favor of this).
   const [bids, setBids] = useState<GemBid[]>([]);
-  const [bidQuery, setBidQuery] = useState("");
   const [selectedBidId, setSelectedBidId] = useState("");
   const [generatingAtc, setGeneratingAtc] = useState(false);
   const [atcPhase, setAtcPhase] = useState<"idle" | "fetching" | "generating">("idle");
@@ -190,6 +205,7 @@ function DocumentMakerPageInner() {
   const [hasBidDocument, setHasBidDocument] = useState(false);
   const [hasAtcDocument, setHasAtcDocument] = useState(false);
   const [hasBoqDocument, setHasBoqDocument] = useState(false);
+  const [hasSpecDocument, setHasSpecDocument] = useState(false);
 
   const [bundling, setBundling] = useState(false);
   const [bundleResult, setBundleResult] = useState<BundleResult | null>(null);
@@ -201,6 +217,12 @@ function DocumentMakerPageInner() {
   const [uploadingBoq, setUploadingBoq] = useState(false);
   const [boqExportUrl, setBoqExportUrl] = useState<string | null>(null);
   const boqFileRef = useRef<HTMLInputElement>(null);
+  const [uploadingSpec, setUploadingSpec] = useState(false);
+  const specFileRef = useRef<HTMLInputElement>(null);
+  // Typed once, applied to every row's own Margin % at a click - each row
+  // stays individually editable afterward (this is a bulk-fill, not a
+  // locked global setting).
+  const [globalMarginPercent, setGlobalMarginPercent] = useState("");
 
   // Rate Variants - generated from whatever's currently filled in the Rate
   // column above (see RATE_VARIANT_BRACKETS), same idea as the standalone
@@ -362,18 +384,48 @@ function DocumentMakerPageInner() {
     }
   };
 
-  const filteredBids = useMemo(() => {
-    const eligible = bids.filter((b) => ATC_ELIGIBLE_SECTIONS.has(b.currentSection || ""));
-    const q = bidQuery.trim().toLowerCase();
-    const list = q ? eligible.filter((b) => (b.bidNo || "").toLowerCase().includes(q)) : eligible;
-    return list.slice(0, 25);
-  }, [bids, bidQuery]);
+  // The combobox below does its own free-text search/limit internally -
+  // this just applies the fixed "only a bid actually being worked"
+  // restriction every picker use shares.
+  const eligibleBids = useMemo(() => bids.filter((b) => ATC_ELIGIBLE_SECTIONS.has(b.currentSection || "")), [bids]);
 
   const selectedBid = useMemo(() => bids.find((b) => b._id === selectedBidId) || null, [bids, selectedBidId]);
-  const matchedInstitute = useMemo(
-    () => (selectedBid ? guessInstituteForAddress(selectedBid.departmentNameAndAddress || selectedBid.address || "", sellers) : null),
-    [selectedBid, sellers]
-  );
+
+  // Computed once for every bid (not just the selected one, and not just
+  // the eligible-for-picking ones - a deep-linked bidId from Final Rates
+  // can point at a bid outside that list) so the Bid combobox's dropdown
+  // can lead each row with its own matched institute name, not just Bid No
+  // + item, and the info strip below still resolves correctly either way.
+  const matchedInstituteByBidId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of bids) {
+      // address (not departmentNameAndAddress) is the field that actually
+      // carries the specific institute's own location text - mirrors
+      // GemBidTable's Address column, which is where this matching logic
+      // was first built and verified. departmentNameAndAddress is the
+      // generic GOVERNMENT DEPARTMENT name (e.g. "Labour and Employment
+      // Department Gujarat"), shared by hundreds of unrelated bids, so
+      // trying it first (the earlier version of this line did) meant it
+      // almost always "matched" nothing and never even got to try the
+      // field that actually works.
+      const m = guessInstituteForAddress(b.address || "", sellers);
+      if (m) map.set(b._id, m);
+    }
+    return map;
+  }, [bids, sellers]);
+  const matchedInstitute = selectedBid ? matchedInstituteByBidId.get(selectedBid._id) || null : null;
+
+  // Same ≤3-day "urgent" threshold as GemBidTable's own row-highlight, so
+  // this page's sense of "about to expire" matches what's shown there.
+  const remainingTime = useMemo(() => {
+    const end = parseGemDate(selectedBid?.bidEndDateTime);
+    if (!end) return null;
+    const daysLeft = (end.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    if (daysLeft < 0) return { label: "Expired", urgent: true };
+    if (daysLeft < 1) return { label: "Ends today", urgent: true };
+    const d = Math.ceil(daysLeft);
+    return { label: `${d} day${d === 1 ? "" : "s"} left`, urgent: daysLeft <= 3 };
+  }, [selectedBid]);
 
   // Once a bid is selected, the Firm dropdown narrows to just the party(ies)
   // already picked for it in Bids to Fill - picking a firm this ATC/rate
@@ -472,6 +524,7 @@ function DocumentMakerPageInner() {
         setHasBidDocument(!!data.hasBidDocument);
         setHasAtcDocument(!!data.hasAtcDocument);
         setHasBoqDocument(!!data.hasBoqDocument);
+        setHasSpecDocument(!!data.hasSpecDocument);
       })
       .catch((err) => console.error("Failed to load document-fetch status", err));
   }, [selectedBidId]);
@@ -481,6 +534,7 @@ function DocumentMakerPageInner() {
     setHasBidDocument(false);
     setHasAtcDocument(false);
     setHasBoqDocument(false);
+    setHasSpecDocument(false);
     setAtcResult(null);
     setBundleResult(null);
     setBoqItems([]);
@@ -532,8 +586,59 @@ function DocumentMakerPageInner() {
     }
   };
 
+  // Specification Document - uploaded separately from the BOQ Excel (GeM
+  // shows them as two different downloads on the bid itself). Stored the
+  // same way as the BOQ/ATC/Bid Document already are (see KIND_FIELD in
+  // fetch-documents/upload/route.ts). Not parsed/merged into the rate table
+  // yet - that needs a real sample of GeM's own Specification Document PDF
+  // first, same as BOQ parsing did, so this just gets it uploaded and
+  // tracked (✓ loaded) for now.
+  const uploadSpecFile = async (file: File) => {
+    if (!selectedBidId) return;
+    setUploadingSpec(true);
+    try {
+      const fd = new FormData();
+      fd.append("bidId", selectedBidId);
+      fd.append("kind", "spec");
+      fd.append("file", file);
+      const res = await fetch("/api/gem-bids/fetch-documents/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Upload failed");
+      fetchDocStatus();
+    } catch (err: any) {
+      alert(err.message || "Upload failed");
+    } finally {
+      setUploadingSpec(false);
+    }
+  };
+
   const updateBoqRate = (itemNumber: string, rate: string) => {
     setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, rate } : it)));
+  };
+
+  const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
+    setBoqItems((prev) =>
+      prev.map((it) => (it.itemNumber === itemNumber ? { ...it, baseRate, rate: computeRateFromBase(baseRate, it.marginPercent) || it.rate } : it))
+    );
+  };
+
+  const updateBoqMarginPercent = (itemNumber: string, marginPercent: string) => {
+    setBoqItems((prev) =>
+      prev.map((it) =>
+        it.itemNumber === itemNumber ? { ...it, marginPercent, rate: computeRateFromBase(it.baseRate, marginPercent) || it.rate } : it
+      )
+    );
+  };
+
+  // "Apply to all" for the heading-level % control - sets every row's own
+  // Margin % to this one value and recomputes each row's Rate from ITS OWN
+  // Base Rate (not a single shared total), then stays a perfectly normal,
+  // individually-editable per-row value afterward.
+  const applyGlobalMarginPercent = () => {
+    if (!globalMarginPercent.trim()) return;
+    setBoqItems((prev) =>
+      prev.map((it) => ({ ...it, marginPercent: globalMarginPercent, rate: computeRateFromBase(it.baseRate, globalMarginPercent) || it.rate }))
+    );
   };
 
   const boqGrandTotal = useMemo(
@@ -591,7 +696,14 @@ function DocumentMakerPageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bidId: selectedBidId,
-          items: boqItems.map((it) => ({ itemNumber: it.itemNumber, itemTitle: it.itemTitle, rate: it.rate, quantity: it.quantity })),
+          items: boqItems.map((it) => ({
+            itemNumber: it.itemNumber,
+            itemTitle: it.itemTitle,
+            rate: it.rate,
+            quantity: it.quantity,
+            baseRate: it.baseRate,
+            marginPercent: it.marginPercent,
+          })),
         }),
       });
       const data = await res.json();
@@ -704,25 +816,12 @@ function DocumentMakerPageInner() {
                 </button>
               ))}
             </div>
-            <input
-              type="text"
-              placeholder="Search Bid No..."
-              value={bidQuery}
-              onChange={(e) => setBidQuery(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg py-2 px-2.5 text-xs focus:outline-none focus:border-blue-500 w-28"
-            />
-            <select
+            <BidCombobox
+              bids={eligibleBids}
+              matchedInstituteById={matchedInstituteByBidId}
               value={selectedBidId}
-              onChange={(e) => setSelectedBidId(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg py-2 px-2.5 text-xs font-bold focus:outline-none focus:border-blue-500 flex-1 min-w-[160px] max-w-xs"
-            >
-              <option value="">Select Bid...</option>
-              {filteredBids.map((b) => (
-                <option key={b._id} value={b._id}>
-                  {b.bidNo} {b.items ? `— ${b.items.slice(0, 40)}` : ""}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedBidId}
+            />
             <select
               value={firmId}
               onChange={(e) => setFirmId(e.target.value)}
@@ -749,6 +848,17 @@ function DocumentMakerPageInner() {
               <span>
                 <span className="font-black uppercase text-slate-400 mr-1">Item:</span>
                 <span className="font-bold text-slate-700">{selectedBid.items || "—"}</span>
+              </span>
+              <span>
+                <span className="font-black uppercase text-slate-400 mr-1">Bid End Date/Time:</span>
+                <span className={`font-bold ${remainingTime?.urgent ? "text-rose-600" : "text-slate-700"}`}>
+                  {selectedBid.bidEndDateTime || "—"}
+                </span>
+                {remainingTime && (
+                  <span className={`ml-1.5 font-black ${remainingTime.urgent ? "text-rose-600" : "text-slate-400"}`}>
+                    ({remainingTime.label})
+                  </span>
+                )}
               </span>
               <span>
                 <span className="font-black uppercase text-slate-400 mr-1">Institute:</span>
@@ -827,7 +937,7 @@ function DocumentMakerPageInner() {
                       e.target.value = "";
                     }}
                   />
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       disabled={uploadingBoq}
                       onClick={() => boqFileRef.current?.click()}
@@ -840,6 +950,54 @@ function DocumentMakerPageInner() {
                       <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
                     )}
                   </div>
+
+                  <input
+                    ref={specFileRef}
+                    type="file"
+                    accept=".pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadSpecFile(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      disabled={uploadingSpec}
+                      onClick={() => specFileRef.current?.click()}
+                      className="w-fit flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                    >
+                      <FiUploadCloud size={13} />
+                      {uploadingSpec ? "Uploading..." : hasSpecDocument ? "Replace Specification Document" : "Upload Specification Document"}
+                    </button>
+                    {hasSpecDocument && (
+                      <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                    )}
+                  </div>
+
+                  {boqItems.length > 0 && (
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+                      <span className="text-[10px] font-black uppercase text-slate-500">Apply % to all items:</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={globalMarginPercent}
+                        onChange={(e) => setGlobalMarginPercent(e.target.value)}
+                        placeholder="e.g. 10"
+                        className="w-20 border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      />
+                      <button
+                        onClick={applyGlobalMarginPercent}
+                        disabled={!globalMarginPercent.trim()}
+                        className="px-3 py-1 rounded text-[10px] font-black uppercase tracking-wide bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white transition-colors"
+                      >
+                        Apply to All
+                      </button>
+                      <span className="text-[9px] text-slate-400">Each item&apos;s % can still be changed individually below.</span>
+                    </div>
+                  )}
 
                   {loadingBoq ? (
                     <div className="flex justify-center items-center py-10">
@@ -860,7 +1018,9 @@ function DocumentMakerPageInner() {
                               <th className="py-2 px-2 text-left">Qty</th>
                               <th className="py-2 px-2 text-left">Unit</th>
                               <th className="py-2 px-2 text-left">Delivery</th>
-                              <th className="py-2 px-2 text-left w-36">Rate</th>
+                              <th className="py-2 px-2 text-left w-28">Base Rate</th>
+                              <th className="py-2 px-2 text-left w-20">%</th>
+                              <th className="py-2 px-2 text-left w-32">Rate</th>
                               <th className="py-2 px-2 text-right">Total</th>
                             </tr>
                           </thead>
@@ -880,6 +1040,31 @@ function DocumentMakerPageInner() {
                                   <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
                                   <td className="py-2 px-2">
                                     <input
+                                      type="number"
+                                      step="1"
+                                      min="0"
+                                      value={it.baseRate}
+                                      onChange={(e) => updateBoqBaseRate(it.itemNumber, e.target.value)}
+                                      placeholder="Base Rate"
+                                      className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-2">
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      min="0"
+                                      value={it.marginPercent}
+                                      onChange={(e) => updateBoqMarginPercent(it.itemNumber, e.target.value)}
+                                      placeholder="%"
+                                      className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-2">
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      min="0"
                                       value={it.rate}
                                       onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
                                       placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
@@ -905,7 +1090,7 @@ function DocumentMakerPageInner() {
                           </tbody>
                           <tfoot>
                             <tr className="border-t-2 border-slate-800">
-                              <td colSpan={6} className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700">
+                              <td colSpan={8} className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700">
                                 Grand Total
                               </td>
                               <td className="py-2 px-2 text-right font-black text-slate-900 whitespace-nowrap">
@@ -1400,6 +1585,151 @@ export default function DocumentMakerPage() {
     <Suspense fallback={<div className="p-4 md:p-8 bg-slate-50 min-h-screen" />}>
       <DocumentMakerPageInner />
     </Suspense>
+  );
+}
+
+// Combobox (search box + dropdown list, both in one control) for picking a
+// bid - replaces a free-standing search <input> that only filtered a
+// separate <select> next to it, which left "how do I change this" and
+// "where did my search go" unclear since the two never visibly agreed with
+// each other. Same open/search/click-outside-to-close shape as
+// GemBidTable's PartySelect, single-select instead of multi, plus arrow-
+// key/Enter navigation (a mouse-only list after typing a search felt half
+// finished) and each row led with its matched institute name (not just Bid
+// No + item) since that's usually the thing actually being searched for.
+function BidCombobox({
+  bids,
+  matchedInstituteById,
+  value,
+  onChange,
+}: {
+  bids: GemBid[];
+  matchedInstituteById: Map<string, string>;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [highlighted, setHighlighted] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const selectedBid = bids.find((b) => b._id === value) || null;
+  const selectedInstitute = selectedBid ? matchedInstituteById.get(selectedBid._id) : null;
+  const query = search.trim().toLowerCase();
+  const filtered = (
+    query
+      ? bids.filter(
+          (b) =>
+            b.bidNo.toLowerCase().includes(query) ||
+            (b.items || "").toLowerCase().includes(query) ||
+            (matchedInstituteById.get(b._id) || "").toLowerCase().includes(query)
+        )
+      : bids
+  ).slice(0, 50);
+
+  useEffect(() => {
+    setHighlighted(0);
+  }, [search, open]);
+
+  useEffect(() => {
+    itemRefs.current[highlighted]?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
+
+  const pick = (b: GemBid) => {
+    onChange(b._id);
+    setOpen(false);
+    setSearch("");
+  };
+
+  const rowLabel = (b: GemBid) => {
+    const inst = matchedInstituteById.get(b._id);
+    const parts = [inst, b.bidNo].filter(Boolean);
+    return { lead: parts.join(" — "), items: b.items };
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((v) => !v);
+          setSearch("");
+        }}
+        className="bg-slate-50 border border-slate-200 rounded-lg py-2 px-2.5 text-xs font-bold text-left focus:outline-none focus:border-blue-500 flex-1 min-w-[220px] max-w-sm truncate"
+      >
+        {selectedBid ? (
+          <>
+            {selectedInstitute ? `${selectedInstitute} — ` : ""}
+            {selectedBid.bidNo}
+            {selectedBid.items ? ` — ${selectedBid.items.slice(0, 40)}` : ""}
+          </>
+        ) : (
+          <span className="text-slate-400 font-normal">Select Bid...</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute z-40 top-full left-0 mt-1 w-96 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search Institute, Bid No or Item..."
+            className="w-full border border-slate-200 rounded px-2 py-1.5 text-[11px] mb-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setHighlighted((i) => Math.min(i + 1, filtered.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setHighlighted((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const b = filtered[highlighted];
+                if (b) pick(b);
+              } else if (e.key === "Escape") {
+                setOpen(false);
+              }
+            }}
+          />
+          <div className="max-h-64 overflow-y-auto flex flex-col gap-0.5">
+            {filtered.length === 0 ? (
+              <span className="text-[10px] text-slate-400 px-1 py-1.5 block">No match</span>
+            ) : (
+              filtered.map((b, i) => {
+                const { lead, items } = rowLabel(b);
+                return (
+                  <button
+                    type="button"
+                    key={b._id}
+                    ref={(el) => {
+                      itemRefs.current[i] = el;
+                    }}
+                    onMouseEnter={() => setHighlighted(i)}
+                    onClick={() => pick(b)}
+                    className={`text-left px-2 py-1.5 rounded text-[11px] transition-colors ${
+                      i === highlighted ? "bg-blue-100" : b._id === value ? "bg-blue-50" : ""
+                    }`}
+                  >
+                    <div className={`font-bold ${b._id === value ? "text-blue-700" : "text-slate-700"}`}>{lead}</div>
+                    {items && <div className="text-[10px] text-slate-400 truncate">{items}</div>}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

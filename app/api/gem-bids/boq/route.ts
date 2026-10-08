@@ -8,10 +8,11 @@ const DB_NAME = "dev_oms_db";
 
 // GET ?bidId= — parses the bid's fetched BOQ Detail Document (see
 // /api/gem-bids/fetch-documents) into its line items, merges in any rate
-// already saved for THIS bid (reopening a bid you've part-filled before),
-// and attaches a rate suggestion per item from gem_bid_item_rate_history -
-// the directory of rates saved against other bids, keyed by a normalized
-// item title (see boqEngine.ts's normalizeItemKey), updated every time
+// (plus the base rate/margin % it was built from, if it was) already saved
+// for THIS bid (reopening a bid you've part-filled before), and attaches a
+// rate suggestion per item from gem_bid_item_rate_history - the directory
+// of rates saved against other bids, keyed by a normalized item title (see
+// boqEngine.ts's normalizeItemKey), updated every time
 // /api/gem-bids/boq/save runs. A brand-new item with no history match
 // simply gets no suggestion.
 export async function GET(req: Request) {
@@ -39,8 +40,13 @@ export async function GET(req: Request) {
     }
 
     const savedRates: Record<string, string> = {};
+    const savedBaseRates: Record<string, string> = {};
+    const savedMarginPercents: Record<string, string> = {};
     for (const r of bid.boqRates || []) {
-      if (r.itemNumber) savedRates[r.itemNumber] = r.rate;
+      if (!r.itemNumber) continue;
+      savedRates[r.itemNumber] = r.rate;
+      if (r.baseRate) savedBaseRates[r.itemNumber] = r.baseRate;
+      if (r.marginPercent) savedMarginPercents[r.itemNumber] = r.marginPercent;
     }
 
     const itemKeys = parsedItems.map((it) => normalizeItemKey(it.itemTitle || it.itemDescription));
@@ -56,6 +62,8 @@ export async function GET(req: Request) {
       return {
         ...it,
         rate: savedRates[it.itemNumber] || "",
+        baseRate: savedBaseRates[it.itemNumber] || "",
+        marginPercent: savedMarginPercents[it.itemNumber] || "",
         suggestedRate: history?.rate || "",
         suggestedFromBidNo: history?.bidNo || "",
       };

@@ -1,4 +1,4 @@
-import { DATA_FIELD_KEYS, computeHighlight, isExcludedByCategory, SYNC_PROTECTED_SECTIONS } from "./columns";
+import { DATA_FIELD_KEYS, computeHighlight, isExcludedByCategory, SYNC_PROTECTED_SECTIONS, RAW_DATA_SECTIONS } from "./columns";
 import { diffBidFields, normalizeForCompare } from "./diffEngine";
 import { runExpirySweep } from "./expirySweep";
 
@@ -118,15 +118,6 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
   for (const [bidNo, incoming] of incomingByBidNo) {
     const existing = existingByBidNo.get(bidNo);
 
-    // Submitted Bids is off-limits to every automated touch a sync makes -
-    // no field refresh, no re-tag, nothing - once a bid is here, only a
-    // manual action in the OMS itself (Edit Bid, Bid Status, or a manual
-    // Delete) can change it, even if GeM's own listing for it changed.
-    if (existing && SYNC_PROTECTED_SECTIONS.includes(existing.currentSection)) {
-      protectedSkippedCount++;
-      continue;
-    }
-
     // Still inside its 7-day soft-delete window - frozen in place, same as
     // a protected section, so it doesn't un-delete itself or get its
     // fields silently refreshed while sitting in Deleted Bids.
@@ -137,10 +128,16 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
 
     // Sitting in Expired Bids - also frozen in place, UNLESS GeM's own Bid
     // End Date/Time for it has genuinely changed (extended/moved) since it
-    // expired, in which case it's pulled back into Fetched Bid Data with
+    // expired, in which case it's pulled back into a live section with
     // the Updated badge (handled below, once diffBidFields confirms the
     // date is what changed) rather than staying expired forever even
-    // though GeM itself has revived the tender.
+    // though GeM itself has revived the tender. Checked BEFORE the
+    // Submitted-Bids protection below, on purpose - every section can
+    // expire now (including Submitted), and an expired bid needs this
+    // check to ever get a chance to un-expire; otherwise a bid that was
+    // Submitted when it expired would hit the protected-section skip on
+    // every future sync and stay expired forever regardless of what GeM
+    // later shows for its date.
     let unexpiring = false;
     if (existing && existing.expiredAt) {
       const dateChanged = normalizeForCompare(existing.bidEndDateTime) !== normalizeForCompare(incoming.bidEndDateTime);
@@ -149,6 +146,14 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
         continue;
       }
       unexpiring = true;
+    } else if (existing && SYNC_PROTECTED_SECTIONS.includes(existing.currentSection)) {
+      // Submitted Bids is off-limits to every automated touch a sync makes -
+      // no field refresh, no re-tag, nothing - once a bid is here, only a
+      // manual action in the OMS itself (Edit Bid, Bid Status, or a manual
+      // Delete) can change it, even if GeM's own listing for it changed.
+      // (Doesn't apply to an already-expired Submitted Bid - see above.)
+      protectedSkippedCount++;
+      continue;
     }
 
     // Not currently in gem_bids at all (soft-delete window has lapsed and
@@ -272,15 +277,23 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
     }
     const updateOp: Record<string, any> = { $set: setDoc };
     if (unexpiring) {
-      // GeM's own date for it moved - back into New Bids (not wherever it
-      // happened to be sitting before it expired), tag already "Updated/
-      // Extended" above per spec. firstSeenAt is reset to this run too, so
-      // it gets its own fresh 24h New Bids staging window instead of
+      // GeM's own date for it moved - tag already "Updated/Extended" above
+      // per spec. Where it lands depends on how far along it already was:
+      // a bid that hadn't progressed past raw scrape data (New Bids/
+      // Fetched Bid Data) goes to New Bids, with firstSeenAt reset so it
+      // gets its own fresh 24h New Bids staging window instead of
       // runExpirySweep (which checks firstSeenAt age, not section-entry
       // time) immediately re-promoting it straight past New Bids using its
-      // original, months-old firstSeenAt.
-      setDoc.currentSection = "new_bids";
-      setDoc.firstSeenAt = runAt;
+      // original, months-old firstSeenAt. A bid that had already reached
+      // Bids to Fill or Submitted Bids stays exactly there instead - the
+      // party picked, documents fetched, BOQ rates filled, or submission
+      // itself isn't undone just because GeM moved the deadline; the user
+      // only needs to notice the date changed (the Updated badge covers
+      // that), not redo work that still stands.
+      if (!RAW_DATA_SECTIONS.includes(existing.currentSection)) {
+        setDoc.currentSection = "new_bids";
+        setDoc.firstSeenAt = runAt;
+      }
       setDoc.hasPendingUpdate = true;
       updateOp.$unset = { expiredAt: "" };
     }

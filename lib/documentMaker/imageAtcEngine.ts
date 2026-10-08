@@ -82,7 +82,15 @@ export async function renderPdfPagesToImages(pdfBytes: Buffer | Uint8Array, dpi 
 // ============================================================
 
 const PAGE_MARGIN_X = 36;
-const PAGE_MARGIN_TOP = 70; // clears a typical letterhead header band
+// Measured directly off a real uploaded letterhead (logo + firm name +
+// address block + gold rule): its header content runs to ~127pt from the
+// top. The previous 70pt placeholder was roughly half that, so the pasted
+// page image started well inside the header band and visually covered the
+// firm's own logo/name - this is what "letterhead not printing" actually
+// was. 140pt clears it with a bit of headroom to spare. Footer measured
+// the same way: real content (gold rule + tagline) sits at ~34-53pt from
+// the bottom, comfortably inside the existing 90pt.
+const PAGE_MARGIN_TOP = 140;
 const PAGE_MARGIN_BOTTOM = 90; // clears the footer band + room for sign/stamp
 const STAMP_WIDTH = 70;
 const SIGN_WIDTH = 90;

@@ -137,10 +137,26 @@ export const SECTION_KEYS = SECTIONS.map((s) => s.key) as SectionKey[];
 // a free manual "Send to" target from every other section.
 export const AUTO_ONLY_SECTIONS: SectionKey[] = ["new_bids"];
 
-// Sections where an expired bid (Bid End Date/Time in the past) gets auto-deleted
-// during sync - a bid that's progressed further into real work (Bids to Fill
-// onward, including Submitted) is left for the user to remove manually.
-export const AUTO_DELETE_EXPIRED_SECTIONS: SectionKey[] = ["new_bids", "fetched_bid_data"];
+// Sections where a bid is still raw scraped data - nobody's picked a party,
+// fetched documents, or filled anything in yet. Used (a) by GemBidTable's
+// "Send to" bar to decide the one sensible manual-move target for a bid
+// still at this stage (straight to Bids to Fill), and (b) by applyImport's
+// un-expire logic to decide whether un-expiring a bid should reset it to
+// New Bids (true here) or leave it exactly where it already was (false -
+// Bids to Fill/Submitted means real work already happened, which a GeM
+// deadline moving doesn't undo).
+export const RAW_DATA_SECTIONS: SectionKey[] = ["new_bids", "fetched_bid_data"];
+
+// Sections where an expired bid (Bid End Date/Time in the past) gets
+// auto-moved to Expired Bids by the once-daily evening job (see
+// lib/gemBids/expireBidsJob.ts) - every section, by request: a bid whose
+// GeM deadline has passed belongs in Expired Bids regardless of how far
+// along it got, Submitted Bids included. This only ever *moves* it there
+// (soft, 7-day-retention, restorable, un-expires itself if a later sync
+// finds the date was actually extended) - it never hard-deletes, so a
+// submitted bid's own history/status isn't lost, just relocated out of the
+// day-to-day working tabs.
+export const AUTO_DELETE_EXPIRED_SECTIONS: SectionKey[] = SECTION_KEYS;
 
 // Submitted Bids is protected from every automated touch a sync run makes
 // (see applyImport.ts) - once a bid is here, only a manual action in the

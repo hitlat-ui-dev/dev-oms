@@ -80,7 +80,11 @@ export default function FinalRatesPage() {
   const enrichedBids = useMemo(
     () =>
       bids.map((b) => {
-        const matchedInstitute = guessInstituteForAddress(b.departmentNameAndAddress || b.address || "", sellers);
+        // address (not departmentNameAndAddress, the generic government
+        // department name shared by hundreds of bids) is the field that
+        // actually carries the specific institute's own location text -
+        // see document-maker/page.tsx's identical fix for the full story.
+        const matchedInstitute = guessInstituteForAddress(b.address || "", sellers);
         const partyIds = b.selectedPartyIds?.length ? b.selectedPartyIds : b.selectedPartyId ? [b.selectedPartyId] : [];
         const firmNames = partyIds.map((id) => companyById.get(id)?.firmName).filter(Boolean) as string[];
         return { ...b, matchedInstitute, firmNames };

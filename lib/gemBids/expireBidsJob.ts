@@ -53,13 +53,14 @@ export async function runExpireBidsJobIfDue(db: any, eveningHour = 18): Promise<
 
   const bidsCollection = db.collection("gem_bids");
 
-  // Move to Expired Bids: every bid in a section where auto-expiry is safe
-  // (new_bids/fetched_bid_data - a bid actively being worked, Bids to Fill
-  // onward, is left alone even past its own end date, same carve-out the
-  // old per-sync sweep always had), not already expired/deleted, whose Bid
-  // End Date/Time has passed. bidEndDateTime is a free-text string, not
-  // reliably comparable via a Mongo query operator, so every candidate is
-  // fetched and checked in JS.
+  // Move to Expired Bids: every bid in any live section (AUTO_DELETE_EXPIRED_SECTIONS
+  // covers all of them, by request - a bid's own GeM deadline passing applies
+  // regardless of how far along it got, Submitted Bids included; see
+  // applyImport.ts's own un-expire logic for how a Bids to Fill/Submitted
+  // bid picks up right where it left off if GeM later extends the date),
+  // not already expired/deleted, whose Bid End Date/Time has passed.
+  // bidEndDateTime is a free-text string, not reliably comparable via a
+  // Mongo query operator, so every candidate is fetched and checked in JS.
   const candidates = await bidsCollection
     .find({
       currentSection: { $in: AUTO_DELETE_EXPIRED_SECTIONS },
