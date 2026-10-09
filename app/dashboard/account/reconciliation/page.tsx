@@ -133,6 +133,8 @@ function OrderLedgerMini({
   highlightAmount,
   highlightOrderNos,
   fullWidth,
+  selectedIds,
+  onToggle,
 }: {
   orders: OrderLite[];
   highlightAmount?: number;
@@ -143,6 +145,12 @@ function OrderLedgerMini({
   // all under the old amount-only logic).
   highlightOrderNos?: string[];
   fullWidth?: boolean;
+  // When provided, renders a checkbox per row so the user can manually pick
+  // any combination of bills (not just what the engine auto-detected) -
+  // the credited amount may cover any number of this institute's open
+  // orders, so a single-select dropdown can't represent every real case.
+  selectedIds?: Set<string>;
+  onToggle?: (id: string) => void;
 }) {
   if (orders.length === 0) {
     return <p className="text-[9px] text-slate-400 italic px-1 py-1">No open orders for this institute.</p>;
@@ -165,11 +173,13 @@ function OrderLedgerMini({
   const cap = fullWidth ? LEDGER_ROW_CAP_FULL : LEDGER_ROW_CAP;
   const shown = sorted.slice(0, cap);
   const rowText = fullWidth ? "text-xs" : "text-[9px]";
+  const selectable = !!onToggle;
   return (
     <div className={`border border-slate-200 rounded-lg overflow-hidden mt-1 ${fullWidth ? "" : "max-w-[420px]"}`}>
       <table className={`w-full ${rowText}`}>
         <thead>
           <tr className="bg-slate-50 text-slate-400 font-bold uppercase">
+            {selectable && <th className="px-2 py-1.5 w-6"></th>}
             <th className="px-2 py-1.5 text-left">Order</th>
             <th className="px-2 py-1.5 text-left">Item</th>
             <th className="px-2 py-1.5 text-left">Date</th>
@@ -179,8 +189,24 @@ function OrderLedgerMini({
         <tbody className="divide-y divide-slate-100">
           {shown.map(({ o, remaining }) => {
             const isMatch = isHighlighted(o, remaining);
+            const checked = !!selectedIds?.has(o._id);
             return (
-              <tr key={o._id} className={isMatch ? "bg-emerald-50" : ""}>
+              <tr
+                key={o._id}
+                className={`${isMatch ? "bg-emerald-50" : ""} ${checked ? "bg-blue-50" : ""} ${selectable ? "cursor-pointer" : ""}`}
+                onClick={selectable ? () => onToggle!(o._id) : undefined}
+              >
+                {selectable && (
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggle!(o._id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-3.5 h-3.5 accent-blue-600"
+                    />
+                  </td>
+                )}
                 <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">{o.orderNo}</td>
                 <td className={`px-2 py-1.5 text-slate-600 truncate ${fullWidth ? "max-w-[220px]" : "max-w-[140px]"}`} title={o.itemName}>
                   {o.itemName || "—"}
@@ -203,6 +229,24 @@ function OrderLedgerMini({
 
 const RETURN_FAMILY = new Set(["CANCELL ORDER", "RETURN ORDER", "RETURN RECEIVED"]);
 const DEDUCTION_TYPES = ["TDS", "TDS+GST", "Kasar"];
+// TDS = 2% income-tax TDS only. TDS+GST = that same 2% plus the 2% GST-TDS
+// (1% CGST + 1% SGST) that applies on top of it, i.e. 4% total - auto-filled
+// instead of typed by hand so it always matches whatever bills are actually
+// picked (single or combo) rather than drifting out of sync.
+const DEDUCTION_RATES: Record<string, number> = { TDS: 0.02, "TDS+GST": 0.04 };
+
+const selectedBillsTotal = (bills: OrderLite[], man: { billId: string; comboBillIds: string[] }) => {
+  if (man.comboBillIds.length > 0) {
+    return bills
+      .filter((b) => man.comboBillIds.includes(b._id))
+      .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
+  }
+  if (man.billId) {
+    const b = bills.find((x) => x._id === man.billId);
+    return b ? b.totalAmount - (b.paidAmount || 0) : 0;
+  }
+  return 0;
+};
 
 // Reasons a credited transaction is never going to be a bill payment at all -
 // tagging one of these moves it out of auto-matching entirely instead of it
@@ -255,6 +299,11 @@ export default function ReconciliationPage() {
     instituteName: string;
     matchedBillNos?: string[];
   } | null>(null);
+  // Bills checked in the ledger modal's manual multi-select - seeded from
+  // whatever's already picked for this match (comboBillIds / billId / the
+  // engine's matchedBillNos) whenever the modal opens, so re-opening it to
+  // tweak a selection doesn't lose what was already chosen.
+  const [ledgerSelectedIds, setLedgerSelectedIds] = useState<Set<string>>(new Set());
   const [runningMatching, setRunningMatching] = useState(false);
   const [detailsFor, setDetailsFor] = useState<Match | null>(null);
   const [detailsBills, setDetailsBills] = useState<BillLineDetail[]>([]);
@@ -520,9 +569,15 @@ export default function ReconciliationPage() {
   // empty/wrong, so confirming never actually applied the combo the card
   // was showing. A single-order match auto-selects that one bill too.
   const selectCandidate = (m: Match, c: { sellerId: string; instituteName: string; matchedBillNos?: string[] }) => {
+    const man = getManual(m._id);
+    // If a TDS/TDS+GST deduction is already picked, keep the deduction
+    // amount in sync with whatever bill(s) this selection resolves to - zero
+    // when none resolve, recalculated at that type's rate otherwise.
+    const rate = DEDUCTION_RATES[man.deductionType];
+    const dedPatch = (total: number) => (rate ? { deductionAmount: (total * rate).toFixed(2) } : {});
     const billNos = c.matchedBillNos || [];
     if (billNos.length === 0) {
-      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [] });
+      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
       return;
     }
     const openBills = openBillsFor(c.instituteName, m.firmCode);
@@ -532,19 +587,76 @@ export default function ReconciliationPage() {
     if (resolved.length !== billNos.length) {
       // Couldn't resolve every matched order to an open bill (stale list) -
       // fall back to plain manual pick rather than locking in a partial/wrong set.
-      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [] });
+      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
       return;
     }
+    const total = resolved.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
     if (resolved.length === 1) {
-      setManual(m._id, { sellerId: c.sellerId, billId: resolved[0]._id, comboBillIds: [], comboBillNos: [] });
+      setManual(m._id, { sellerId: c.sellerId, billId: resolved[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch(total) });
     } else {
       setManual(m._id, {
         sellerId: c.sellerId,
         billId: "",
         comboBillIds: resolved.map((b) => b._id),
         comboBillNos: resolved.map((b) => b.orderNo),
+        ...dedPatch(total),
       });
     }
+  };
+
+  // Opens the order-ledger modal and seeds its checkbox selection from
+  // whatever bill(s) are already picked for this match, so the modal always
+  // reflects (and lets the user adjust) the current selection rather than
+  // starting blank every time.
+  const openLedgerModal = (
+    m: Match,
+    sellerId: string,
+    instituteName: string,
+    matchedBillNos?: string[]
+  ) => {
+    const man = getManual(m._id);
+    let initial: string[] = [];
+    if (man.sellerId === sellerId && man.comboBillIds.length > 0) {
+      initial = man.comboBillIds;
+    } else if (man.sellerId === sellerId && man.billId) {
+      initial = [man.billId];
+    } else if (matchedBillNos && matchedBillNos.length > 0) {
+      const openBills = openBillsFor(instituteName, m.firmCode);
+      initial = matchedBillNos
+        .map((no) => openBills.find((b) => b.orderNo === no)?._id)
+        .filter((id): id is string => !!id);
+    }
+    setLedgerSelectedIds(new Set(initial));
+    setLedgerModalFor({ match: m, sellerId, instituteName, matchedBillNos });
+  };
+
+  // Applies the modal's checkbox selection to the match's manual state -
+  // zero picks clears to link-only, one pick uses the plain billId field,
+  // two or more lock in as a combo (the single-select dropdown can't
+  // represent more than one bill).
+  const applyLedgerSelection = () => {
+    if (!ledgerModalFor) return;
+    const { match: m, sellerId, instituteName } = ledgerModalFor;
+    const openBills = openBillsFor(instituteName, m.firmCode);
+    const picked = openBills.filter((b) => ledgerSelectedIds.has(b._id));
+    const man = getManual(m._id);
+    const total = picked.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
+    const rate = DEDUCTION_RATES[man.deductionType];
+    const dedPatch = rate ? { deductionAmount: (total * rate).toFixed(2) } : {};
+    if (picked.length === 0) {
+      setManual(m._id, { sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch });
+    } else if (picked.length === 1) {
+      setManual(m._id, { sellerId, billId: picked[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch });
+    } else {
+      setManual(m._id, {
+        sellerId,
+        billId: "",
+        comboBillIds: picked.map((b) => b._id),
+        comboBillNos: picked.map((b) => b.orderNo),
+        ...dedPatch,
+      });
+    }
+    setLedgerModalFor(null);
   };
 
   const runAction = async (id: string, url: string, body: any) => {
@@ -1282,14 +1394,7 @@ export default function ReconciliationPage() {
                                           </button>
                                           <button
                                             type="button"
-                                            onClick={() =>
-                                              setLedgerModalFor({
-                                                match: m,
-                                                sellerId: c.sellerId,
-                                                instituteName: c.instituteName,
-                                                matchedBillNos: c.matchedBillNos,
-                                              })
-                                            }
+                                            onClick={() => openLedgerModal(m, c.sellerId, c.instituteName, c.matchedBillNos)}
                                             className="shrink-0 text-[8px] font-black uppercase text-blue-600 hover:text-blue-800 whitespace-nowrap"
                                           >
                                             View Orders ▾
@@ -1315,7 +1420,7 @@ export default function ReconciliationPage() {
                                   return (
                                     <button
                                       type="button"
-                                      onClick={() => setLedgerModalFor({ match: m, sellerId: man.sellerId, instituteName: selectedInstituteName })}
+                                      onClick={() => openLedgerModal(m, man.sellerId, selectedInstituteName)}
                                       className="block mt-1 text-[8px] font-black uppercase text-blue-600 hover:text-blue-800"
                                     >
                                       View Orders ▾
@@ -1328,37 +1433,73 @@ export default function ReconciliationPage() {
                                   <div className="flex flex-col gap-1 max-w-[180px]">
                                     <span className="inline-block bg-purple-50 border border-purple-200 text-purple-700 text-[9px] font-black px-2 py-1 rounded-lg">
                                       {man.comboBillIds.length} bills (combo): {man.comboBillNos.join(", ")}
+                                      {" — ₹"}
+                                      {formatMoney(
+                                        bills
+                                          .filter((b) => man.comboBillIds.includes(b._id))
+                                          .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
+                                      )}
                                     </span>
                                     <button
                                       type="button"
-                                      onClick={() => setManual(m._id, { billId: "", comboBillIds: [], comboBillNos: [] })}
-                                      className="text-[8px] font-black uppercase text-slate-400 hover:text-slate-700 self-start"
+                                      onClick={() =>
+                                        man.sellerId &&
+                                        openLedgerModal(m, man.sellerId, sellerById[man.sellerId]?.instituteName || "", man.comboBillNos)
+                                      }
+                                      className="text-[8px] font-black uppercase text-blue-600 hover:text-blue-800 self-start"
                                     >
-                                      Change
+                                      Change Selection
                                     </button>
                                   </div>
                                 ) : (
-                                  <select
-                                    value={man.billId}
-                                    onChange={(e) => setManual(m._id, { billId: e.target.value })}
-                                    disabled={!man.sellerId}
-                                    className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px] disabled:opacity-40"
-                                  >
-                                    <option value="">No bill (link only)</option>
-                                    {bills.map((b) => (
-                                      <option key={b._id} value={b._id}>
-                                        {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
-                                        {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
-                                      </option>
-                                    ))}
-                                  </select>
+                                  <div className="flex flex-col gap-1 max-w-[180px]">
+                                    <select
+                                      value={man.billId}
+                                      onChange={(e) => {
+                                        const billId = e.target.value;
+                                        const rate = DEDUCTION_RATES[man.deductionType];
+                                        setManual(m._id, {
+                                          billId,
+                                          ...(rate
+                                            ? { deductionAmount: (selectedBillsTotal(bills, { billId, comboBillIds: [] }) * rate).toFixed(2) }
+                                            : {}),
+                                        });
+                                      }}
+                                      disabled={!man.sellerId}
+                                      className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px] disabled:opacity-40"
+                                    >
+                                      <option value="">No bill (link only)</option>
+                                      {bills.map((b) => (
+                                        <option key={b._id} value={b._id}>
+                                          {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
+                                          {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {man.sellerId && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openLedgerModal(m, man.sellerId, sellerById[man.sellerId]?.instituteName || "")}
+                                        className="text-[8px] font-black uppercase text-blue-600 hover:text-blue-800 self-start"
+                                      >
+                                        Select Multiple Bills...
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
                               </td>
                               <td className="py-2.5 px-3">
                                 <div className="flex flex-col gap-1">
                                   <select
                                     value={man.deductionType}
-                                    onChange={(e) => setManual(m._id, { deductionType: e.target.value })}
+                                    onChange={(e) => {
+                                      const deductionType = e.target.value;
+                                      const rate = DEDUCTION_RATES[deductionType];
+                                      setManual(m._id, {
+                                        deductionType,
+                                        ...(rate ? { deductionAmount: (selectedBillsTotal(bills, man) * rate).toFixed(2) } : {}),
+                                      });
+                                    }}
                                     className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500"
                                   >
                                     <option value="">None</option>
@@ -1373,6 +1514,20 @@ export default function ReconciliationPage() {
                                     onChange={(e) => setManual(m._id, { deductionAmount: e.target.value })}
                                     className="w-24 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-mono focus:outline-none focus:border-blue-500"
                                   />
+                                  {(() => {
+                                    // Remaining = what's left of the CREDITED (bank) amount after
+                                    // applying it to the selected bill(s) and the deduction - not the
+                                    // bill's own due amount, since the point is to catch a bank
+                                    // shortfall/overpayment against what was actually credited.
+                                    const total = selectedBillsTotal(bills, man);
+                                    const remaining = m.creditedAmount - total - (Number(man.deductionAmount) || 0);
+                                    if (total <= 0 || Math.abs(remaining) < 0.01) return null;
+                                    return (
+                                      <span className={`text-[9px] font-black font-mono ${remaining < 0 ? "text-red-600" : "text-amber-600"}`}>
+                                        Remaining: ₹{formatMoney(remaining)}
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 text-center">
@@ -1615,30 +1770,50 @@ export default function ReconciliationPage() {
                 </div>
               </div>
               <div>
-                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-2">
-                  {ledgerModalFor.instituteName}'s Open Orders
-                </span>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    {ledgerModalFor.instituteName}'s Open Orders
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-400">Tick any bill(s) to select</span>
+                </div>
                 <OrderLedgerMini
                   orders={openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)}
                   highlightAmount={ledgerModalFor.match.creditedAmount}
                   highlightOrderNos={ledgerModalFor.matchedBillNos}
+                  selectedIds={ledgerSelectedIds}
+                  onToggle={(id) =>
+                    setLedgerSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
                   fullWidth
                 />
               </div>
             </div>
-            <div className="p-4 border-t border-slate-100">
+            <div className="p-4 border-t border-slate-100 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wide">
+                  {ledgerSelectedIds.size} bill{ledgerSelectedIds.size === 1 ? "" : "s"} selected
+                </span>
+                <span className="font-mono font-black text-slate-900">
+                  ₹
+                  {formatMoney(
+                    openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)
+                      .filter((b) => ledgerSelectedIds.has(b._id))
+                      .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
+                  )}
+                </span>
+              </div>
               <button
-                onClick={() => {
-                  selectCandidate(ledgerModalFor.match, {
-                    sellerId: ledgerModalFor.sellerId,
-                    instituteName: ledgerModalFor.instituteName,
-                    matchedBillNos: ledgerModalFor.matchedBillNos,
-                  });
-                  setLedgerModalFor(null);
-                }}
+                onClick={applyLedgerSelection}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
               >
-                Select {ledgerModalFor.instituteName}
+                {ledgerSelectedIds.size > 0
+                  ? `Select ${ledgerSelectedIds.size} Bill${ledgerSelectedIds.size === 1 ? "" : "s"} for ${ledgerModalFor.instituteName}`
+                  : `Select ${ledgerModalFor.instituteName} (link only, no bill)`}
               </button>
             </div>
           </div>
