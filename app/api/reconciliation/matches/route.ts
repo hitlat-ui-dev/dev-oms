@@ -328,7 +328,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    const { matchId, sellerId, billId, deductionType, deductionAmount, deductionReason } = body;
+    const { matchId, sellerId, billId, billIds: billIdsInput, deductionType, deductionAmount, deductionReason } = body;
     if (!matchId || !ObjectId.isValid(matchId) || !sellerId) {
       return NextResponse.json({ error: "matchId and sellerId are required" }, { status: 400 });
     }
@@ -363,7 +363,30 @@ export async function POST(req: Request) {
     let resolvedDeductionAmount = Number(deductionAmount) || 0;
     let resolvedDeductionType = deductionType || null;
 
-    if (billId && ObjectId.isValid(billId)) {
+    // Combo pick (several bills manually selected together, e.g. confirming
+    // a suggested combo candidate the auto-matcher found) - classify the
+    // deduction against their SUMMED remaining amount, same as a single bill.
+    if (Array.isArray(billIdsInput) && billIdsInput.length > 0) {
+      const validIds = billIdsInput.filter((id: string) => ObjectId.isValid(id));
+      const bills = await db
+        .collection("sellerorders")
+        .find({ _id: { $in: validIds.map((id: string) => new ObjectId(id)) } })
+        .toArray();
+      if (bills.length > 0) {
+        const totalRemaining = bills.reduce(
+          (s: number, b: any) => s + (Number(b.totalAmount || 0) - Number(b.paidAmount || 0)),
+          0
+        );
+        billIds = bills.map((b: any) => String(b._id));
+        billNos = bills.map((b: any) => b.orderNo);
+        billAmount = totalRemaining;
+        if (!deductionType && !deductionAmount) {
+          const classification = classifyDeduction(totalRemaining, match.creditedAmount, seller.toObject());
+          resolvedDeductionAmount = totalRemaining - match.creditedAmount > 0 ? totalRemaining - match.creditedAmount : 0;
+          resolvedDeductionType = classification.type;
+        }
+      }
+    } else if (billId && ObjectId.isValid(billId)) {
       const bill = await db.collection("sellerorders").findOne({ _id: new ObjectId(billId) });
       if (bill) {
         const remaining = Number(bill.totalAmount || 0) - Number(bill.paidAmount || 0);

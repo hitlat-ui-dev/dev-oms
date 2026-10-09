@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare, FiPrinter, FiCreditCard, FiClock } from "react-icons/fi";
+import { FiFileText, FiArrowLeft, FiList, FiBookOpen, FiCheckSquare, FiPrinter, FiCreditCard, FiClock, FiHash } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
 export default function AccountPage() {
@@ -56,6 +56,13 @@ export default function AccountPage() {
       sub: "INSTITUTE PAYMENT SPEED REPORT",
       icon: <FiClock />,
       color: "bg-[#0e7490]",
+    },
+    {
+      name: "HSN & GST Review",
+      path: "/dashboard/admin/hsn-gst-review",
+      sub: "CONFIRM ITEM TAX DETAILS",
+      icon: <FiHash />,
+      color: "bg-[#7c3aed]",
     },
   ];
 

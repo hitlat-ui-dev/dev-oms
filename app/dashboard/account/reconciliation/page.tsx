@@ -264,13 +264,33 @@ export default function ReconciliationPage() {
   // changes shape (tab/firm switch) so a stale selection can't silently
   // apply to rows the user never looked at.
   const [selectedResolvedIds, setSelectedResolvedIds] = useState<Set<string>>(new Set());
+  // Checked rows in the Unmatched Transactions table, for bulk Tag - a
+  // single shared dropdown picks the reason applied to every selected row.
+  const [selectedUnresolvedIds, setSelectedUnresolvedIds] = useState<Set<string>>(new Set());
+  const [bulkTagValue, setBulkTagValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
   >({});
   const [manualState, setManualState] = useState<
-    Record<string, { sellerId: string; billId: string; deductionType: string; deductionAmount: string; deductionReason: string }>
+    Record<
+      string,
+      {
+        sellerId: string;
+        billId: string;
+        // Set instead of billId when the picked candidate was a COMBO match
+        // (several bills together, none individually equal to the credited
+        // amount) - the single-select Bill dropdown can't represent that, so
+        // picking a combo candidate locks these in directly rather than
+        // leaving the user to manually re-guess which bills to pick.
+        comboBillIds: string[];
+        comboBillNos: string[];
+        deductionType: string;
+        deductionAmount: string;
+        deductionReason: string;
+      }
+    >
   >({});
   const [tagState, setTagState] = useState<Record<string, string>>({});
   // Same firm can have several bank accounts open at once (e.g. DEV ENTERPRISE
@@ -301,7 +321,12 @@ export default function ReconciliationPage() {
     // orders are all older than that recent-250 window (common - the whole
     // point here is catching up on a backlog) silently showed "no open
     // orders" even when real matching bills existed.
-    fetch("/api/seller-orders?all=1")
+    // &light=1 skips the Orders-dashboard-only PR/OP/stock enrichment this
+    // endpoint otherwise does on every order - Reconciliation only ever
+    // reads the plain bill fields (see OrderLite), and that enrichment work
+    // was most of why this fetch was so slow (5.6MB full response vs well
+    // under 1MB light, for the same ~6k orders).
+    fetch("/api/seller-orders?all=1&light=1")
       .then((res) => res.json())
       .then((data) => setOrders(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load orders", err));
@@ -352,6 +377,7 @@ export default function ReconciliationPage() {
     fetchMatches();
     fetchCorrectionAlerts();
     setSelectedResolvedIds(new Set());
+    setSelectedUnresolvedIds(new Set());
   }, [fetchMatches, fetchCorrectionAlerts]);
 
   // Matching used to re-run automatically inside every fetchMatches() call,
@@ -474,9 +500,51 @@ export default function ReconciliationPage() {
   ) => state[id] || { correctedType: "", deductionAmount: "0", deductionReason: "" };
 
   const getManual = (id: string) =>
-    manualState[id] || { sellerId: "", billId: "", deductionType: "", deductionAmount: "0", deductionReason: "" };
+    manualState[id] || {
+      sellerId: "",
+      billId: "",
+      comboBillIds: [] as string[],
+      comboBillNos: [] as string[],
+      deductionType: "",
+      deductionAmount: "0",
+      deductionReason: "",
+    };
   const setManual = (id: string, patch: Partial<ReturnType<typeof getManual>>) => {
     setManualState((prev) => ({ ...prev, [id]: { ...getManual(id), ...patch } }));
+  };
+
+  // Picking an ambiguous candidate that the engine already found a COMBO
+  // match for (matchedBillNos has 2+ orders) locks those specific bills in
+  // directly, since the single-select Bill dropdown has no way to represent
+  // picking several bills at once - previously this silently left billId
+  // empty/wrong, so confirming never actually applied the combo the card
+  // was showing. A single-order match auto-selects that one bill too.
+  const selectCandidate = (m: Match, c: { sellerId: string; instituteName: string; matchedBillNos?: string[] }) => {
+    const billNos = c.matchedBillNos || [];
+    if (billNos.length === 0) {
+      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [] });
+      return;
+    }
+    const openBills = openBillsFor(c.instituteName, m.firmCode);
+    const resolved = billNos
+      .map((no) => openBills.find((b) => b.orderNo === no))
+      .filter((b): b is OrderLite => !!b);
+    if (resolved.length !== billNos.length) {
+      // Couldn't resolve every matched order to an open bill (stale list) -
+      // fall back to plain manual pick rather than locking in a partial/wrong set.
+      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [] });
+      return;
+    }
+    if (resolved.length === 1) {
+      setManual(m._id, { sellerId: c.sellerId, billId: resolved[0]._id, comboBillIds: [], comboBillNos: [] });
+    } else {
+      setManual(m._id, {
+        sellerId: c.sellerId,
+        billId: "",
+        comboBillIds: resolved.map((b) => b._id),
+        comboBillNos: resolved.map((b) => b.orderNo),
+      });
+    }
   };
 
   const runAction = async (id: string, url: string, body: any) => {
@@ -537,6 +605,21 @@ export default function ReconciliationPage() {
     );
   };
 
+  const toggleSelectUnresolved = (id: string) => {
+    setSelectedUnresolvedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllUnresolved = () => {
+    setSelectedUnresolvedIds((prev) =>
+      prev.size === pendingUnresolved.length ? new Set() : new Set(pendingUnresolved.map((m) => m._id))
+    );
+  };
+
   // Shared by both bulk actions - PATCHes one match, no per-row confirm/alert
   // (the caller shows one combined dialog/summary for the whole batch
   // instead of N stacked browser popups). Resolves the id on success so the
@@ -552,12 +635,17 @@ export default function ReconciliationPage() {
     return id;
   };
 
+  // Shared by every bulk action regardless of which table/selection it comes
+  // from - PATCHes every selected row in parallel, removes exactly the ones
+  // that succeeded, and reports a combined success/failure summary instead
+  // of N stacked alerts.
   const runBulkAction = async (
-    action: "confirm" | "reject",
+    label: string,
+    selected: Match[],
     confirmMessage: string,
-    bodyFor: (m: Match) => any
+    bodyFor: (m: Match) => any,
+    clearSelection: () => void
   ) => {
-    const selected = pendingResolved.filter((m) => selectedResolvedIds.has(m._id));
     if (selected.length === 0) return;
     if (!confirm(confirmMessage.replace("{n}", String(selected.length)))) return;
 
@@ -572,34 +660,61 @@ export default function ReconciliationPage() {
       setMatches((prev) => prev.filter((m) => !succeededIds.has(m._id)));
       refreshSellers();
     }
-    setSelectedResolvedIds(new Set());
+    clearSelection();
     setBulkBusy(false);
 
     if (failures.length > 0) {
       alert(
-        `${succeededIds.size} ${action}ed, ${failures.length} failed:\n` +
+        `${succeededIds.size} ${label}, ${failures.length} failed:\n` +
           failures.map((f) => f.reason?.message || "Unknown error").join("\n")
       );
     }
   };
 
   const handleBulkConfirm = () =>
-    runBulkAction("confirm", "Confirm {n} selected match(es)?", (m) => {
-      const edit = getEdit(m);
-      return {
-        action: "confirm",
-        correctedType: edit.correctedType || null,
-        deductionAmount: Number(edit.deductionAmount) || 0,
-        deductionReason: edit.deductionReason,
-        userName: currentUsername,
-      };
-    });
+    runBulkAction(
+      "confirmed",
+      pendingResolved.filter((m) => selectedResolvedIds.has(m._id)),
+      "Confirm {n} selected match(es)?",
+      (m) => {
+        const edit = getEdit(m);
+        return {
+          action: "confirm",
+          correctedType: edit.correctedType || null,
+          deductionAmount: Number(edit.deductionAmount) || 0,
+          deductionReason: edit.deductionReason,
+          userName: currentUsername,
+        };
+      },
+      () => setSelectedResolvedIds(new Set())
+    );
 
   const handleBulkReject = () =>
-    runBulkAction("reject", "Reject {n} selected match(es)?", () => ({
-      action: "reject",
-      userName: currentUsername,
-    }));
+    runBulkAction(
+      "rejected",
+      pendingResolved.filter((m) => selectedResolvedIds.has(m._id)),
+      "Reject {n} selected match(es)?",
+      () => ({ action: "reject", userName: currentUsername }),
+      () => setSelectedResolvedIds(new Set())
+    );
+
+  const handleBulkTag = () => {
+    if (!bulkTagValue) {
+      alert("Pick a reason first.");
+      return;
+    }
+    const tagOption = TAG_OPTIONS.find((t) => t.value === bulkTagValue);
+    runBulkAction(
+      `tagged "${tagOption?.label || bulkTagValue}"`,
+      pendingUnresolved.filter((m) => selectedUnresolvedIds.has(m._id)),
+      `Tag {n} selected transaction(s) as "${tagOption?.label || bulkTagValue}"?`,
+      () => ({ action: "tag", tag: bulkTagValue, userName: currentUsername }),
+      () => {
+        setSelectedUnresolvedIds(new Set());
+        setBulkTagValue("");
+      }
+    );
+  };
 
   const handleReverse = (m: Match) => {
     if (!confirm("Reverse this confirmed match? The bill's payment status will be rolled back.")) return;
@@ -639,7 +754,8 @@ export default function ReconciliationPage() {
         body: JSON.stringify({
           matchId: m._id,
           sellerId: man.sellerId,
-          billId: man.billId || undefined,
+          billId: man.comboBillIds.length > 0 ? undefined : man.billId || undefined,
+          billIds: man.comboBillIds.length > 0 ? man.comboBillIds : undefined,
           deductionType: man.deductionType || undefined,
           deductionAmount: man.deductionAmount ? Number(man.deductionAmount) : undefined,
           deductionReason: man.deductionReason,
@@ -1016,18 +1132,51 @@ export default function ReconciliationPage() {
               {/* Unmatched Transactions - also holds Rejected-tab rows, since
                   those always need a fresh manual institute/bill pick. */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-slate-100">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                    <FiAlertTriangle className="text-amber-500" size={14} /> {tab === "rejected" ? "Rejected — Pick A Different Bill" : "Unmatched Transactions"}
-                    <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
-                      {pendingUnresolved.length}
-                    </span>
-                  </h3>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    {tab === "rejected"
-                      ? "The earlier suggestion for these was wrong - pick the correct institute + bill below."
-                      : "Assign an institute + bill manually — the description's keyword is learned as a new alias for next time."}
-                  </p>
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                      <FiAlertTriangle className="text-amber-500" size={14} /> {tab === "rejected" ? "Rejected — Pick A Different Bill" : "Unmatched Transactions"}
+                      <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
+                        {pendingUnresolved.length}
+                      </span>
+                    </h3>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {tab === "rejected"
+                        ? "The earlier suggestion for these was wrong - pick the correct institute + bill below."
+                        : "Assign an institute + bill manually — the description's keyword is learned as a new alias for next time."}
+                    </p>
+                  </div>
+                  {selectedUnresolvedIds.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wide">
+                        {selectedUnresolvedIds.size} selected
+                      </span>
+                      <select
+                        value={bulkTagValue}
+                        onChange={(e) => setBulkTagValue(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg py-2 px-2 text-[10px] font-bold focus:outline-none focus:border-rose-400"
+                      >
+                        <option value="">Not a bill…</option>
+                        {TAG_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        disabled={bulkBusy || !bulkTagValue}
+                        onClick={handleBulkTag}
+                        className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 text-rose-700 border border-rose-200 font-black uppercase text-[10px] tracking-wide py-2 px-3 rounded-lg transition-colors"
+                      >
+                        Tag Selected
+                      </button>
+                      <button
+                        disabled={bulkBusy}
+                        onClick={() => { setSelectedUnresolvedIds(new Set()); setBulkTagValue(""); }}
+                        className="text-[10px] font-black uppercase text-slate-400 hover:text-slate-700 tracking-wide px-2"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {pendingUnresolved.length === 0 ? (
                   <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
@@ -1038,6 +1187,15 @@ export default function ReconciliationPage() {
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+                          <th className="py-2.5 px-3">
+                            <input
+                              type="checkbox"
+                              checked={pendingUnresolved.length > 0 && selectedUnresolvedIds.size === pendingUnresolved.length}
+                              onChange={toggleSelectAllUnresolved}
+                              className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                              title="Select all"
+                            />
+                          </th>
                           <th className="py-2.5 px-3">Date</th>
                           <th className="py-2.5 px-3">Firm</th>
                           <th className="py-2.5 px-3">Description</th>
@@ -1053,7 +1211,20 @@ export default function ReconciliationPage() {
                           const man = getManual(m._id);
                           const bills = openBillsFor(sellerById[man.sellerId]?.instituteName || null, m.firmCode);
                           return (
-                            <tr key={m._id} className="hover:bg-amber-50/30 transition-colors align-top">
+                            <tr
+                              key={m._id}
+                              className={`transition-colors align-top ${
+                                selectedUnresolvedIds.has(m._id) ? "bg-blue-50" : "hover:bg-amber-50/30"
+                              }`}
+                            >
+                              <td className="py-2.5 px-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedUnresolvedIds.has(m._id)}
+                                  onChange={() => toggleSelectUnresolved(m._id)}
+                                  className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                />
+                              </td>
                               <td className="py-2.5 px-3 font-mono text-slate-600">{m.transactionDate}</td>
                               <td className="py-2.5 px-3 font-black text-slate-700 uppercase">
                                 {m.firmCode}
@@ -1073,7 +1244,17 @@ export default function ReconciliationPage() {
                                     <span className="text-[9px] font-black uppercase text-amber-600 flex items-center gap-1">
                                       <FiAlertTriangle size={10} /> Ambiguous — pick one
                                     </span>
-                                    {(m.ambiguousCandidates || []).map((c) => (
+                                    {(m.ambiguousCandidates || []).map((c) => {
+                                      // Sum of the specific matched bills' remaining amounts, so the
+                                      // user can sanity-check the combo against the credited amount
+                                      // right here instead of opening View Orders to add it up.
+                                      const matchedTotal =
+                                        c.matchedBillNos && c.matchedBillNos.length > 0
+                                          ? openBillsFor(c.instituteName, m.firmCode)
+                                              .filter((b) => c.matchedBillNos!.includes(b.orderNo))
+                                              .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
+                                          : null;
+                                      return (
                                       <div
                                         key={c.sellerId}
                                         className={`border rounded-lg overflow-hidden transition-colors ${
@@ -1085,7 +1266,7 @@ export default function ReconciliationPage() {
                                         <div className="flex items-start justify-between gap-1 px-2 py-1">
                                           <button
                                             type="button"
-                                            onClick={() => setManual(m._id, { sellerId: c.sellerId, billId: "" })}
+                                            onClick={() => selectCandidate(m, c)}
                                             className="text-left flex-1 min-w-0"
                                           >
                                             <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
@@ -1095,6 +1276,7 @@ export default function ReconciliationPage() {
                                             {c.matchedBillNos && c.matchedBillNos.length > 0 && (
                                               <span className="block text-[9px] font-bold text-emerald-700">
                                                 ✓ matches {c.matchedBillNos.join(", ")}
+                                                {matchedTotal != null && ` — ₹${formatMoney(matchedTotal)}`}
                                               </span>
                                             )}
                                           </button>
@@ -1114,12 +1296,13 @@ export default function ReconciliationPage() {
                                           </button>
                                         </div>
                                       </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 )}
                                 <select
                                   value={man.sellerId}
-                                  onChange={(e) => setManual(m._id, { sellerId: e.target.value, billId: "" })}
+                                  onChange={(e) => setManual(m._id, { sellerId: e.target.value, billId: "", comboBillIds: [], comboBillNos: [] })}
                                   className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px]"
                                 >
                                   <option value="">Select Institute...</option>
@@ -1141,20 +1324,35 @@ export default function ReconciliationPage() {
                                 })()}
                               </td>
                               <td className="py-2.5 px-3">
-                                <select
-                                  value={man.billId}
-                                  onChange={(e) => setManual(m._id, { billId: e.target.value })}
-                                  disabled={!man.sellerId}
-                                  className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px] disabled:opacity-40"
-                                >
-                                  <option value="">No bill (link only)</option>
-                                  {bills.map((b) => (
-                                    <option key={b._id} value={b._id}>
-                                      {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
-                                      {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
-                                    </option>
-                                  ))}
-                                </select>
+                                {man.comboBillIds.length > 0 ? (
+                                  <div className="flex flex-col gap-1 max-w-[180px]">
+                                    <span className="inline-block bg-purple-50 border border-purple-200 text-purple-700 text-[9px] font-black px-2 py-1 rounded-lg">
+                                      {man.comboBillIds.length} bills (combo): {man.comboBillNos.join(", ")}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setManual(m._id, { billId: "", comboBillIds: [], comboBillNos: [] })}
+                                      className="text-[8px] font-black uppercase text-slate-400 hover:text-slate-700 self-start"
+                                    >
+                                      Change
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <select
+                                    value={man.billId}
+                                    onChange={(e) => setManual(m._id, { billId: e.target.value })}
+                                    disabled={!man.sellerId}
+                                    className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px] disabled:opacity-40"
+                                  >
+                                    <option value="">No bill (link only)</option>
+                                    {bills.map((b) => (
+                                      <option key={b._id} value={b._id}>
+                                        {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
+                                        {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
                               </td>
                               <td className="py-2.5 px-3">
                                 <div className="flex flex-col gap-1">
@@ -1431,7 +1629,11 @@ export default function ReconciliationPage() {
             <div className="p-4 border-t border-slate-100">
               <button
                 onClick={() => {
-                  setManual(ledgerModalFor.match._id, { sellerId: ledgerModalFor.sellerId, billId: "" });
+                  selectCandidate(ledgerModalFor.match, {
+                    sellerId: ledgerModalFor.sellerId,
+                    instituteName: ledgerModalFor.instituteName,
+                    matchedBillNos: ledgerModalFor.matchedBillNos,
+                  });
                   setLedgerModalFor(null);
                 }}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"

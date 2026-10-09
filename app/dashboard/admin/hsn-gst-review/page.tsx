@@ -179,8 +179,8 @@ export default function HsnGstReviewPage() {
       <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
         <div className="max-w-6xl mx-auto flex flex-col gap-6">
           <div>
-            <Link href="/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
-              <FiArrowLeft /> Back to Dashboard
+            <Link href="/dashboard/account" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
+              <FiArrowLeft /> Back to Account
             </Link>
             <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
               <FiHash className="text-violet-600" /> HSN &amp; GST Review

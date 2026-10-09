@@ -212,10 +212,32 @@ export async function POST(req: Request) {
 // Orders board's explicit "Load All Orders" action).
 const DEFAULT_DAYS_WINDOW = 45;
 
+// Fields a "light" caller (Reconciliation/Statement - matching bank credits
+// against open bills) actually reads. The full response below additionally
+// does 2 aggregation pipelines (purchase_requests, Order place Purchase) and
+// a stock lookup to annotate every order with prQty/opQty/stockQty/
+// stockReQty for the Orders dashboard - none of that is relevant here, and
+// paying for it tripled the payload (5.6MB full vs well under 1MB light)
+// and the server-side work on every Reconciliation/Statement page load.
+const LIGHT_PROJECTION = {
+  orderNo: 1,
+  firmCode: 1,
+  instituteName: 1,
+  itemName: 1,
+  contractDate: 1,
+  createdAt: 1,
+  totalAmount: 1,
+  paidAmount: 1,
+  isPaid: 1,
+  status: 1,
+  billExemptReason: 1,
+} as const;
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const fetchAll = searchParams.get("all") === "1";
+    const light = searchParams.get("light") === "1";
 
     const client = await clientPromise;
     const db = client.db("dev_oms_db");
@@ -224,6 +246,15 @@ export async function GET(req: Request) {
     // 1. Calculate 45 days window date threshold
     const fortyFiveDaysAgo = new Date(Date.now() - DEFAULT_DAYS_WINDOW * 24 * 60 * 60 * 1000);
     const filterQuery = fetchAll ? {} : { createdAt: { $gte: fortyFiveDaysAgo } };
+
+    if (light) {
+      const lightOrders = await db
+        .collection("sellerorders")
+        .find(filterQuery, { projection: LIGHT_PROJECTION })
+        .sort({ createdAt: -1 })
+        .toArray();
+      return NextResponse.json(lightOrders, { status: 200 });
+    }
 
     const rawOrdersQuery = db.collection("sellerorders").find(filterQuery).sort({ createdAt: -1 });
 
