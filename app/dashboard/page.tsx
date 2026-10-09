@@ -15,10 +15,10 @@ import {
   FiPlus,
   FiX,
   FiTruck,
-  FiHash,
   FiUserCheck,
   FiKey,
-  FiCamera
+  FiCamera,
+  FiPercent
 } from "react-icons/fi";
 import SellerOrderForm from "@/components/SellerOrderForm";
 import { syncCurrentUserToExtension } from "@/lib/triggerGemSubmit";
@@ -30,9 +30,9 @@ const QUICKADD_ENABLED = new Set(["Orders", "Purchase", "Stock", "Manage Stock",
 // Groups the same tiles used to render as one flat grid — purely a display
 // grouping, doesn't change what's shown or who can see it.
 const SECTIONS = [
-  { label: "Daily Operations", items: ["Orders", "Purchase", "Stock", "Manage Stock", "Print Label", "Scan Dispatch", "Account"] },
+  { label: "Daily Operations", items: ["Orders", "Purchase", "Stock", "Manage Stock", "Metal Calculator", "Print Label", "Scan Dispatch", "Account"] },
   { label: "GeM", items: ["GeM Bids", "GeM Links"] },
-  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "HSN & GST Review", "Attendance"] }
+  { label: "Admin & Tools", items: ["Summary", "Settings", "Backup", "Courier Tracking", "Attendance"] }
 ];
 
 export default function DashboardPage() {
@@ -91,6 +91,7 @@ export default function DashboardPage() {
     { name: "Purchase", path: "/dashboard/purchase", sub: "MANAGE NOW", icon: <FiPlusCircle />, color: "bg-[#1d63ff]", role: ["Owner", "Manager"] },
     { name: "Stock", path: "/dashboard/stock", sub: "MANAGE NOW", icon: <FiPackage />, color: "bg-[#00a86b]", role: ["Owner", "Manager", "Storekeeper"] },
     { name: "Manage Stock", path: "/dashboard/stock/manage-stock", sub: "MANAGE NOW", icon: <FiSliders />, color: "bg-[#0ea5e9]", role: ["Owner", "Manager", "Storekeeper"] },
+    { name: "Metal Calculator", path: "/dashboard/metal-calculator", sub: "WEIGHT PER METER", icon: <FiPercent />, color: "bg-[#ea580c]", role: ["Owner", "Manager", "Storekeeper"] },
     { name: "Orders", path: "/dashboard/orders", sub: "MANAGE NOW", icon: <FiRefreshCw />, color: "bg-[#f20505]", role: ["Owner", "Manager", "Office"] },
     { name: "Print Label", path: "/dashboard/print-labels", sub: "PRINT NOW", icon: <FiPrinter />, color: "bg-[#8b2ef5]", role: ["Owner", "Manager"] },
     { name: "Scan Dispatch", path: "/dashboard/dispatch-scan", sub: "SCAN PARCEL QR", icon: <FiCamera />, color: "bg-[#0d9488]", role: ["Owner", "Manager", "Storekeeper"] },
@@ -98,7 +99,6 @@ export default function DashboardPage() {
     { name: "Settings", path: "/dashboard/settings", sub: "MANAGE NOW", icon: <FiSettings />, color: "bg-[#5c5cf5]", role: ["Owner"], permissionKey: "users" },
     { name: "Backup", path: "/dashboard/admin/backup", sub: "DOWNLOAD JSON", icon: <FiDatabase />, color: "bg-[#d97706]", role: ["Owner"], permissionKey: "backup" },
     { name: "Courier Tracking", path: "/dashboard/admin/courier-tracking", sub: "DAILY DISPATCH MATCHING", icon: <FiTruck />, color: "bg-[#16a34a]", role: ["Owner"] },
-    { name: "HSN & GST Review", path: "/dashboard/admin/hsn-gst-review", sub: "CONFIRM ITEM TAX DETAILS", icon: <FiHash />, color: "bg-[#7c3aed]", role: ["Owner", "Manager"] },
     { name: "Account", path: "/dashboard/account", sub: "BANK STATEMENTS", icon: <FiFileText />, color: "bg-[#0891b2]", role: ["Owner"], permissionKey: "accountStatements" },
     { name: "Attendance", path: "/dashboard/admin/attendance", sub: "DAILY REGISTER", icon: <FiUserCheck />, color: "bg-[#0a2540]", role: ["Owner"] }
   ];

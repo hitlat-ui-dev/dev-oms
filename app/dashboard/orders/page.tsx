@@ -1,5 +1,5 @@
 "use client";
-import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiKey, FiClipboard } from "react-icons/fi";
+import { FiUserPlus, FiPlusCircle, FiArrowLeft, FiBriefcase, FiList, FiTruck, FiKey, FiClipboard, FiPercent } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
@@ -89,6 +89,14 @@ export default function OrdersDashboard() {
       path: "/dashboard/orders/gem-credentials",
       color: "bg-orange-600",
       shadow: "shadow-orange-200",
+    },
+    {
+      title: "Metal Calculator",
+      desc: "Weight per meter & total weight",
+      icon: <FiPercent size={24} />,
+      path: "/dashboard/metal-calculator",
+      color: "bg-amber-600",
+      shadow: "shadow-amber-200",
     }
   ];
 

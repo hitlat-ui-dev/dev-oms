@@ -1,10 +1,11 @@
 ﻿"use client";
-import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey, FiPercent } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 import GemCredentialsPanel from "@/components/GemCredentialsPanel";
+import MetalCalculatorPanel from "@/components/MetalCalculatorPanel";
 import AttendanceReminder from "@/components/AttendanceReminder";
 
 export default function Header() {
@@ -24,6 +25,7 @@ export default function Header() {
 
   const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
   const [showGemLoginModal, setShowGemLoginModal] = useState(false);
+  const [showMetalCalcModal, setShowMetalCalcModal] = useState(false);
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -241,6 +243,15 @@ export default function Header() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [showGemLoginModal]);
 
+  useEffect(() => {
+    if (!showMetalCalcModal) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowMetalCalcModal(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showMetalCalcModal]);
+
   const handleLogout = () => {
     localStorage.removeItem("oms_user");
     setUser(null);
@@ -402,6 +413,18 @@ export default function Header() {
           <FiKey size={13} /> <span className="hidden sm:inline">GeM Login</span>
         </button>
 
+        {/* Metal Calculator - same quick-access popup pattern as GeM Login,
+            so a weight lookup before filling a GeM tender rate doesn't need
+            navigating away from whatever page is open. */}
+        <button
+          type="button"
+          onClick={() => setShowMetalCalcModal(true)}
+          className="text-[10px] md:text-xs font-black uppercase tracking-wider bg-[#ea580c]/15 hover:bg-[#ea580c]/25 text-[#ea580c] border border-[#ea580c]/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+          title="Metal Calculator"
+        >
+          <FiPercent size={13} /> <span className="hidden sm:inline">Metal Calc</span>
+        </button>
+
         {/* Urgent Tasks - owner-only, opens the create-form + live list as a
             popup so it's reachable from every page without leaving whatever
             you're currently working on. */}
@@ -479,6 +502,39 @@ export default function Header() {
           </div>
           <div className="overflow-y-auto">
             <GemCredentialsPanel />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showMetalCalcModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+        onClick={() => setShowMetalCalcModal(false)}
+      >
+        <div
+          className="bg-[#f3f6f9] border border-slate-200 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-5 border-b border-slate-200 bg-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="bg-[#ea580c] text-white p-2.5 rounded-xl">
+                <FiPercent size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-[#0a2540]">Metal Calculator</h3>
+                <p className="text-[9px] text-[#ea580c] font-black uppercase tracking-widest">Weight per Meter &amp; Total Weight</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowMetalCalcModal(false)}
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <FiX size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-5">
+            <MetalCalculatorPanel />
           </div>
         </div>
       </div>
