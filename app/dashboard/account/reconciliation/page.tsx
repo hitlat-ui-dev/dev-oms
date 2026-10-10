@@ -16,6 +16,7 @@ import {
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { buildClusters, OrderCluster } from "@/lib/reconciliation/clusterEngine";
+import { parseDateToSortable } from "@/lib/reconciliation/matchingEngine";
 
 interface Match {
   _id: string;
@@ -128,6 +129,16 @@ interface OrderLite {
 // backlog doesn't turn every row into a huge table.
 const LEDGER_ROW_CAP = 8;
 const LEDGER_ROW_CAP_FULL = 30;
+
+// A Partial Ship or Return split (see app/api/seller-orders/[id]/route.ts)
+// breaks one real order into several SellerOrder docs ("OD123", "OD123-P1",
+// ...) that are still, in practice, one delivery paid together - mirrors
+// matchingEngine.ts's groupSplitOrders so the manual picker and the
+// auto-matching engine group bills the exact same way. Deliberately NOT
+// grouped by Contract No: one GeM contract can cover dozens of genuinely
+// separate line items paid individually over time, not as one lump sum.
+const baseOrderNo = (orderNo: string) => (orderNo || "").replace(/-(P\d+|Re\d+|RE-N\d+)$/i, "");
+
 function OrderLedgerMini({
   orders,
   highlightAmount,
@@ -135,6 +146,7 @@ function OrderLedgerMini({
   fullWidth,
   selectedIds,
   onToggle,
+  elsewhereIds,
 }: {
   orders: OrderLite[];
   highlightAmount?: number;
@@ -151,10 +163,22 @@ function OrderLedgerMini({
   // orders, so a single-select dropdown can't represent every real case.
   selectedIds?: Set<string>;
   onToggle?: (id: string) => void;
+  // Bill ids already picked (saved or just locally chosen) by some OTHER
+  // pending transaction - flagged so the user can avoid double-claiming a
+  // bill before hitting the backend's overpayment guard at confirm time.
+  elsewhereIds?: Set<string>;
 }) {
   if (orders.length === 0) {
     return <p className="text-[9px] text-slate-400 italic px-1 py-1">No open orders for this institute.</p>;
   }
+  // Base order numbers shared by more than one open order here (a "-P1"/
+  // "-Re1" split) - ticking one such row auto-ticks the rest (see onToggle
+  // below), so flag them.
+  const baseCounts = new Map<string, number>();
+  orders.forEach((o) => {
+    const base = baseOrderNo(o.orderNo);
+    baseCounts.set(base, (baseCounts.get(base) || 0) + 1);
+  });
   const highlightSet = new Set((highlightOrderNos || []).map((n) => n.trim().toUpperCase()));
   const isHighlighted = (o: OrderLite, remaining: number) =>
     highlightSet.size > 0
@@ -190,10 +214,11 @@ function OrderLedgerMini({
           {shown.map(({ o, remaining }) => {
             const isMatch = isHighlighted(o, remaining);
             const checked = !!selectedIds?.has(o._id);
+            const claimedElsewhere = !!elsewhereIds?.has(o._id);
             return (
               <tr
                 key={o._id}
-                className={`${isMatch ? "bg-emerald-50" : ""} ${checked ? "bg-blue-50" : ""} ${selectable ? "cursor-pointer" : ""}`}
+                className={`${isMatch ? "bg-emerald-50" : ""} ${checked ? "bg-blue-50" : ""} ${claimedElsewhere ? "bg-amber-50" : ""} ${selectable ? "cursor-pointer" : ""}`}
                 onClick={selectable ? () => onToggle!(o._id) : undefined}
               >
                 {selectable && (
@@ -207,7 +232,19 @@ function OrderLedgerMini({
                     />
                   </td>
                 )}
-                <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">{o.orderNo}</td>
+                <td className="px-2 py-1.5 font-mono text-slate-700 whitespace-nowrap">
+                  {o.orderNo}
+                  {(baseCounts.get(baseOrderNo(o.orderNo)) || 0) > 1 && (
+                    <span className="block text-[8px] font-black uppercase text-blue-500" title="Split order - selected together with its sibling(s)">
+                      ⛓ split order
+                    </span>
+                  )}
+                  {claimedElsewhere && (
+                    <span className="block text-[8px] font-black uppercase text-amber-600" title="Already picked in another pending transaction">
+                      ⚠ picked elsewhere
+                    </span>
+                  )}
+                </td>
                 <td className={`px-2 py-1.5 text-slate-600 truncate ${fullWidth ? "max-w-[220px]" : "max-w-[140px]"}`} title={o.itemName}>
                   {o.itemName || "—"}
                 </td>
@@ -478,9 +515,42 @@ export default function ReconciliationPage() {
     return map;
   }, [sellers]);
 
+  // Which bill is already claimed by which OTHER pending transaction -
+  // either already saved on that match's own billIds (an earlier Run
+  // Matching/manual save), or only picked locally so far in manualState
+  // (not yet saved). The backend's overpayment guard already stops a second
+  // confirm from silently double-paying a bill, but surfacing the conflict
+  // here lets the user avoid it before hitting that error.
+  const billPickedBy = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of matches) {
+      for (const id of m.billIds || []) {
+        if (!map.has(id)) map.set(id, m._id);
+      }
+      const man = manualState[m._id];
+      if (man) {
+        const ids = man.comboBillIds.length > 0 ? man.comboBillIds : man.billId ? [man.billId] : [];
+        for (const id of ids) {
+          if (!map.has(id)) map.set(id, m._id);
+        }
+      }
+    }
+    return map;
+  }, [matches, manualState]);
+  const pickedElsewhere = (billId: string, currentMatchId: string) => {
+    const owner = billPickedBy.get(billId);
+    return !!owner && owner !== currentMatchId;
+  };
+
   const openBillsFor = useCallback(
-    (instituteName: string | null, firmCode: string) => {
+    // creditDate: the transaction's own date (Match.transactionDate) - when
+    // given, a bill dated AFTER it is excluded. A payment can only ever be
+    // for an order that already existed when the money was credited, so a
+    // later-dated bill can never be the right match. Bills with no date at
+    // all are kept (nothing to disprove them on).
+    (instituteName: string | null, firmCode: string, creditDate?: string) => {
       if (!instituteName) return [];
+      const creditSortable = creditDate ? parseDateToSortable(creditDate) : 0;
       return orders.filter(
         (o) =>
           o.instituteName === instituteName &&
@@ -492,7 +562,12 @@ export default function ReconciliationPage() {
           // manual Bill picker. "Already billed outside OMS (e.g. Miracle)"
           // orders stay pickable - they were legitimately billed, just not
           // via OMS's Generate Bill, so a payment should still link to them.
-          o.billExemptReason !== "NOT_REQUIRED"
+          o.billExemptReason !== "NOT_REQUIRED" &&
+          (() => {
+            if (!creditSortable) return true;
+            const billSortable = parseDateToSortable(o.contractDate);
+            return !billSortable || billSortable <= creditSortable;
+          })()
       );
     },
     [orders]
@@ -580,7 +655,7 @@ export default function ReconciliationPage() {
       setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
       return;
     }
-    const openBills = openBillsFor(c.instituteName, m.firmCode);
+    const openBills = openBillsFor(c.instituteName, m.firmCode, m.transactionDate);
     const resolved = billNos
       .map((no) => openBills.find((b) => b.orderNo === no))
       .filter((b): b is OrderLite => !!b);
@@ -621,7 +696,7 @@ export default function ReconciliationPage() {
     } else if (man.sellerId === sellerId && man.billId) {
       initial = [man.billId];
     } else if (matchedBillNos && matchedBillNos.length > 0) {
-      const openBills = openBillsFor(instituteName, m.firmCode);
+      const openBills = openBillsFor(instituteName, m.firmCode, m.transactionDate);
       initial = matchedBillNos
         .map((no) => openBills.find((b) => b.orderNo === no)?._id)
         .filter((id): id is string => !!id);
@@ -637,7 +712,7 @@ export default function ReconciliationPage() {
   const applyLedgerSelection = () => {
     if (!ledgerModalFor) return;
     const { match: m, sellerId, instituteName } = ledgerModalFor;
-    const openBills = openBillsFor(instituteName, m.firmCode);
+    const openBills = openBillsFor(instituteName, m.firmCode, m.transactionDate);
     const picked = openBills.filter((b) => ledgerSelectedIds.has(b._id));
     const man = getManual(m._id);
     const total = picked.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
@@ -1321,7 +1396,7 @@ export default function ReconciliationPage() {
                       <tbody className="divide-y divide-slate-100">
                         {pendingUnresolved.map((m) => {
                           const man = getManual(m._id);
-                          const bills = openBillsFor(sellerById[man.sellerId]?.instituteName || null, m.firmCode);
+                          const bills = openBillsFor(sellerById[man.sellerId]?.instituteName || null, m.firmCode, m.transactionDate);
                           return (
                             <tr
                               key={m._id}
@@ -1362,7 +1437,7 @@ export default function ReconciliationPage() {
                                       // right here instead of opening View Orders to add it up.
                                       const matchedTotal =
                                         c.matchedBillNos && c.matchedBillNos.length > 0
-                                          ? openBillsFor(c.instituteName, m.firmCode)
+                                          ? openBillsFor(c.instituteName, m.firmCode, m.transactionDate)
                                               .filter((b) => c.matchedBillNos!.includes(b.orderNo))
                                               .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
                                           : null;
@@ -1473,6 +1548,7 @@ export default function ReconciliationPage() {
                                         <option key={b._id} value={b._id}>
                                           {b.orderNo} — ₹{formatMoney(b.totalAmount - (b.paidAmount || 0))}
                                           {b.billExemptReason === "ALREADY_BILLED_EXTERNAL" ? " (Already billed outside OMS)" : ""}
+                                          {pickedElsewhere(b._id, m._id) ? " ⚠ picked elsewhere" : ""}
                                         </option>
                                       ))}
                                     </select>
@@ -1776,21 +1852,48 @@ export default function ReconciliationPage() {
                   </span>
                   <span className="text-[9px] font-bold text-slate-400">Tick any bill(s) to select</span>
                 </div>
-                <OrderLedgerMini
-                  orders={openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)}
-                  highlightAmount={ledgerModalFor.match.creditedAmount}
-                  highlightOrderNos={ledgerModalFor.matchedBillNos}
-                  selectedIds={ledgerSelectedIds}
-                  onToggle={(id) =>
-                    setLedgerSelectedIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
-                  fullWidth
-                />
+                {(() => {
+                  const modalOrders = openBillsFor(
+                    ledgerModalFor.instituteName,
+                    ledgerModalFor.match.firmCode,
+                    ledgerModalFor.match.transactionDate
+                  );
+                  return (
+                    <OrderLedgerMini
+                      orders={modalOrders}
+                      highlightAmount={ledgerModalFor.match.creditedAmount}
+                      highlightOrderNos={ledgerModalFor.matchedBillNos}
+                      selectedIds={ledgerSelectedIds}
+                      onToggle={(id) => {
+                        // A Partial Ship or Return split ("OD123" + its
+                        // "-P1"/"-Re1" sibling) is still one real delivery
+                        // paid together, so ticking any one of them always
+                        // ticks every other open order in the same split
+                        // group too, rather than letting part of it be
+                        // picked while the rest is left behind. Deliberately
+                        // NOT grouped by Contract No - see baseOrderNo.
+                        const target = modalOrders.find((o) => o._id === id);
+                        const targetBase = target ? baseOrderNo(target.orderNo) : null;
+                        const groupIds = targetBase
+                          ? modalOrders.filter((o) => baseOrderNo(o.orderNo) === targetBase).map((o) => o._id)
+                          : [id];
+                        setLedgerSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          const willSelect = !next.has(id);
+                          for (const gid of groupIds) {
+                            if (willSelect) next.add(gid);
+                            else next.delete(gid);
+                          }
+                          return next;
+                        });
+                      }}
+                      elsewhereIds={
+                        new Set([...billPickedBy.keys()].filter((id) => pickedElsewhere(id, ledgerModalFor.match._id)))
+                      }
+                      fullWidth
+                    />
+                  );
+                })()}
               </div>
             </div>
             <div className="p-4 border-t border-slate-100 space-y-2">
@@ -1801,7 +1904,7 @@ export default function ReconciliationPage() {
                 <span className="font-mono font-black text-slate-900">
                   ₹
                   {formatMoney(
-                    openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode)
+                    openBillsFor(ledgerModalFor.instituteName, ledgerModalFor.match.firmCode, ledgerModalFor.match.transactionDate)
                       .filter((b) => ledgerSelectedIds.has(b._id))
                       .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
                   )}

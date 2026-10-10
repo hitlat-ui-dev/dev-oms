@@ -6,6 +6,8 @@ import {
   SellerForMatching,
   DeductionType,
   MAX_DEDUCTION_FRACTION,
+  groupSplitOrders,
+  expandBills,
 } from "./matchingEngine";
 
 // ============================================================
@@ -151,7 +153,7 @@ export function findClusterCombinationMatch(
     };
   }
 
-  const candidates = withRemainingAmounts(bills)
+  const candidates = withRemainingAmounts(groupSplitOrders(bills))
     .filter((b) => b.remainingAmount > 0)
     .slice(0, 25);
   const n = candidates.length;
@@ -180,10 +182,11 @@ export function findClusterCombinationMatch(
   search(0, [], 0);
   if (!found) return null;
 
-  const totalAmount = round2((found as any[]).reduce((s, b) => s + b.remainingAmount, 0));
+  const expanded = expandBills(found as any[]);
+  const totalAmount = round2(expanded.reduce((s, b) => s + (Number(b.totalAmount || 0) - Number(b.paidAmount || 0)), 0));
   const classification = classifyDeduction(totalAmount, creditedAmount, seller);
   return {
-    bills: found,
+    bills: expanded,
     totalAmount,
     deductionAmount: round2(totalAmount - creditedAmount),
     deductionType: classification.type,

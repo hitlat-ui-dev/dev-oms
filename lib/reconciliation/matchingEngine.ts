@@ -56,7 +56,10 @@ export interface InstituteMatchResult {
 export type DeductionType = "TDS" | "TDS+GST" | "Kasar";
 
 export interface BillMatchResult {
-  bill: any;
+  // Almost always one real SellerOrder - more than one when the matched
+  // amount actually belongs to a split-order group, e.g. an order and its
+  // "-P1" partial-ship sibling (see groupSplitOrders above).
+  bills: any[];
   remainingAmount: number;
   deductionAmount: number;
   matchType: "exact" | "deduction";
@@ -260,6 +263,37 @@ export interface ScoredInstituteCandidate extends InstituteCandidate {
   matchedBillNos?: string[];
 }
 
+// Converts a date string into a YYYYMMDD number for reliable chronological
+// comparison, regardless of which format the source bank statement used
+// (ISO YYYY-MM-DD, or DD-MM-YYYY / DD-MM-YY as printed by banks like HDFC) -
+// same parsing as account-statements' sortTransactions. Plain `new Date(s)`
+// is NOT safe here: V8 parses an ambiguous "05/10/26" as the US M/D/Y
+// convention (May 10) instead of the Indian D/M/Y one (Oct 5) banks actually
+// use, which would silently corrupt every date comparison below.
+export function parseDateToSortable(dateStr?: string): number {
+  if (!dateStr) return 0;
+  const s = dateStr.trim();
+  let m = s.match(/^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/); // YYYY-MM-DD
+  if (m) return Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
+  m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/); // DD-MM-YYYY
+  if (m) return Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]);
+  m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2})$/); // DD-MM-YY
+  if (m) return (2000 + Number(m[3])) * 10000 + Number(m[2]) * 100 + Number(m[1]);
+  return 0;
+}
+
+// Turns a sortable YYYYMMDD int back into a real Date (local midnight) for
+// day-difference math - built from parseDateToSortable's already-correct
+// D/M/Y interpretation rather than re-parsing the original string.
+function sortableToDate(n: number): Date | null {
+  if (!n) return null;
+  const year = Math.floor(n / 10000);
+  const month = Math.floor((n % 10000) / 100);
+  const day = n % 100;
+  const d = new Date(year, month - 1, day);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 // How close (in days) a payment date needs to be to one of the institute's open
 // bill dates to count as a "date fit" — a rough proxy until Phase 3's cluster
 // engine gives a real per-institute burst window.
@@ -281,17 +315,25 @@ export async function scoreInstituteCandidates(
   candidates: InstituteCandidate[],
   { creditedAmount, transactionDate, firmCode }: { creditedAmount: number; transactionDate?: string; firmCode?: string }
 ): Promise<ScoredInstituteCandidate[]> {
-  const txnDate = transactionDate ? new Date(transactionDate) : null;
-  const txnDateValid = !!txnDate && !isNaN(txnDate.getTime());
+  const txnDateSortable = parseDateToSortable(transactionDate);
+  const txnDate = sortableToDate(txnDateSortable);
+  const txnDateValid = !!txnDate;
 
   const scored = await Promise.all(
     candidates.map(async (c) => {
-      const openBills = await findOpenBills(db, { instituteName: c.instituteName, firmCode });
+      const allOpenBills = await findOpenBills(db, { instituteName: c.instituteName, firmCode });
+      // A bill dated after the money was actually credited can never be what
+      // that payment was for - exclude it from the amount/combo search so a
+      // future-dated order never gets suggested as the match for an earlier
+      // payment (applied per Contract No group, not per line item - see
+      // filterBillsByCutoffDate). A bill with no date at all is kept (can't
+      // prove it's future-dated, so no evidence to exclude it on).
+      const openBills = txnDateValid ? filterBillsByCutoffDate(allOpenBills, transactionDate) : allOpenBills;
       const singleMatch = findAmountMatch(openBills, creditedAmount);
       const comboMatch = singleMatch ? null : findCombinationMatch(openBills, creditedAmount);
       const amountFit = !!(singleMatch || comboMatch);
       const matchedBillNos = singleMatch
-        ? [singleMatch.bill.orderNo]
+        ? singleMatch.bills.map((b) => b.orderNo)
         : comboMatch
         ? comboMatch.bills.map((b) => b.orderNo)
         : undefined;
@@ -300,8 +342,8 @@ export async function scoreInstituteCandidates(
       if (txnDateValid) {
         for (const b of openBills) {
           if (!b.contractDate) continue;
-          const billDate = new Date(b.contractDate);
-          if (isNaN(billDate.getTime())) continue;
+          const billDate = sortableToDate(parseDateToSortable(b.contractDate));
+          if (!billDate) continue;
           if (Math.abs(txnDate!.getTime() - billDate.getTime()) / 86400000 <= DATE_FIT_WINDOW_DAYS) {
             dateFit = true;
             break;
@@ -350,6 +392,87 @@ export const withRemainingAmounts = (bills: any[]) =>
     remainingAmount: round2(Number(b.totalAmount || 0) - Number(b.paidAmount || 0)),
   }));
 
+// A Partial Ship or Return split (see app/api/seller-orders/[id]/route.ts,
+// which creates an order's "-P{n}"/"-Re{n}"/"-RE-N{n}" sibling) breaks one
+// real order into several SellerOrder docs that are still, in practice, one
+// delivery paid together - so the amount/combo search below must never be
+// able to match only part of such a split. Siblings sharing a base order
+// number are merged into one synthetic candidate (summed totalAmount/
+// paidAmount) for the search; expandBills unpacks a matched synthetic
+// candidate back into its real underlying SellerOrder docs before the
+// result is handed back, so callers never see the synthetic merge.
+//
+// Deliberately NOT grouped by raw Contract No: confirmed live, one GeM
+// Contract No can cover 90 genuinely separate line items for an institute (a
+// whole rate-contract), paid individually over time rather than as one giant
+// lump sum - grouping by contractNo alone merged all 90 into a single
+// candidate whose total basically never matches anything, silently breaking
+// auto-matching for that institute entirely.
+function baseOrderNo(orderNo: string): string {
+  return (orderNo || "").replace(/-(P\d+|Re\d+|RE-N\d+)$/i, "");
+}
+
+export function groupSplitOrders(bills: any[]): any[] {
+  // Every bill's key is its own base order number - an un-suffixed order's
+  // key is just itself, so it naturally merges with any "-P"/"-Re" sibling
+  // that's also present (and stays standalone when none is).
+  const byBase = new Map<string, any[]>();
+  for (const b of bills) {
+    const base = baseOrderNo(b.orderNo) || b.orderNo;
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base)!.push(b);
+  }
+  const grouped: any[] = [];
+  for (const members of byBase.values()) {
+    if (members.length === 1) {
+      grouped.push(members[0]);
+      continue;
+    }
+    // The group's effective date is its LATEST member's date - the full
+    // contract (and so the combined payment for it) can only be "done"
+    // once every line item in it exists, not as soon as the first one does.
+    const latestDate = members.reduce(
+      (latest, m) => (parseDateToSortable(m.contractDate) > parseDateToSortable(latest) ? m.contractDate : latest),
+      members[0].contractDate
+    );
+    grouped.push({
+      _id: members[0]._id,
+      orderNo: members.map((m) => m.orderNo).join(" + "),
+      contractDate: latestDate,
+      totalAmount: members.reduce((s, m) => s + Number(m.totalAmount || 0), 0),
+      paidAmount: members.reduce((s, m) => s + Number(m.paidAmount || 0), 0),
+      _groupMembers: members,
+    });
+  }
+  return grouped;
+}
+
+export function expandBills(bills: any[]): any[] {
+  const out: any[] = [];
+  for (const b of bills) {
+    if (b._groupMembers) out.push(...b._groupMembers);
+    else out.push(b);
+  }
+  return out;
+}
+
+// Applies the "never match a bill dated after the credit date" rule at the
+// split-order-group level (see groupSplitOrders) instead of per individual
+// order, so an order's "-P"/"-Re" siblings are excluded as a whole if any one
+// of them postdates the payment, rather than silently letting the search
+// match only the earlier-dated members. Returns real (ungrouped) SellerOrder
+// docs either way.
+export function filterBillsByCutoffDate(bills: any[], cutoffDateStr?: string): any[] {
+  const cutoffSortable = parseDateToSortable(cutoffDateStr);
+  if (!cutoffSortable) return bills;
+  const grouped = groupSplitOrders(bills);
+  const kept = grouped.filter((b) => {
+    const sortable = parseDateToSortable(b.contractDate);
+    return !sortable || sortable <= cutoffSortable;
+  });
+  return expandBills(kept);
+}
+
 /**
  * Step 2: match a credited amount to a single open bill, within tolerance for a full
  * settlement (never more than the bill, only equal or short), or — if the credited
@@ -361,7 +484,7 @@ export function findAmountMatch(
   creditedAmount: number,
   tolerance = 5
 ): BillMatchResult | null {
-  const candidates = withRemainingAmounts(bills);
+  const candidates = withRemainingAmounts(groupSplitOrders(bills));
 
   // Credited can be up to `tolerance` short and still count as fully settled
   // (rounding-level), but never more than the bill by more than a paisa-level buffer.
@@ -369,7 +492,7 @@ export function findAmountMatch(
     (b) => creditedAmount <= b.remainingAmount + OVERPAY_ROUNDING_BUFFER && creditedAmount >= b.remainingAmount - tolerance
   );
   if (exact) {
-    return { bill: exact, remainingAmount: exact.remainingAmount, deductionAmount: 0, matchType: "exact" };
+    return { bills: expandBills([exact]), remainingAmount: exact.remainingAmount, deductionAmount: 0, matchType: "exact" };
   }
 
   // A bill whose shortfall lands cleanly on TDS's fixed 2% or TDS+GST's fixed
@@ -404,7 +527,12 @@ export function findAmountMatch(
 
   if (shortPaid.length > 0) {
     const best = shortPaid[0];
-    return { bill: best, remainingAmount: best.remainingAmount, deductionAmount: best.deductionAmount, matchType: "deduction" };
+    return {
+      bills: expandBills([best]),
+      remainingAmount: best.remainingAmount,
+      deductionAmount: best.deductionAmount,
+      matchType: "deduction",
+    };
   }
 
   return null;
@@ -421,7 +549,7 @@ export function findCombinationMatch(
   tolerance = 5,
   maxCombo = 4
 ): CombinationMatchResult | null {
-  const candidates = withRemainingAmounts(bills)
+  const candidates = withRemainingAmounts(groupSplitOrders(bills))
     .filter((b) => b.remainingAmount > 0)
     .slice(0, 25); // bound the search space
 
@@ -452,8 +580,9 @@ export function findCombinationMatch(
   search(0, [], 0);
   if (!found) return null;
 
-  const total = round2((found as any[]).reduce((s, b) => s + b.remainingAmount, 0));
-  return { bills: found, totalAmount: total, matchType: "combination" };
+  const expanded = expandBills(found as any[]);
+  const total = round2(expanded.reduce((s, b) => s + (Number(b.totalAmount || 0) - Number(b.paidAmount || 0)), 0));
+  return { bills: expanded, totalAmount: total, matchType: "combination" };
 }
 
 // ============================================================

@@ -14,6 +14,7 @@ import {
   findCombinationMatch,
   classifyDeduction,
   isHighConfidenceMatch,
+  filterBillsByCutoffDate,
   SellerForMatching,
   InstituteCandidate,
 } from "@/lib/reconciliation/matchingEngine";
@@ -130,14 +131,20 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
         // rejected against - the rest of that institute's open bills still
         // matches normally. Also exclude anything another transaction already
         // claimed earlier in this same run (see claimedBillIds above).
-        const openBills = allOpenBills.filter(
+        const eligibleBills = allOpenBills.filter(
           (b: any) => !rejectedBillIds.includes(String(b._id)) && !claimedBillIds.has(String(b._id))
         );
+        // Never suggest a bill dated AFTER the money was actually credited -
+        // a payment can't be for an order that didn't exist yet. Applied per
+        // Contract No group (filterBillsByCutoffDate), not per line item, so
+        // a multi-line contract is excluded as a whole rather than matched
+        // on only its earlier-dated members.
+        const openBills = filterBillsByCutoffDate(eligibleBills, t.date);
 
         const single = findAmountMatch(openBills, t.credit);
         if (single) {
-          billIds = [String(single.bill._id)];
-          billNos = [single.bill.orderNo];
+          billIds = single.bills.map((b) => String(b._id));
+          billNos = single.bills.map((b) => b.orderNo);
           billAmount = single.remainingAmount;
           matchTypeForConfidence = single.matchType;
           if (single.matchType === "deduction") {

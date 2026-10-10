@@ -78,7 +78,7 @@ export async function recheckInstituteGroup(
     if (!leftoverSingle && !leftoverCombo) continue;
 
     const leftoverBillIds = leftoverSingle
-      ? [String(leftoverSingle.bill._id)]
+      ? leftoverSingle.bills.map((b: any) => String(b._id))
       : leftoverCombo!.bills.map((b: any) => String(b._id));
 
     // The suspect's own payment must still find a home among what's left over
@@ -100,7 +100,7 @@ export async function recheckInstituteGroup(
         `${suspectBill.orderNo}, leaving the ${leftoverMatch.transactionDate} payment (₹${leftoverMatch.creditedAmount}) ` +
         `with nothing left to match. Swapping which bill each payment settles satisfies both.`,
       suggestedReassignment: {
-        suspectMatchNewBillIds: [String(suspectReassignment.bill._id)],
+        suspectMatchNewBillIds: suspectReassignment.bills.map((b: any) => String(b._id)),
         leftoverMatchNewBillIds: leftoverBillIds,
       },
     };

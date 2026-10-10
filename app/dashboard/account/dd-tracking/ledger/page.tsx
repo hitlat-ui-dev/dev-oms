@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { FiArrowLeft, FiTruck, FiCornerUpLeft, FiX, FiFilter, FiEdit3, FiUpload, FiSave, FiLoader, FiCheckCircle } from "react-icons/fi";
+import { FiArrowLeft, FiTruck, FiCornerUpLeft, FiX, FiFilter, FiEdit3, FiUpload, FiSave, FiLoader, FiCheckCircle, FiDownload } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 
 interface DDEntry {
@@ -196,6 +196,25 @@ export default function DDLedgerPage() {
     setPreviewUrl(null);
   };
 
+  // The R2 bucket is private - scannedDocumentUrl stored on the entry is just
+  // the object key, not a viewable link, and the signed URL handed back at
+  // upload time (previewUrl) isn't persisted. So viewing an already-saved
+  // entry's PDF needs a fresh signed URL fetched on demand.
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+  const openDocument = async (id: string) => {
+    setOpeningDocId(id);
+    try {
+      const res = await fetch(`/api/dd-entries/${id}/document-url`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to open document");
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      alert(err.message || "Failed to open document");
+    } finally {
+      setOpeningDocId(null);
+    }
+  };
+
   const handleScan = async (file: File) => {
     setScanning(true);
     setScanError("");
@@ -355,6 +374,16 @@ export default function DDLedgerPage() {
                             <button onClick={() => openEditEntry(e)} title="Edit DD entry" className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200">
                               <FiEdit3 size={12} />
                             </button>
+                            {e.scannedDocumentUrl && (
+                              <button
+                                onClick={() => openDocument(e._id)}
+                                disabled={openingDocId === e._id}
+                                title="Download DD PDF"
+                                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 disabled:opacity-50"
+                              >
+                                {openingDocId === e._id ? <FiLoader className="animate-spin" size={12} /> : <FiDownload size={12} />}
+                              </button>
+                            )}
                             {e.status === "issued" && (
                               <button onClick={() => openModal("sent", e)} className="flex items-center gap-1 p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-black uppercase px-2">
                                 <FiTruck size={11} /> Mark Sent
@@ -474,6 +503,16 @@ export default function DDLedgerPage() {
                     <a href={previewUrl} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-blue-600 hover:underline flex items-center gap-1">
                       <FiCheckCircle size={12} /> View uploaded PDF
                     </a>
+                  ) : editingEntry ? (
+                    <button
+                      type="button"
+                      onClick={() => openDocument(editingEntry._id)}
+                      disabled={openingDocId === editingEntry._id}
+                      className="text-[11px] font-bold text-blue-600 hover:underline flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {openingDocId === editingEntry._id ? <FiLoader className="animate-spin" size={12} /> : <FiDownload size={12} />}
+                      {openingDocId === editingEntry._id ? "Opening..." : "Download attached PDF"}
+                    </button>
                   ) : (
                     <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1"><FiCheckCircle size={12} /> PDF attached</span>
                   )
