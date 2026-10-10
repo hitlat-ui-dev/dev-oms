@@ -147,6 +147,7 @@ function OrderLedgerMini({
   selectedIds,
   onToggle,
   elsewhereIds,
+  onToggleAll,
 }: {
   orders: OrderLite[];
   highlightAmount?: number;
@@ -167,6 +168,9 @@ function OrderLedgerMini({
   // pending transaction - flagged so the user can avoid double-claiming a
   // bill before hitting the backend's overpayment guard at confirm time.
   elsewhereIds?: Set<string>;
+  // Header checkbox that selects/clears every open order at once (not just
+  // the ones currently shown under the row cap).
+  onToggleAll?: () => void;
 }) {
   if (orders.length === 0) {
     return <p className="text-[9px] text-slate-400 italic px-1 py-1">No open orders for this institute.</p>;
@@ -198,12 +202,25 @@ function OrderLedgerMini({
   const shown = sorted.slice(0, cap);
   const rowText = fullWidth ? "text-xs" : "text-[9px]";
   const selectable = !!onToggle;
+  const allSelected = selectable && orders.length > 0 && orders.every((o) => selectedIds?.has(o._id));
   return (
     <div className={`border border-slate-200 rounded-lg overflow-hidden mt-1 ${fullWidth ? "" : "max-w-[420px]"}`}>
       <table className={`w-full ${rowText}`}>
         <thead>
           <tr className="bg-slate-50 text-slate-400 font-bold uppercase">
-            {selectable && <th className="px-2 py-1.5 w-6"></th>}
+            {selectable && (
+              <th className="px-2 py-1.5 w-6">
+                {onToggleAll && (
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={onToggleAll}
+                    title={allSelected ? "Clear all" : "Select all"}
+                    className="w-3.5 h-3.5 accent-blue-600"
+                  />
+                )}
+              </th>
+            )}
             <th className="px-2 py-1.5 text-left">Order</th>
             <th className="px-2 py-1.5 text-left">Item</th>
             <th className="px-2 py-1.5 text-left">Date</th>
@@ -623,18 +640,25 @@ export default function ReconciliationPage() {
     id: string
   ) => state[id] || { correctedType: "", deductionAmount: "0", deductionReason: "" };
 
-  const getManual = (id: string) =>
-    manualState[id] || {
-      sellerId: "",
-      billId: "",
-      comboBillIds: [] as string[],
-      comboBillNos: [] as string[],
+  // Seeded from the match's own sellerId/billIds when nothing's been picked
+  // locally yet - a transaction can already have a confident, server-matched
+  // institute (sometimes even a bill) with nothing more needed than Confirm,
+  // and previously defaulting to "" here made that row LOOK completely
+  // unmatched (empty "Select Institute..." dropdown) even though Run
+  // Matching had already found it correctly - confirmed live on a "high"
+  // confidence DIET VADODARA match that only lacked an open bill to attach.
+  const getManual = (m: Match) =>
+    manualState[m._id] || {
+      sellerId: m.sellerId || "",
+      billId: m.billIds.length === 1 ? m.billIds[0] : "",
+      comboBillIds: m.billIds.length > 1 ? m.billIds : ([] as string[]),
+      comboBillNos: m.billIds.length > 1 ? m.billNos : ([] as string[]),
       deductionType: "",
       deductionAmount: "0",
       deductionReason: "",
     };
-  const setManual = (id: string, patch: Partial<ReturnType<typeof getManual>>) => {
-    setManualState((prev) => ({ ...prev, [id]: { ...getManual(id), ...patch } }));
+  const setManual = (m: Match, patch: Partial<ReturnType<typeof getManual>>) => {
+    setManualState((prev) => ({ ...prev, [m._id]: { ...getManual(m), ...patch } }));
   };
 
   // Picking an ambiguous candidate that the engine already found a COMBO
@@ -644,7 +668,7 @@ export default function ReconciliationPage() {
   // empty/wrong, so confirming never actually applied the combo the card
   // was showing. A single-order match auto-selects that one bill too.
   const selectCandidate = (m: Match, c: { sellerId: string; instituteName: string; matchedBillNos?: string[] }) => {
-    const man = getManual(m._id);
+    const man = getManual(m);
     // If a TDS/TDS+GST deduction is already picked, keep the deduction
     // amount in sync with whatever bill(s) this selection resolves to - zero
     // when none resolve, recalculated at that type's rate otherwise.
@@ -652,7 +676,7 @@ export default function ReconciliationPage() {
     const dedPatch = (total: number) => (rate ? { deductionAmount: (total * rate).toFixed(2) } : {});
     const billNos = c.matchedBillNos || [];
     if (billNos.length === 0) {
-      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
+      setManual(m, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
       return;
     }
     const openBills = openBillsFor(c.instituteName, m.firmCode, m.transactionDate);
@@ -662,14 +686,14 @@ export default function ReconciliationPage() {
     if (resolved.length !== billNos.length) {
       // Couldn't resolve every matched order to an open bill (stale list) -
       // fall back to plain manual pick rather than locking in a partial/wrong set.
-      setManual(m._id, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
+      setManual(m, { sellerId: c.sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch(0) });
       return;
     }
     const total = resolved.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
     if (resolved.length === 1) {
-      setManual(m._id, { sellerId: c.sellerId, billId: resolved[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch(total) });
+      setManual(m, { sellerId: c.sellerId, billId: resolved[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch(total) });
     } else {
-      setManual(m._id, {
+      setManual(m, {
         sellerId: c.sellerId,
         billId: "",
         comboBillIds: resolved.map((b) => b._id),
@@ -689,7 +713,7 @@ export default function ReconciliationPage() {
     instituteName: string,
     matchedBillNos?: string[]
   ) => {
-    const man = getManual(m._id);
+    const man = getManual(m);
     let initial: string[] = [];
     if (man.sellerId === sellerId && man.comboBillIds.length > 0) {
       initial = man.comboBillIds;
@@ -714,16 +738,16 @@ export default function ReconciliationPage() {
     const { match: m, sellerId, instituteName } = ledgerModalFor;
     const openBills = openBillsFor(instituteName, m.firmCode, m.transactionDate);
     const picked = openBills.filter((b) => ledgerSelectedIds.has(b._id));
-    const man = getManual(m._id);
+    const man = getManual(m);
     const total = picked.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
     const rate = DEDUCTION_RATES[man.deductionType];
     const dedPatch = rate ? { deductionAmount: (total * rate).toFixed(2) } : {};
     if (picked.length === 0) {
-      setManual(m._id, { sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch });
+      setManual(m, { sellerId, billId: "", comboBillIds: [], comboBillNos: [], ...dedPatch });
     } else if (picked.length === 1) {
-      setManual(m._id, { sellerId, billId: picked[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch });
+      setManual(m, { sellerId, billId: picked[0]._id, comboBillIds: [], comboBillNos: [], ...dedPatch });
     } else {
-      setManual(m._id, {
+      setManual(m, {
         sellerId,
         billId: "",
         comboBillIds: picked.map((b) => b._id),
@@ -928,7 +952,7 @@ export default function ReconciliationPage() {
   // Confirm option at all - it sat in Unmatched forever with no visible way
   // forward, reading as "the button does nothing").
   const handleSaveManual = async (m: Match) => {
-    const man = getManual(m._id);
+    const man = getManual(m);
     if (!man.sellerId) {
       alert("Select an institute first.");
       return;
@@ -1395,7 +1419,7 @@ export default function ReconciliationPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {pendingUnresolved.map((m) => {
-                          const man = getManual(m._id);
+                          const man = getManual(m);
                           const bills = openBillsFor(sellerById[man.sellerId]?.instituteName || null, m.firmCode, m.transactionDate);
                           return (
                             <tr
@@ -1432,21 +1456,25 @@ export default function ReconciliationPage() {
                                       <FiAlertTriangle size={10} /> Ambiguous — pick one
                                     </span>
                                     {(m.ambiguousCandidates || []).map((c) => {
+                                      const candidateBills = openBillsFor(c.instituteName, m.firmCode, m.transactionDate);
                                       // Sum of the specific matched bills' remaining amounts, so the
                                       // user can sanity-check the combo against the credited amount
                                       // right here instead of opening View Orders to add it up.
                                       const matchedTotal =
                                         c.matchedBillNos && c.matchedBillNos.length > 0
-                                          ? openBillsFor(c.instituteName, m.firmCode, m.transactionDate)
+                                          ? candidateBills
                                               .filter((b) => c.matchedBillNos!.includes(b.orderNo))
                                               .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
                                           : null;
+                                      const hasNoOpenOrders = candidateBills.length === 0;
                                       return (
                                       <div
                                         key={c.sellerId}
                                         className={`border rounded-lg overflow-hidden transition-colors ${
                                           man.sellerId === c.sellerId
                                             ? "bg-blue-50 border-blue-400"
+                                            : hasNoOpenOrders
+                                            ? "bg-slate-50 border-slate-200 opacity-70"
                                             : "bg-white border-slate-200 hover:border-blue-300"
                                         }`}
                                       >
@@ -1457,9 +1485,13 @@ export default function ReconciliationPage() {
                                             className="text-left flex-1 min-w-0"
                                           >
                                             <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
-                                            <span className="text-[9px] text-slate-400">
-                                              {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
-                                            </span>
+                                            {hasNoOpenOrders ? (
+                                              <span className="block text-[9px] font-bold text-red-500">No open orders for this institute</span>
+                                            ) : (
+                                              <span className="text-[9px] text-slate-400">
+                                                {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
+                                              </span>
+                                            )}
                                             {c.matchedBillNos && c.matchedBillNos.length > 0 && (
                                               <span className="block text-[9px] font-bold text-emerald-700">
                                                 ✓ matches {c.matchedBillNos.join(", ")}
@@ -1482,7 +1514,7 @@ export default function ReconciliationPage() {
                                 )}
                                 <select
                                   value={man.sellerId}
-                                  onChange={(e) => setManual(m._id, { sellerId: e.target.value, billId: "", comboBillIds: [], comboBillNos: [] })}
+                                  onChange={(e) => setManual(m, { sellerId: e.target.value, billId: "", comboBillIds: [], comboBillNos: [] })}
                                   className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 max-w-[160px]"
                                 >
                                   <option value="">Select Institute...</option>
@@ -1533,7 +1565,7 @@ export default function ReconciliationPage() {
                                       onChange={(e) => {
                                         const billId = e.target.value;
                                         const rate = DEDUCTION_RATES[man.deductionType];
-                                        setManual(m._id, {
+                                        setManual(m, {
                                           billId,
                                           ...(rate
                                             ? { deductionAmount: (selectedBillsTotal(bills, { billId, comboBillIds: [] }) * rate).toFixed(2) }
@@ -1571,7 +1603,7 @@ export default function ReconciliationPage() {
                                     onChange={(e) => {
                                       const deductionType = e.target.value;
                                       const rate = DEDUCTION_RATES[deductionType];
-                                      setManual(m._id, {
+                                      setManual(m, {
                                         deductionType,
                                         ...(rate ? { deductionAmount: (selectedBillsTotal(bills, man) * rate).toFixed(2) } : {}),
                                       });
@@ -1587,7 +1619,7 @@ export default function ReconciliationPage() {
                                     type="number"
                                     placeholder="Amt"
                                     value={man.deductionAmount}
-                                    onChange={(e) => setManual(m._id, { deductionAmount: e.target.value })}
+                                    onChange={(e) => setManual(m, { deductionAmount: e.target.value })}
                                     className="w-24 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-mono focus:outline-none focus:border-blue-500"
                                   />
                                   {(() => {
@@ -1846,24 +1878,29 @@ export default function ReconciliationPage() {
                 </div>
               </div>
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                    {ledgerModalFor.instituteName}'s Open Orders
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-400">Tick any bill(s) to select</span>
-                </div>
                 {(() => {
                   const modalOrders = openBillsFor(
                     ledgerModalFor.instituteName,
                     ledgerModalFor.match.firmCode,
                     ledgerModalFor.match.transactionDate
                   );
+                  const allSelected = modalOrders.length > 0 && modalOrders.every((o) => ledgerSelectedIds.has(o._id));
                   return (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                        {ledgerModalFor.instituteName}'s Open Orders
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400">Tick any bill(s) to select</span>
+                    </div>
                     <OrderLedgerMini
                       orders={modalOrders}
                       highlightAmount={ledgerModalFor.match.creditedAmount}
                       highlightOrderNos={ledgerModalFor.matchedBillNos}
                       selectedIds={ledgerSelectedIds}
+                      onToggleAll={() =>
+                        setLedgerSelectedIds(allSelected ? new Set() : new Set(modalOrders.map((o) => o._id)))
+                      }
                       onToggle={(id) => {
                         // A Partial Ship or Return split ("OD123" + its
                         // "-P1"/"-Re1" sibling) is still one real delivery
@@ -1892,6 +1929,7 @@ export default function ReconciliationPage() {
                       }
                       fullWidth
                     />
+                  </>
                   );
                 })()}
               </div>
