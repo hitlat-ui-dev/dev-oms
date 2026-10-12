@@ -47,7 +47,28 @@ export async function POST(req: Request) {
       const now = new Date();
       await runsCollection.updateOne(
         { _id: previousStopped._id },
-        { $set: { status: "scraping", progressPercent: previousStopped.progressPercent || 0, resumedAt: now } }
+        {
+          $set: {
+            status: "scraping",
+            progressPercent: previousStopped.progressPercent || 0,
+            resumedAt: now,
+            // Refreshed from this request, not left as whatever was saved
+            // when the run first started - a word added to "Skip bids
+            // whose Items contain" (or any other filter) between the
+            // original Start Sync and a later Keep/Resume used to sit
+            // ignored for the rest of that run, since only `status` was
+            // ever touched here before.
+            filterState: (typeof filterState === "string" && filterState.trim()) || "Gujarat",
+            filterCities: Array.isArray(filterCities)
+              ? filterCities.filter((c) => typeof c === "string" && c.trim()).map((c) => c.trim())
+              : [],
+            dateFrom: (typeof dateFrom === "string" && dateFrom.trim()) || "",
+            dateTo: (typeof dateTo === "string" && dateTo.trim()) || "",
+            excludeKeywords: Array.isArray(filterExcludeKeywords)
+              ? filterExcludeKeywords.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim())
+              : [],
+          },
+        }
       );
       return NextResponse.json({ runId: previousStopped._id.toString(), status: "scraping", resumed: true });
     }

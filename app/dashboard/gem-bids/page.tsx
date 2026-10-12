@@ -743,7 +743,7 @@ export default function GemBidsPage() {
               Skip bids whose Items contain (saved, reused every time)
             </label>
             <div className="mb-4 border border-slate-200 rounded-lg p-2.5">
-              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px]">
+              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[22px] max-h-36 overflow-y-auto">
                 {excludeKeywords.length === 0 ? (
                   <span className="text-[11px] text-slate-400">No words excluded yet.</span>
                 ) : (

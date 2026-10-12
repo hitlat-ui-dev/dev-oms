@@ -47,6 +47,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GEM_BID_SYNC_PROGRESS") {
     (async () => {
       try {
+        // Stamped on every progress tick (content.js sends these frequently
+        // while a batch is actively scraping) - see LAST_PROGRESS_KEY below,
+        // what clearOrphanedClaimIfAny actually uses to tell "legitimately
+        // still working" apart from "silently died" (a tab Chrome discarded
+        // to free memory, or whose execution context didn't survive a long
+        // PC sleep, still shows up in chrome.tabs.query - it just never
+        // sends another one of these again).
+        await chrome.storage.local.set({ [LAST_PROGRESS_KEY]: Date.now() });
         const apiBase = await getApiBase();
         const res = await fetch(`${apiBase}/api/gem-bids/sync/progress`, {
           method: "POST",
@@ -185,6 +193,7 @@ const BID_START_DATE_TO_KEY = "gemBidStartDateTo";
 // Sync modal, GET/POST /api/gem-bids/exclude-keywords) with no extra
 // filtering logic needed in content.js.
 const EXCLUDE_KEYWORDS_KEY = "gemItemExcludeKeywords";
+const LAST_PROGRESS_KEY = "gemBgLastProgressAt";
 const GEM_URL = "https://bidplus.gem.gov.in/advance-search#tab2";
 
 function ensurePollAlarm() {
@@ -211,20 +220,33 @@ pollAndMaybeFetchBidDocuments();
 // is mid-flight, its whole execution context dies with it and nothing ever
 // gets a chance to clear the claim - this worker would otherwise sit
 // convinced "a batch is already running" forever, silently refusing every
-// future Start Sync. Since content.js can only ever run inside such a tab,
-// "no bidplus.gem.gov.in tab exists at all" is an unambiguous signal that
-// whatever claimed this is truly gone, not just slow - so that's checked
-// first. A tab existing but the claim being implausibly old (hours) is a
-// second, cheaper safety net for any other way this could get stuck.
-const CLAIM_STALE_MS = 60 * 60 * 1000; // 1 hour
+// future Start Sync. "No bidplus.gem.gov.in tab exists at all" is an
+// unambiguous signal that whatever claimed this is truly gone - checked
+// first. But a tab can also go quietly dead without ever closing (Chrome
+// discarding it to free memory, or its execution context not surviving a
+// long PC sleep/network drop) - chrome.tabs.query still finds that tab, so
+// tab-existence alone used to leave a run stuck "Syncing..." forever with
+// nothing actually happening behind it, however long the alarm kept
+// ticking. LAST_PROGRESS_KEY (stamped on every GEM_BID_SYNC_PROGRESS
+// message - see the handler above) is what actually tells "still working"
+// apart from "silently died": heard nothing in NO_PROGRESS_STALE_MS, even
+// though the tab nominally exists, means it's dead.
+const NO_PROGRESS_STALE_MS = 10 * 60 * 1000; // 10 minutes
 
 async function clearOrphanedClaimIfAny() {
-  const claimData = await chrome.storage.local.get(CLAIMED_RUN_KEY);
+  const claimData = await chrome.storage.local.get([CLAIMED_RUN_KEY, LAST_PROGRESS_KEY]);
   const claim = claimData[CLAIMED_RUN_KEY];
   if (!claim) return;
 
   const claimedAt = typeof claim === "object" && claim ? claim.claimedAt : 0;
-  const tooOld = !claimedAt || Date.now() - claimedAt > CLAIM_STALE_MS;
+  const lastProgressAt = claimData[LAST_PROGRESS_KEY] || 0;
+  // The more recent of the two - freshly claimed (city-list resolution,
+  // navigating the tab, etc. all take a few seconds before the first real
+  // progress tick) is given the same grace period a genuinely stalled
+  // batch gets measured against, so this doesn't fire false-positive in
+  // that short startup window.
+  const lastSignalAt = Math.max(claimedAt || 0, lastProgressAt || 0);
+  const tooOld = !lastSignalAt || Date.now() - lastSignalAt > NO_PROGRESS_STALE_MS;
   const tabs = await chrome.tabs.query({ url: "https://bidplus.gem.gov.in/*" });
 
   if (tabs.length > 0 && !tooOld) return; // plausibly still being driven - leave it alone
@@ -254,6 +276,20 @@ async function sendTabMessageWithRetry(tabId, message, attempts = 12, delayMs = 
   return null;
 }
 
+// Opens a GeM tab, or re-navigates/focuses one already open, and returns
+// its tab id - the same two-branch logic a fresh claim and a resume both
+// need, factored out so resume doesn't have to duplicate it.
+async function ensureGemTab() {
+  const existingTabs = await chrome.tabs.query({ url: "https://bidplus.gem.gov.in/*" });
+  const existingTab = existingTabs.find((t) => t.active) || existingTabs[0];
+  if (existingTab) {
+    await chrome.tabs.update(existingTab.id, { url: GEM_URL, active: true });
+    return existingTab.id;
+  }
+  const created = await chrome.tabs.create({ url: GEM_URL, active: true });
+  return created.id;
+}
+
 async function pollAndMaybeStartAutoSync() {
   try {
     await clearOrphanedClaimIfAny();
@@ -266,34 +302,59 @@ async function pollAndMaybeStartAutoSync() {
     if (claimData[CLAIMED_RUN_KEY]) return;
 
     const cbData = await chrome.storage.local.get(CITY_BATCH_KEY);
-    if (cbData[CITY_BATCH_KEY] && cbData[CITY_BATCH_KEY].running) return;
+    const existingBatch = cbData[CITY_BATCH_KEY];
+    if (existingBatch && existingBatch.running) return;
 
     const apiBase = await getApiBase();
     const res = await fetch(`${apiBase}/api/gem-bids/sync/status`);
     if (!res.ok) return;
     const data = await res.json();
     const run = data.run;
+    if (!run) return;
+
+    // A batch this worker already has local progress for (same runId, not
+    // currently marked running) whose OMS run is "scraping" again - Keep/
+    // Resume after a Stop, or the PC sleeping / network dropping mid-scrape
+    // and the run getting resumed since (clearOrphanedClaimIfAny above is
+    // what flips an orphaned batch's `running` back to false in that case).
+    // Picks up from exactly batch.index/batch.phase/batch.cities as they
+    // already stood - NOT a fresh city-list re-resolve - rather than only
+    // ever recognizing a brand-new run (the phase === "starting" check
+    // below). Previously nothing watched for this case at all: a resumed
+    // run just sat showing "Syncing..." in the OMS forever with nothing
+    // actually happening behind it, and Keep/Resume looked like it had
+    // silently done nothing.
+    if (existingBatch && !existingBatch.running && existingBatch.omsRunId === run._id && run.status === "scraping") {
+      await chrome.storage.local.set({ [CLAIMED_RUN_KEY]: { runId: run._id, claimedAt: Date.now() } });
+      // Exclude keywords / date filters may have changed since this batch
+      // was first claimed (e.g. a word added to "Skip bids whose Items
+      // contain" right before clicking Keep) - refresh them from the run,
+      // same as a fresh claim does below, instead of the resumed batch
+      // quietly running on whatever was cached locally when it first started.
+      await chrome.storage.local.set({
+        [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
+        [BID_START_DATE_TO_KEY]: run.dateTo || "",
+        [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords.join(", ") : "",
+      });
+      const tabId = await ensureGemTab();
+      await chrome.storage.local.set({ [CITY_BATCH_KEY]: { ...existingBatch, running: true } });
+      sendTabMessageWithRetry(tabId, { action: "KICK_BATCH" }, 6, 500);
+      return;
+    }
+
     // Only claim a brand-new, not-yet-picked-up run - one still on its
-    // initial "starting" phase. Anything further along is either already
-    // being driven (by this worker, moments ago) or is a stale/finished run
-    // that happens to be the most recent one in the collection.
-    if (!run || run.status !== "scraping" || run.phase !== "starting") return;
+    // initial "starting" phase. Anything further along with no local batch
+    // of our own for it is either already being driven (by this worker,
+    // moments ago) or a stale/finished run that happens to be the most
+    // recent one in the collection.
+    if (run.status !== "scraping" || run.phase !== "starting") return;
 
     // Claimed immediately, before the (possibly slow - see below) city-list
     // resolution, so a second alarm tick a minute from now can't pick the
     // same run up again and open a second tab/batch for it.
     await chrome.storage.local.set({ [CLAIMED_RUN_KEY]: { runId: run._id, claimedAt: Date.now() } });
 
-    const existingTabs = await chrome.tabs.query({ url: "https://bidplus.gem.gov.in/*" });
-    const existingTab = existingTabs.find((t) => t.active) || existingTabs[0];
-    let tabId;
-    if (existingTab) {
-      await chrome.tabs.update(existingTab.id, { url: GEM_URL, active: true });
-      tabId = existingTab.id;
-    } else {
-      const created = await chrome.tabs.create({ url: GEM_URL, active: true });
-      tabId = created.id;
-    }
+    const tabId = await ensureGemTab();
 
     const state = run.filterState || "Gujarat";
     let cities = Array.isArray(run.filterCities) && run.filterCities.length ? run.filterCities : null;

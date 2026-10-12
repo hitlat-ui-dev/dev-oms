@@ -26,6 +26,14 @@ interface Company {
   firmCode: string;
 }
 
+// S S Enterprise - the firm this page is opened for the overwhelming
+// majority of the time, so it starts pre-selected instead of making that
+// one click happen every single time. Still a completely ordinary
+// selection otherwise - the Firm dropdown switches away from it exactly
+// like any other firm, and picking a bid with a different party assigned
+// still overrides it the same way it always has.
+const DEFAULT_FIRM_ID = "6a152c56ab2d240a19100e6b";
+
 interface VaultDocument {
   name: string;
   r2Key: string;
@@ -162,7 +170,7 @@ function DocumentMakerPageInner() {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("rate");
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [firmId, setFirmId] = useState("");
+  const [firmId, setFirmId] = useState(DEFAULT_FIRM_ID);
   const [vault, setVault] = useState<Vault | null>(null);
   const [vaultLoading, setVaultLoading] = useState(false);
   const [uploading, setUploading] = useState(false);

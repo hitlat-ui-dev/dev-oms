@@ -4,17 +4,13 @@ import { parseGemDate } from "./expirySweep";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SETTINGS_COLLECTION = "gem_bid_settings";
 const LAST_RUN_KEY = "lastExpireBidsJobDate";
-
-// Vercel's serverless functions run in UTC regardless of where the request
-// came from - plain Date#getHours() was silently reading UTC, so "evening"
-// (hour >= 18) only ever matched a site visit between ~11:30pm and
-// midnight IST, which in practice almost never happened (confirmed: this
-// job had run zero times despite months of real usage, Expired Bids stuck
-// at 0 the whole time). Read the hour in India time explicitly instead of
-// trusting the runtime's local clock.
-function istHour(date: Date): number {
-  return parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }).format(date), 10);
-}
+// How often this actually does the (cheap, but not free) full-section scan
+// - there's no real cron here, just a check fired from app/layout.tsx on
+// every site visit (see that file), so this is what stands in for "real
+// time": frequent enough that a bid moves to Expired Bids within minutes
+// of its own deadline during a normal work day, without re-scanning on
+// literally every page navigation.
+const MIN_INTERVAL_MS = 15 * 60 * 1000;
 
 export interface ExpireBidsJobResult {
   ran: boolean;
@@ -24,31 +20,23 @@ export interface ExpireBidsJobResult {
 }
 
 /**
- * The once-daily, evening-only move-to-Expired-Bids + 7-day purge job -
- * fired from app/layout.tsx on every site visit (same pattern as /api/
- * backup/auto, /api/courier/auto, and /api/gem-bids/purge-deleted), but
- * gated on local hour so it only actually does anything on an evening
- * visit, not whenever someone first opens the OMS that day. A bid's own
- * expiry no longer happens per-sync (see expirySweep.ts's comment) -
- * batching it into one evening pass is what "Expired Bids" as a dated
- * holding section (new bids can still arrive for the same real-world
- * tender up to its own close) actually implies.
+ * The move-to-Expired-Bids + 7-day purge check - fired from app/layout.tsx
+ * on every site visit (same pattern as /api/backup/auto, /api/courier/auto,
+ * and /api/gem-bids/purge-deleted), self-throttled to once every
+ * MIN_INTERVAL_MS rather than tied to a time of day - used to be
+ * evening-only (once a bid's own expiry stopped happening per-sync, see
+ * expirySweep.ts's comment), which meant a bid could sit visibly "live"
+ * for up to a day past its real deadline; reworked to run all day instead
+ * so a bid moves to Expired Bids within minutes of actually expiring,
+ * whenever someone happens to have the OMS open.
  */
-export async function runExpireBidsJobIfDue(db: any, eveningHour = 18): Promise<ExpireBidsJobResult> {
+export async function runExpireBidsJobIfDue(db: any): Promise<ExpireBidsJobResult> {
   const now = new Date();
-  if (istHour(now) < eveningHour) {
-    return { ran: false, reason: "not evening yet" };
-  }
 
-  // Safe as a plain UTC date slice (not IST-converted) specifically because
-  // this only ever runs once the IST hour is >= 18 - that window (18:00-
-  // 23:59 IST) never crosses a UTC midnight relative to the IST calendar
-  // day, so the UTC and IST dates agree the whole time this check can fire.
-  const todayKey = now.toISOString().slice(0, 10);
   const settingsCollection = db.collection(SETTINGS_COLLECTION);
   const settingsDoc = await settingsCollection.findOne({ key: LAST_RUN_KEY });
-  if (settingsDoc?.date === todayKey) {
-    return { ran: false, reason: "already ran today" };
+  if (settingsDoc?.ranAt && now.getTime() - new Date(settingsDoc.ranAt).getTime() < MIN_INTERVAL_MS) {
+    return { ran: false, reason: "checked recently" };
   }
 
   const bidsCollection = db.collection("gem_bids");
@@ -94,7 +82,7 @@ export async function runExpireBidsJobIfDue(db: any, eveningHour = 18): Promise<
 
   await settingsCollection.updateOne(
     { key: LAST_RUN_KEY },
-    { $set: { key: LAST_RUN_KEY, date: todayKey, expiredCount, purgedCount, ranAt: now } },
+    { $set: { key: LAST_RUN_KEY, expiredCount, purgedCount, ranAt: now } },
     { upsert: true }
   );
 

@@ -6,8 +6,8 @@ const DB_NAME = "dev_oms_db";
 
 // POST — fired from app/layout.tsx on every site visit (fire-and-forget,
 // same pattern as /api/backup/auto, /api/courier/auto, and /api/gem-bids/
-// purge-deleted). The job itself decides whether it's actually due (once
-// per evening) - see lib/gemBids/expireBidsJob.ts.
+// purge-deleted). The job itself decides whether it's actually due (self-
+// throttled, not tied to a time of day) - see lib/gemBids/expireBidsJob.ts.
 export async function POST() {
   try {
     const client = await clientPromise;

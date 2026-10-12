@@ -152,6 +152,25 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       // manual action in the OMS itself (Edit Bid, Bid Status, or a manual
       // Delete) can change it, even if GeM's own listing for it changed.
       // (Doesn't apply to an already-expired Submitted Bid - see above.)
+      //
+      // One deliberate exception: the Bid End Date/Time itself still slips
+      // through even here. GeM extending/moving a submitted bid's own
+      // deadline is real information worth reflecting - the firm already
+      // submitted against whatever date was current then, and silently
+      // letting that go stale forever once a bid reaches Submitted (the
+      // one field someone might actually need to notice changed) wasn't
+      // the goal of protecting the section from automated field refreshes
+      // in general. Everything else about the bid - tag, every other
+      // field, hasPendingUpdate - stays untouched.
+      const dateChangedWhileSubmitted = normalizeForCompare(existing.bidEndDateTime) !== normalizeForCompare(incoming.bidEndDateTime);
+      if (dateChangedWhileSubmitted) {
+        bulkOps.push({
+          updateOne: {
+            filter: { bidNo },
+            update: { $set: { bidEndDateTime: incoming.bidEndDateTime, updatedAt: runAt } },
+          },
+        });
+      }
       protectedSkippedCount++;
       continue;
     }
