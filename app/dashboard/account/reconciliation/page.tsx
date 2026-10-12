@@ -1450,12 +1450,23 @@ export default function ReconciliationPage() {
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono text-emerald-700">₹{formatMoney(m.creditedAmount)}</td>
                               <td className="py-2.5 px-3">
-                                {m.isAmbiguous && (m.ambiguousCandidates || []).length > 0 && (
+                                {m.isAmbiguous && (() => {
+                                  // An institute with zero open orders can never be the right
+                                  // match for a bill-needing payment - no point cluttering the
+                                  // suggestion list with it (confirmed live: GORWA MAHILA ITI's
+                                  // row buried its one real candidate under 5 empty ones). It's
+                                  // still reachable via the plain "Select Institute..." dropdown
+                                  // below if genuinely needed (e.g. link-only, no bill).
+                                  const visibleCandidates = (m.ambiguousCandidates || []).filter(
+                                    (c) => openBillsFor(c.instituteName, m.firmCode, m.transactionDate).length > 0
+                                  );
+                                  if (visibleCandidates.length === 0) return null;
+                                  return (
                                   <div className="flex flex-col gap-1 mb-1.5 max-w-[240px]">
                                     <span className="text-[9px] font-black uppercase text-amber-600 flex items-center gap-1">
                                       <FiAlertTriangle size={10} /> Ambiguous — pick one
                                     </span>
-                                    {(m.ambiguousCandidates || []).map((c) => {
+                                    {visibleCandidates.map((c) => {
                                       const candidateBills = openBillsFor(c.instituteName, m.firmCode, m.transactionDate);
                                       // Sum of the specific matched bills' remaining amounts, so the
                                       // user can sanity-check the combo against the credited amount
@@ -1466,14 +1477,22 @@ export default function ReconciliationPage() {
                                               .filter((b) => c.matchedBillNos!.includes(b.orderNo))
                                               .reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0)
                                           : null;
-                                      const hasNoOpenOrders = candidateBills.length === 0;
+                                      // Even selecting EVERY open order for this institute wouldn't
+                                      // reach the credited amount - no possible combo can explain this
+                                      // payment, so flag it rather than let the user discover that
+                                      // only after opening View Orders.
+                                      const candidateBillsTotal = candidateBills.reduce(
+                                        (sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)),
+                                        0
+                                      );
+                                      const insufficientBills = candidateBillsTotal < m.creditedAmount;
                                       return (
                                       <div
                                         key={c.sellerId}
                                         className={`border rounded-lg overflow-hidden transition-colors ${
                                           man.sellerId === c.sellerId
                                             ? "bg-blue-50 border-blue-400"
-                                            : hasNoOpenOrders
+                                            : insufficientBills
                                             ? "bg-slate-50 border-slate-200 opacity-70"
                                             : "bg-white border-slate-200 hover:border-blue-300"
                                         }`}
@@ -1485,8 +1504,10 @@ export default function ReconciliationPage() {
                                             className="text-left flex-1 min-w-0"
                                           >
                                             <span className="block text-[10px] font-bold text-slate-800">{c.instituteName}</span>
-                                            {hasNoOpenOrders ? (
-                                              <span className="block text-[9px] font-bold text-red-500">No open orders for this institute</span>
+                                            {insufficientBills ? (
+                                              <span className="block text-[9px] font-bold text-red-500">
+                                                Open orders total ₹{formatMoney(candidateBillsTotal)} — less than credited
+                                              </span>
                                             ) : (
                                               <span className="text-[9px] text-slate-400">
                                                 {c.amountFit ? "amount fits" : "amount unclear"} · {c.dateFit ? "date fits" : "date unclear"}
@@ -1511,7 +1532,8 @@ export default function ReconciliationPage() {
                                       );
                                     })}
                                   </div>
-                                )}
+                                  );
+                                })()}
                                 <select
                                   value={man.sellerId}
                                   onChange={(e) => setManual(m, { sellerId: e.target.value, billId: "", comboBillIds: [], comboBillNos: [] })}
@@ -1624,11 +1646,18 @@ export default function ReconciliationPage() {
                                   />
                                   {(() => {
                                     // Remaining = what's left of the CREDITED (bank) amount after
-                                    // applying it to the selected bill(s) and the deduction - not the
-                                    // bill's own due amount, since the point is to catch a bank
-                                    // shortfall/overpayment against what was actually credited.
+                                    // applying it to the selected bill(s), net of the deduction - not
+                                    // the bill's own due amount, since the point is to catch a bank
+                                    // shortfall/overpayment against what was actually credited. The
+                                    // deduction is ADDED back, not subtracted again: a TDS/Kasar
+                                    // deduction is why the bill total is already bigger than what got
+                                    // credited (credited = billTotal - deduction when it's a clean
+                                    // match), so subtracting it a second time here double-counted it -
+                                    // confirmed live: a ₹79,195 combo with ₹1,583.90 TDS (2%) against a
+                                    // ₹77,611 credit is a clean match (nets to ~₹0), but the old minus
+                                    // formula showed a confusing ₹-3,167.90 "remaining".
                                     const total = selectedBillsTotal(bills, man);
-                                    const remaining = m.creditedAmount - total - (Number(man.deductionAmount) || 0);
+                                    const remaining = m.creditedAmount - total + (Number(man.deductionAmount) || 0);
                                     if (total <= 0 || Math.abs(remaining) < 0.01) return null;
                                     return (
                                       <span className={`text-[9px] font-black font-mono ${remaining < 0 ? "text-red-600" : "text-amber-600"}`}>
@@ -1885,8 +1914,16 @@ export default function ReconciliationPage() {
                     ledgerModalFor.match.transactionDate
                   );
                   const allSelected = modalOrders.length > 0 && modalOrders.every((o) => ledgerSelectedIds.has(o._id));
+                  const modalOrdersTotal = modalOrders.reduce((sum, b) => sum + (b.totalAmount - (b.paidAmount || 0)), 0);
+                  const insufficientForCredit = modalOrders.length > 0 && modalOrdersTotal < ledgerModalFor.match.creditedAmount;
                   return (
                   <>
+                    {insufficientForCredit && (
+                      <div className="mb-2 text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">
+                        ⚠ Even all open orders together (₹{formatMoney(modalOrdersTotal)}) are less than the credited amount
+                        (₹{formatMoney(ledgerModalFor.match.creditedAmount)}) — this institute likely isn't the right match.
+                      </div>
+                    )}
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                         {ledgerModalFor.instituteName}'s Open Orders

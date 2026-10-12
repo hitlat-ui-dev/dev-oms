@@ -1,4 +1,4 @@
-import { GENERIC_REGISTERED_KEYWORDS } from "@/lib/reconciliation/matchingEngine";
+import { GENERIC_REGISTERED_KEYWORDS, matchedKeywordLength } from "@/lib/reconciliation/matchingEngine";
 
 export interface SellerLite {
   instituteName: string;
@@ -11,10 +11,12 @@ export interface SellerLite {
  * returning the owning institute's name — or null if nothing matches.
  * The longest matching name wins, so a more specific tag beats a shorter, riskier one.
  * Only a literal match counts - the registered word/phrase must actually appear in
- * the description. No fuzzy fallback (there used to be one, prefix-matching a
- * heuristically-extracted payer fragment even when the registered text never
- * literally appeared) - kept in sync with the real matching engine's
- * findInstituteMatch in lib/reconciliation/matchingEngine.ts.
+ * the description (or be truncated right at the end of it - see
+ * matchedKeywordLength, for bank narration fields that cut a long institute
+ * name off mid-word). No fuzzy fallback beyond that (there used to be one,
+ * prefix-matching a heuristically-extracted payer fragment even when the
+ * registered text never literally appeared anywhere) - kept in sync with the
+ * real matching engine's findInstituteMatch in lib/reconciliation/matchingEngine.ts.
  */
 export function matchInstituteFromDescription(description: string, sellers: SellerLite[]): string | null {
   const desc = (description || "").toLowerCase();
@@ -26,8 +28,9 @@ export function matchInstituteFromDescription(description: string, sellers: Sell
       const candidate = (raw || "").trim().toLowerCase();
       if (candidate.length < 3) continue; // skip trivial/too-short tags that would false-match everything
       if (GENERIC_REGISTERED_KEYWORDS.has(candidate)) continue; // generic banking jargon, never a real institute identifier
-      if (desc.includes(candidate) && (!best || candidate.length > best.length)) {
-        best = { instituteName: seller.instituteName, length: candidate.length };
+      const matchLen = matchedKeywordLength(desc, candidate);
+      if (matchLen && (!best || matchLen > best.length)) {
+        best = { instituteName: seller.instituteName, length: matchLen };
       }
     }
   }

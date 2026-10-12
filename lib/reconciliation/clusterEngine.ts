@@ -138,10 +138,9 @@ export function findClusterCombinationMatch(
   bills: any[],
   creditedAmount: number,
   seller?: SellerForMatching | null,
-  tolerance = 5,
-  maxCombo = 4
+  tolerance = 5
 ): ClusterCombinationMatchResult | null {
-  const exact = findCombinationMatch(bills, creditedAmount, tolerance, maxCombo);
+  const exact = findCombinationMatch(bills, creditedAmount, tolerance);
   if (exact) {
     return {
       bills: exact.bills,
@@ -170,7 +169,9 @@ export function findClusterCombinationMatch(
       found = [...chosen];
       return;
     }
-    if (chosen.length >= maxCombo || sum > upperBound) return;
+    // No cap on how many bills can combine - only the sum-based pruning
+    // above (against upperBound) bounds the search.
+    if (sum > upperBound) return;
     for (let i = startIdx; i < n; i++) {
       chosen.push(candidates[i]);
       search(i + 1, chosen, round2(sum + candidates[i].remainingAmount));

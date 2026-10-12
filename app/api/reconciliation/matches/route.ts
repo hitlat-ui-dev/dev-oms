@@ -101,7 +101,12 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
           instituteMatch = top;
         } else {
           isAmbiguous = true;
-          ambiguousCandidates = scored.slice(0, 3).map((c) => ({
+          // Every institute whose registered keyword literally matched - not
+          // just the top 3 - since a lower-scoring candidate (e.g. one with
+          // no open bills yet, scored lower for that reason alone) can still
+          // be the right one; the user needs to see it to rule it out or
+          // pick it, not have it silently dropped.
+          ambiguousCandidates = scored.map((c) => ({
             sellerId: String(c.sellerId),
             instituteName: c.instituteName,
             score: c.score,

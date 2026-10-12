@@ -153,6 +153,33 @@ export function extractKeywords(description?: string): string[] {
 // STEP 1 — INSTITUTE MATCH
 // ============================================================
 
+// Bank narration fields have a fixed total length, so a long institute name
+// often gets cut off mid-word rather than ever failing to appear at all -
+// "DISTRICT TREASURY,MEHSANA" shows up as "...DISTRICT TREASURY,MEHS" in one
+// statement and the full name in another, purely because the field ran out
+// of room that time, not because they're different places. Confirmed by the
+// user: these are the same institute and should always be treated as such.
+//
+// Requiring the surviving prefix to land EXACTLY at the end of the
+// description is what keeps this safe and distinct from the fuzzy/inferred
+// matching deliberately removed elsewhere in this engine (see the long
+// comment in collectInstituteCandidates): a coincidental partial word
+// appearing anywhere else in the text doesn't qualify, only "the
+// description stops here, right where this keyword would have continued."
+const MIN_TRUNCATED_MATCH_LENGTH = 4;
+
+// Length of the literal (or truncated-literal) match: the full keyword
+// length for a normal substring match, the length of the surviving prefix
+// for a truncated one, or 0 if neither applies.
+export function matchedKeywordLength(desc: string, candidate: string): number {
+  if (desc.includes(candidate)) return candidate.length;
+  const minPrefix = Math.max(MIN_TRUNCATED_MATCH_LENGTH, Math.ceil(candidate.length / 2));
+  for (let k = candidate.length - 1; k >= minPrefix; k--) {
+    if (desc.endsWith(candidate.slice(0, k))) return k;
+  }
+  return 0;
+}
+
 export interface InstituteCandidate extends InstituteMatchResult {
   // Length of the matched keyword text — used only to break ties between
   // candidates that score equally on amount/date fit (see scoreInstituteCandidates).
@@ -203,25 +230,28 @@ function collectInstituteCandidates(
   // match once manually selected). A shared/generic treasury code is reused
   // by different real institutes across different transactions; one past
   // rejection is evidence about that ONE transaction, never a permanent ban.
-  // Only a literal match: the exact word/phrase registered in the
-  // institute's own Statement Description Name must actually appear in the
-  // transaction description. No fuzzy fallback (there used to be a second
-  // pass here that prefix-matched a heuristically-extracted payer fragment
-  // against registered keywords even when the registered text never
-  // literally appeared) - that was the system guessing beyond what was
+  // Only a literal match (full, or truncated right at the end of the
+  // description - see matchedKeywordLength): the registered word/phrase
+  // must actually appear in the transaction description, not be guessed at.
+  // No fuzzy fallback beyond that (there used to be a second pass here that
+  // prefix-matched a heuristically-extracted payer fragment against
+  // registered keywords even when the registered text never literally
+  // appeared anywhere) - that was the system guessing beyond what was
   // explicitly registered, and every false-match case found in this engine
   // (DIET MEHSANA, VADANAGAR ITI, BHESAN ITI) traced back to some form of
   // the system inferring a match instead of requiring the literal
-  // registered text. If nothing literally matches, the transaction is
-  // surfaced as unmatched for a manual pick - never guessed.
+  // registered text to actually be present. If nothing literally (or
+  // truncated-literally) matches, the transaction is surfaced as unmatched
+  // for a manual pick - never guessed.
   if (desc) {
     for (const seller of sellers) {
       for (const raw of seller.statementDescriptionName || []) {
         const candidate = (raw || "").trim().toLowerCase();
         if (candidate.length < 3) continue;
         if (GENERIC_REGISTERED_KEYWORDS.has(candidate)) continue;
-        if (!desc.includes(candidate)) continue;
-        consider(seller, raw, candidate, candidate.length);
+        const matchLen = matchedKeywordLength(desc, candidate);
+        if (!matchLen) continue;
+        consider(seller, raw, candidate, matchLen);
       }
     }
   }
@@ -546,8 +576,7 @@ export function findAmountMatch(
 export function findCombinationMatch(
   bills: any[],
   creditedAmount: number,
-  tolerance = 5,
-  maxCombo = 4
+  tolerance = 5
 ): CombinationMatchResult | null {
   const candidates = withRemainingAmounts(groupSplitOrders(bills))
     .filter((b) => b.remainingAmount > 0)
@@ -568,7 +597,11 @@ export function findCombinationMatch(
       found = [...chosen];
       return;
     }
-    if (chosen.length >= maxCombo || sum > creditedAmount + tolerance) return;
+    // No cap on how many bills can combine - only the sum-based pruning
+    // above bounds the search (confirmed live: a real 5-bill combo wasn't
+    // found under an earlier maxCombo=4 cap even though its sum matched
+    // the credited amount exactly).
+    if (sum > creditedAmount + tolerance) return;
     for (let i = startIdx; i < n; i++) {
       chosen.push(candidates[i]);
       search(i + 1, chosen, round2(sum + candidates[i].remainingAmount));
