@@ -15,6 +15,7 @@ import {
   classifyDeduction,
   isHighConfidenceMatch,
   filterBillsByCutoffDate,
+  comboSignature,
   SellerForMatching,
   InstituteCandidate,
 } from "@/lib/reconciliation/matchingEngine";
@@ -77,6 +78,13 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
       // permanently strand the transaction with no way to ever match it.
       if (existingMatch && (existingMatch.status === "confirmed" || existingMatch.status === "excluded")) continue;
       const rejectedBillIds: string[] = existingMatch?.rejectedBillIds || [];
+      // Exact combo sets already rejected for this transaction (see the
+      // reject handler) - a combo found below that matches one of these
+      // signatures is discarded rather than re-offered verbatim, but its
+      // individual member bills stay eligible for a genuinely different
+      // combo (unlike rejectedBillIds, which blacklists a single-bill
+      // rejection's bill outright).
+      const rejectedComboSignatures: string[] = existingMatch?.rejectedComboSignatures || [];
 
       // A payer keyword can legitimately belong to more than one institute (shared
       // district-treasury style names, or the same institute paying under a different
@@ -184,6 +192,15 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
           }
           if (!combo) {
             combo = findCombinationMatch(openBills, t.credit);
+          }
+          // Discard a combo that's the exact same set already rejected for
+          // this transaction - re-offering it verbatim would just get
+          // rejected again. Its individual bills stay eligible (they were
+          // never added to rejectedBillIds for a combo), so a different,
+          // genuinely new combo can still be found as the open-bill data
+          // changes over time.
+          if (combo && rejectedComboSignatures.includes(comboSignature(combo.bills.map((b: any) => b._id)))) {
+            combo = null;
           }
 
           if (combo) {

@@ -11,6 +11,7 @@ import {
   learnFromRejection,
 } from "@/lib/reconciliation/learningEngine";
 import { applyPaymentToBill, reversePaymentFromBill, applyComboPayment } from "@/lib/reconciliation/paymentEngine";
+import { comboSignature } from "@/lib/reconciliation/matchingEngine";
 
 // Reasons a credited transaction is never going to be a bill payment at all,
 // so it shouldn't keep being offered up for institute/bill matching.
@@ -257,16 +258,29 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
 
       // Records which bill(s) this specific suggestion pointed at, so the next
-      // "Run Matching" pass can rule those bills out for THIS transaction and
-      // try again, instead of either re-suggesting the exact same wrong match
-      // or abandoning the transaction entirely (previously rejected meant
-      // "final" - never reconsidered, never manually reassignable).
+      // "Run Matching" pass can rule it out for THIS transaction and try
+      // again, instead of either re-suggesting the exact same wrong match or
+      // abandoning the transaction entirely (previously rejected meant
+      // "final" - never reconsidered, never manually reassignable). A single
+      // rejected bill really is the wrong bill, so it's blacklisted outright
+      // (rejectedBillIds). A rejected COMBO is different: only that specific
+      // SET was wrong, not necessarily every bill in it - blacklisting each
+      // member individually made a later, genuinely different combo that
+      // happens to share one of those bills permanently unfindable too
+      // (confirmed live: GANDHIDHAM ITI's real 12-bill combo includes two
+      // bills that had only ever been wrong as part of an earlier, smaller,
+      // rejected combo). So a combo rejection is remembered by its exact
+      // signature (rejectedComboSignatures) instead.
+      const rejectedBillIds = match.billIds || [];
+      const updateOps: any = { $set: { status: "rejected", updatedAt: new Date() } };
+      if (rejectedBillIds.length === 1) {
+        updateOps.$addToSet = { rejectedBillIds: rejectedBillIds[0] };
+      } else if (rejectedBillIds.length > 1) {
+        updateOps.$addToSet = { rejectedComboSignatures: comboSignature(rejectedBillIds) };
+      }
       const reserved = await matchesCollection.findOneAndUpdate(
         { _id: match._id, status: "pending" },
-        {
-          $set: { status: "rejected", updatedAt: new Date() },
-          $addToSet: { rejectedBillIds: { $each: match.billIds || [] } },
-        }
+        updateOps
       );
       if (!reserved) {
         return NextResponse.json({ error: "This match was already processed" }, { status: 409 });

@@ -1,5 +1,16 @@
 import type { Db } from "mongodb";
 
+// Stable signature for a set of bill ids, order-independent - used to
+// remember exactly which COMBO was rejected for a transaction (as opposed
+// to blacklisting its individual member bills forever, which would make a
+// later, genuinely different combo that happens to share a member
+// unfindable too; see the reject handler in
+// app/api/reconciliation/matches/[id]/route.ts and its use in
+// generateSuggestions in app/api/reconciliation/matches/route.ts).
+export function comboSignature(ids: (string | { toString(): string })[]): string {
+  return [...ids].map((id) => String(id)).sort().join(",");
+}
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -333,6 +344,20 @@ const DATE_FIT_WINDOW_DAYS = 60;
 // more than this margin — below it, the two are close enough to ask the user.
 export const AMBIGUITY_SCORE_MARGIN = 60;
 
+// Same-date, any-firm evidence: a government institute commonly releases
+// payment to several different supplier firms on the same real-world day,
+// so an institute that already has a CONFIRMED match on this exact credit
+// date (in any firm, not just this transaction's) was demonstrably paying
+// out that day - real evidence worth preferring it as a tie-breaker when
+// another candidate's score is otherwise equal or close. Deliberately a
+// boost, not a hard override: big enough to clear AMBIGUITY_SCORE_MARGIN
+// against an equally-scored rival with no such evidence, but a rival with
+// its OWN same-date evidence (or an otherwise much stronger score) still
+// leaves the transaction correctly ambiguous. User-specified design,
+// confirmed live on PRANTIJ ITI vs IDAR MAHILA ITI repeatedly tying on
+// exact combo matches for unrelated same-amount transactions.
+const SAME_DATE_CONFIRMED_BOOST = 70;
+
 /**
  * Scores each candidate institute by (a) whether the credited amount fits one of
  * its open bills/combinations and (b) whether the payment date falls near its
@@ -362,6 +387,17 @@ export async function scoreInstituteCandidates(
       const singleMatch = findAmountMatch(openBills, creditedAmount);
       const comboMatch = singleMatch ? null : findCombinationMatch(openBills, creditedAmount);
       const amountFit = !!(singleMatch || comboMatch);
+      // An EXACT match (combo search here is always exact-sum; a single
+      // match is exact when matchType is "exact") is strong evidence - two
+      // institutes can coincidentally share a keyword, but essentially never
+      // also coincidentally owe the exact same precise amount. A "deduction"
+      // single match is much weaker: it only means some bill's shortfall
+      // happens to land in a plausible TDS/Kasar percentage band, which
+      // several unrelated bills can coincidentally do, especially for small
+      // amounts. Confirmed live: a true exact ₹480 match lost the "clear
+      // winner" margin to a same-pool ~3%-short ₹495 "deduction" match,
+      // because flat amountFit scoring treated them as equally strong.
+      const isExactFit = !!comboMatch || singleMatch?.matchType === "exact";
       const matchedBillNos = singleMatch
         ? singleMatch.bills.map((b) => b.orderNo)
         : comboMatch
@@ -381,7 +417,21 @@ export async function scoreInstituteCandidates(
         }
       }
 
-      const score = (amountFit ? 100 : 0) + (dateFit ? 20 : 0) + Math.min(c.matchLength, 15);
+      let sameDateConfirmedElsewhere = false;
+      if (txnDateValid) {
+        const confirmedForSeller = await db
+          .collection("bank_reconciliation_matches")
+          .find({ sellerId: String(c.sellerId), status: "confirmed" })
+          .project({ transactionDate: 1 })
+          .toArray();
+        sameDateConfirmedElsewhere = confirmedForSeller.some(
+          (cm: any) => parseDateToSortable(cm.transactionDate) === txnDateSortable
+        );
+      }
+
+      const amountScore = isExactFit ? 100 : amountFit ? 15 : 0;
+      const score =
+        amountScore + (dateFit ? 20 : 0) + Math.min(c.matchLength, 15) + (sameDateConfirmedElsewhere ? SAME_DATE_CONFIRMED_BOOST : 0);
       return { ...c, amountFit, dateFit, score, matchedBillNos };
     })
   );
