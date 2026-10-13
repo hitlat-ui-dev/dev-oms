@@ -671,6 +671,58 @@ function DocumentMakerPageInner() {
     setBoqItems((prev) => prev.filter((it) => it.itemNumber !== itemNumber));
   };
 
+  // Alternative to typing every row by hand via Add Item: the same sample
+  // Items/BOQ-style Excel GeM itself exports (Item Number/Title/
+  // Description/Quantity/Unit of Measure/Consignee ID/Delivery Period
+  // columns - see boqEngine.ts's mapRowsToBoqItems), parsed entirely
+  // client-side (no upload/server round trip - unlike BOQ Bid mode, a
+  // Regular Bid's items aren't tied to a stored source file at all, this
+  // is just a one-off bulk way to seed rows that stay freely editable
+  // afterward exactly like a manually-added one). Appended, not replacing
+  // whatever's already there, so re-importing or importing on top of
+  // hand-added rows never silently discards rates already typed in.
+  const [importingRegularExcel, setImportingRegularExcel] = useState(false);
+  const regularFileRef = useRef<HTMLInputElement>(null);
+  const importRegularExcel = async (file: File) => {
+    setImportingRegularExcel(true);
+    try {
+      const XLSX = (await import("xlsx-js-style")).default;
+      const { mapRowsToBoqItems } = await import("@/lib/documentMaker/boqEngine");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheetName = wb.SheetNames[0];
+      const rows = sheetName ? XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[sheetName], { defval: "" }) : [];
+      const parsed = mapRowsToBoqItems(rows);
+      if (parsed.length === 0) {
+        alert("Couldn't find any item rows in this file (expected Item Number/Item Title/Item Quantity/Unit of Measure columns).");
+        return;
+      }
+      setBoqItems((prev) => [
+        ...prev,
+        ...parsed.map((it) => ({
+          ...it,
+          // A plain file-row Item Number ("1", "2"...) can collide with
+          // another import or with itself if the same number appears
+          // twice in the sheet - re-keyed so every imported row gets its
+          // own unique itemNumber the same way a manually-added one does,
+          // while the file's own number is kept visible in itemTitle's
+          // place is unnecessary; itemNumber is purely an internal row key
+          // here (Regular Bid's table shows a plain running # instead).
+          itemNumber: `r${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+          baseRate: "",
+          marginPercent: "",
+          rate: "",
+          suggestedRate: "",
+          suggestedFromBidNo: "",
+        })),
+      ]);
+    } catch (err: any) {
+      alert(err.message || "Failed to read this Excel file");
+    } finally {
+      setImportingRegularExcel(false);
+    }
+  };
+
   const updateRegularItemField = (itemNumber: string, field: "itemTitle" | "quantity" | "unit", value: string) => {
     setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, [field]: value } : it)));
   };
@@ -1005,14 +1057,39 @@ function DocumentMakerPageInner() {
                   </div>
 
                   {bidType === "regular" ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={addRegularItem}
-                        className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
-                      >
-                        <FiPlus size={13} /> Add Item
-                      </button>
-                    </div>
+                    <>
+                      <input
+                        ref={regularFileRef}
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) importRegularExcel(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={addRegularItem}
+                          className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                        >
+                          <FiPlus size={13} /> Add Item
+                        </button>
+                        <button
+                          disabled={importingRegularExcel}
+                          onClick={() => regularFileRef.current?.click()}
+                          className="w-fit flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                        >
+                          <FiUploadCloud size={13} />
+                          {importingRegularExcel ? "Reading..." : "Upload Excel"}
+                        </button>
+                        <span className="text-[9px] text-slate-400">
+                          Same Item Number/Title/Quantity/Unit of Measure columns as a BOQ file - rows are added to
+                          the list below, still fully editable.
+                        </span>
+                      </div>
+                    </>
                   ) : (
                     <>
                       <input

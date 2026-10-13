@@ -33,14 +33,17 @@ function pick(row: Record<string, any>, aliases: string[]): string {
   return "";
 }
 
-/** Parses a fetched BOQ Detail Document (see app/api/gem-bids/fetch-documents) into its line items. */
-export function parseBoqXlsx(buffer: Buffer): BoqItem[] {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return [];
-  const worksheet = workbook.Sheets[sheetName];
-  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-
+// Split out from parseBoqXlsx below so a Regular Bid's "Upload Excel"
+// import (see app/dashboard/gem-bids/document-maker/page.tsx) can reuse the
+// exact same column-matching, from rows it already parsed itself - GeM's
+// own "export items" download (what that button is for) uses this same
+// Item Number/Title/Description/Quantity/Unit of Measure/Consignee
+// ID/Delivery Period column set, just without a Rate column either, same
+// as a BOQ Detail Document. parseBoqXlsx reads with XLSX's Node Buffer
+// "buffer" type (server-side fetch-and-parse); a client-side File read
+// comes in as an ArrayBuffer under XLSX's "array" type instead, so the
+// sheet_to_json → column-matching step is the only part shareable.
+export function mapRowsToBoqItems(rows: Record<string, any>[]): BoqItem[] {
   return rows
     .map((row) => ({
       itemNumber: pick(row, COLUMN_ALIASES.itemNumber),
@@ -52,6 +55,16 @@ export function parseBoqXlsx(buffer: Buffer): BoqItem[] {
       deliveryPeriod: pick(row, COLUMN_ALIASES.deliveryPeriod),
     }))
     .filter((item) => item.itemNumber || item.itemTitle);
+}
+
+/** Parses a fetched BOQ Detail Document (see app/api/gem-bids/fetch-documents) into its line items. */
+export function parseBoqXlsx(buffer: Buffer): BoqItem[] {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const worksheet = workbook.Sheets[sheetName];
+  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+  return mapRowsToBoqItems(rows);
 }
 
 /**

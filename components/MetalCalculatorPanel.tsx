@@ -11,12 +11,19 @@ const round3 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 // page (app/dashboard/metal-calculator/page.tsx, which just adds the Back
 // button/page chrome around this) and the Header's quick-access popup, the
 // same split already used for Urgent Tasks and GeM Login Setup.
+type CalcMode = "lengthToWeight" | "weightToLength";
+
 export default function MetalCalculatorPanel() {
   const [metal, setMetal] = useState(METALS[0]);
   const [shape, setShape] = useState(METAL_SHAPES[METALS[0]][0]);
   const [unit, setUnit] = useState<Unit>("mm");
   const [dims, setDims] = useState<Record<string, string>>({});
   const [length, setLength] = useState("");
+  // Weight -> Length is the reverse lookup: "I have 25 kg of this bar, how
+  // many meters is that" - a separate input rather than overloading the
+  // read-only result card, so typing in it never fights the Length field.
+  const [calcMode, setCalcMode] = useState<CalcMode>("lengthToWeight");
+  const [weightInput, setWeightInput] = useState("");
 
   const def = SHAPES[shape];
 
@@ -34,9 +41,14 @@ export default function MetalCalculatorPanel() {
       return { error: "Dimensions galat hain — ID/Wall/Thickness check karo (e.g. Inner Dia Outer Dia se chhoti honi chahiye)." };
     }
     const kgPerM = area * DENSITIES[metal];
+
+    if (calcMode === "weightToLength") {
+      const wt = parseFloat(weightInput);
+      return { kgPerM, total: null, lengthFromWeight: isNaN(wt) || wt <= 0 ? null : wt / kgPerM };
+    }
     const len = parseFloat(length);
-    return { kgPerM, total: isNaN(len) || len <= 0 ? null : kgPerM * len };
-  }, [metal, unit, dims, length, def]);
+    return { kgPerM, total: isNaN(len) || len <= 0 ? null : kgPerM * len, lengthFromWeight: null };
+  }, [metal, unit, dims, length, weightInput, calcMode, def]);
 
   const changeMetal = (m: string) => {
     setMetal(m);
@@ -123,18 +135,53 @@ export default function MetalCalculatorPanel() {
           ))}
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Length (meter)</label>
-          <input
-            type="number"
-            min="0"
-            step="any"
-            value={length}
-            onChange={(e) => setLength(e.target.value)}
-            placeholder="Total length for the full weight"
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500"
-          />
+        <div className="flex gap-2">
+          {([
+            ["lengthToWeight", "Length → Weight"],
+            ["weightToLength", "Weight → Length"],
+          ] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setCalcMode(mode)}
+              className={`flex-1 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest border transition-colors ${
+                calcMode === mode
+                  ? "bg-emerald-600 border-emerald-600 text-white"
+                  : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+
+        {calcMode === "lengthToWeight" ? (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Length (meter)</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={length}
+              onChange={(e) => setLength(e.target.value)}
+              placeholder="Total length for the full weight"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Total Weight (kg)</label>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={weightInput}
+              onChange={(e) => setWeightInput(e.target.value)}
+              placeholder="Known weight - how many meters is it"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 text-sm font-bold text-slate-700 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
@@ -148,12 +195,22 @@ export default function MetalCalculatorPanel() {
                 {result ? round3(result.kgPerM) : "—"} <span className="text-xs font-bold text-slate-400">kg/m</span>
               </span>
             </div>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-              <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider block">Total Weight</span>
-              <span className="text-xl font-black text-emerald-800 block mt-1">
-                {result?.total != null ? round3(result.total) : "—"} <span className="text-xs font-bold text-emerald-600">kg</span>
-              </span>
-            </div>
+            {calcMode === "lengthToWeight" ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider block">Total Weight</span>
+                <span className="text-xl font-black text-emerald-800 block mt-1">
+                  {result?.total != null ? round3(result.total) : "—"} <span className="text-xs font-bold text-emerald-600">kg</span>
+                </span>
+              </div>
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider block">Length</span>
+                <span className="text-xl font-black text-emerald-800 block mt-1">
+                  {result?.lengthFromWeight != null ? round3(result.lengthFromWeight) : "—"}{" "}
+                  <span className="text-xs font-bold text-emerald-600">meter</span>
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
