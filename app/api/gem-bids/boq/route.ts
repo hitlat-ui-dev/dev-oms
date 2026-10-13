@@ -6,12 +6,17 @@ import { parseBoqXlsx, normalizeItemKey } from "@/lib/documentMaker/boqEngine";
 
 const DB_NAME = "dev_oms_db";
 
-// GET ?bidId= — parses the bid's fetched BOQ Detail Document (see
-// /api/gem-bids/fetch-documents) into its line items, merges in any rate
-// (plus the base rate/margin % it was built from, if it was) already saved
-// for THIS bid (reopening a bid you've part-filled before), and attaches a
-// rate suggestion per item from gem_bid_item_rate_history - the directory
-// of rates saved against other bids, keyed by a normalized item title (see
+// GET ?bidId= — for a BOQ bid (bidType !== "regular", the default), parses
+// the bid's fetched BOQ Detail Document (see /api/gem-bids/fetch-documents)
+// into its line items. For a Regular Bid (bidType === "regular" - no BOQ
+// file at all, items were typed in by hand instead - see
+// app/dashboard/gem-bids/document-maker/page.tsx's Fill Rates panel),
+// there's nothing to parse: the already-saved boqRates themselves ARE the
+// item list, returned as-is. Either way, every item gets merged with any
+// rate (plus the base rate/margin % it was built from, if it was) already
+// saved for THIS bid (reopening a bid you've part-filled before), and a
+// rate suggestion from gem_bid_item_rate_history - the directory of rates
+// saved against other bids, keyed by a normalized item title (see
 // boqEngine.ts's normalizeItemKey), updated every time
 // /api/gem-bids/boq/save runs. A brand-new item with no history match
 // simply gets no suggestion.
@@ -29,45 +34,75 @@ export async function GET(req: Request) {
     if (!bid) {
       return NextResponse.json({ error: "Bid not found" }, { status: 404 });
     }
-    if (!bid.boqDetailDoc?.fileKey) {
-      return NextResponse.json({ error: "No BOQ Detail Document fetched for this bid yet" }, { status: 400 });
+
+    let items: any[];
+
+    if (bid.bidType === "regular") {
+      const itemKeys = (bid.boqRates || []).map((r: any) => normalizeItemKey(r.itemTitle));
+      const historyDocs =
+        itemKeys.length > 0
+          ? await db.collection("gem_bid_item_rate_history").find({ itemKey: { $in: itemKeys } }).toArray()
+          : [];
+      const historyByKey = new Map(historyDocs.map((h: any) => [h.itemKey, h]));
+
+      items = (bid.boqRates || []).map((r: any) => {
+        const history = historyByKey.get(normalizeItemKey(r.itemTitle));
+        return {
+          itemNumber: r.itemNumber,
+          itemTitle: r.itemTitle || "",
+          itemDescription: "",
+          quantity: r.quantity || "",
+          unit: r.unit || "",
+          consigneeId: "",
+          deliveryPeriod: "",
+          rate: r.rate || "",
+          baseRate: r.baseRate || "",
+          marginPercent: r.marginPercent || "",
+          suggestedRate: history?.rate || "",
+          suggestedFromBidNo: history?.bidNo || "",
+        };
+      });
+    } else {
+      if (!bid.boqDetailDoc?.fileKey) {
+        return NextResponse.json({ error: "No BOQ Detail Document fetched for this bid yet" }, { status: 400 });
+      }
+
+      const boqBytes = await getFileFromR2(bid.boqDetailDoc.fileKey);
+      const parsedItems = parseBoqXlsx(boqBytes);
+      if (parsedItems.length === 0) {
+        return NextResponse.json({ error: "Couldn't find any rows in this BOQ file" }, { status: 422 });
+      }
+
+      const savedRates: Record<string, string> = {};
+      const savedBaseRates: Record<string, string> = {};
+      const savedMarginPercents: Record<string, string> = {};
+      for (const r of bid.boqRates || []) {
+        if (!r.itemNumber) continue;
+        savedRates[r.itemNumber] = r.rate;
+        if (r.baseRate) savedBaseRates[r.itemNumber] = r.baseRate;
+        if (r.marginPercent) savedMarginPercents[r.itemNumber] = r.marginPercent;
+      }
+
+      const itemKeys = parsedItems.map((it) => normalizeItemKey(it.itemTitle || it.itemDescription));
+      const historyDocs =
+        itemKeys.length > 0
+          ? await db.collection("gem_bid_item_rate_history").find({ itemKey: { $in: itemKeys } }).toArray()
+          : [];
+      const historyByKey = new Map(historyDocs.map((h: any) => [h.itemKey, h]));
+
+      items = parsedItems.map((it) => {
+        const key = normalizeItemKey(it.itemTitle || it.itemDescription);
+        const history = historyByKey.get(key);
+        return {
+          ...it,
+          rate: savedRates[it.itemNumber] || "",
+          baseRate: savedBaseRates[it.itemNumber] || "",
+          marginPercent: savedMarginPercents[it.itemNumber] || "",
+          suggestedRate: history?.rate || "",
+          suggestedFromBidNo: history?.bidNo || "",
+        };
+      });
     }
-
-    const boqBytes = await getFileFromR2(bid.boqDetailDoc.fileKey);
-    const parsedItems = parseBoqXlsx(boqBytes);
-    if (parsedItems.length === 0) {
-      return NextResponse.json({ error: "Couldn't find any rows in this BOQ file" }, { status: 422 });
-    }
-
-    const savedRates: Record<string, string> = {};
-    const savedBaseRates: Record<string, string> = {};
-    const savedMarginPercents: Record<string, string> = {};
-    for (const r of bid.boqRates || []) {
-      if (!r.itemNumber) continue;
-      savedRates[r.itemNumber] = r.rate;
-      if (r.baseRate) savedBaseRates[r.itemNumber] = r.baseRate;
-      if (r.marginPercent) savedMarginPercents[r.itemNumber] = r.marginPercent;
-    }
-
-    const itemKeys = parsedItems.map((it) => normalizeItemKey(it.itemTitle || it.itemDescription));
-    const historyDocs =
-      itemKeys.length > 0
-        ? await db.collection("gem_bid_item_rate_history").find({ itemKey: { $in: itemKeys } }).toArray()
-        : [];
-    const historyByKey = new Map(historyDocs.map((h: any) => [h.itemKey, h]));
-
-    const items = parsedItems.map((it) => {
-      const key = normalizeItemKey(it.itemTitle || it.itemDescription);
-      const history = historyByKey.get(key);
-      return {
-        ...it,
-        rate: savedRates[it.itemNumber] || "",
-        baseRate: savedBaseRates[it.itemNumber] || "",
-        marginPercent: savedMarginPercents[it.itemNumber] || "",
-        suggestedRate: history?.rate || "",
-        suggestedFromBidNo: history?.bidNo || "",
-      };
-    });
 
     return NextResponse.json({ items });
   } catch (error: any) {

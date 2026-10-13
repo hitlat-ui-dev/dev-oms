@@ -108,6 +108,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       title: message.title || "GeM Bid Exporter",
       message: message.body || "",
       priority: 2,
+      // Chrome auto-dismisses a plain notification after a few seconds -
+      // easy to miss a sync's finish/fail summary if you're not looking
+      // right then. requireInteraction keeps it on screen until the user
+      // explicitly dismisses or clicks it.
+      requireInteraction: true,
     });
     sendResponse({ ok: true });
     return true;
@@ -234,12 +239,25 @@ pollAndMaybeFetchBidDocuments();
 const NO_PROGRESS_STALE_MS = 10 * 60 * 1000; // 10 minutes
 
 async function clearOrphanedClaimIfAny() {
-  const claimData = await chrome.storage.local.get([CLAIMED_RUN_KEY, LAST_PROGRESS_KEY]);
-  const claim = claimData[CLAIMED_RUN_KEY];
-  if (!claim) return;
+  const data = await chrome.storage.local.get([CLAIMED_RUN_KEY, LAST_PROGRESS_KEY, CITY_BATCH_KEY]);
+  const claim = data[CLAIMED_RUN_KEY];
+  const batch = data[CITY_BATCH_KEY];
+  // batch.running stuck true with CLAIMED_RUN_KEY already gone (or never
+  // set - e.g. a batch stalled before this staleness tracking even
+  // shipped) used to never get cleared at all: the old version of this
+  // function bailed out at the very top whenever there was no claim to
+  // look at, regardless of what state CITY_BATCH_KEY was actually left in.
+  // pollAndMaybeStartAutoSync's own "already driving a batch" guard reads
+  // CITY_BATCH_KEY.running, not the claim - so a batch stuck like that
+  // silently blocked every future Start Sync (even a brand-new one)
+  // forever, with nothing left anywhere to ever unstick it. Both pieces of
+  // state are checked and cleared independently below for exactly that
+  // reason.
+  const batchRunning = !!(batch && batch.running);
+  if (!claim && !batchRunning) return;
 
   const claimedAt = typeof claim === "object" && claim ? claim.claimedAt : 0;
-  const lastProgressAt = claimData[LAST_PROGRESS_KEY] || 0;
+  const lastProgressAt = data[LAST_PROGRESS_KEY] || 0;
   // The more recent of the two - freshly claimed (city-list resolution,
   // navigating the tab, etc. all take a few seconds before the first real
   // progress tick) is given the same grace period a genuinely stalled
@@ -251,13 +269,28 @@ async function clearOrphanedClaimIfAny() {
 
   if (tabs.length > 0 && !tooOld) return; // plausibly still being driven - leave it alone
 
-  console.warn("[GeM Bid Exporter] clearing an orphaned sync claim (no GeM tab left to drive it, or claim too old):", claim);
-  await chrome.storage.local.remove(CLAIMED_RUN_KEY);
-  const cbData = await chrome.storage.local.get(CITY_BATCH_KEY);
-  const batch = cbData[CITY_BATCH_KEY];
-  if (batch && batch.running) {
+  console.warn(
+    "[GeM Bid Exporter] clearing orphaned sync state (no GeM tab left to drive it, or no progress in a while):",
+    { claim, batchRunning }
+  );
+  if (claim) await chrome.storage.local.remove(CLAIMED_RUN_KEY);
+  if (batchRunning) {
+    const lastPhase = batch.lastScanPhaseLabel ? ` (last seen at ${batch.lastScanPhaseLabel})` : "";
     batch.running = false;
     await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+    // This clears silently otherwise - the same freeze the user already
+    // can't tell apart from "nothing's wrong, just slow" without this. A
+    // notification here is what actually answers "why did it stop", not
+    // just unsticking it quietly and hoping the next Start Sync/Keep-Resume
+    // click is noticed as having started working again.
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "GeM Bid Sync was stuck - reset",
+      message: `No progress for a while${lastPhase}, so this run was reset. Click Start Sync or Keep/Resume to continue.`,
+      priority: 2,
+      requireInteraction: true,
+    });
   }
 }
 
@@ -408,6 +441,7 @@ async function pollAndMaybeStartAutoSync() {
         title: "GeM Bid Sync couldn't start",
         message: `Couldn't load the city list for ${state}. Open the extension popup, click "Load All Cities From GeM" once, then try Start Sync again.`,
         priority: 2,
+        requireInteraction: true,
       });
       return;
     }

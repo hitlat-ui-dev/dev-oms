@@ -47,6 +47,12 @@ export async function POST(req: Request) {
       quantity: String(it.quantity || "").trim(),
       baseRate: String(it.baseRate || "").trim(),
       marginPercent: String(it.marginPercent || "").trim(),
+      // Only ever meaningful for a Regular Bid (see ../route.ts) - a BOQ
+      // bid's unit always comes fresh from the re-parsed file on reload, so
+      // this is unused (but harmless to store) for that case. A Regular
+      // Bid has no file to re-derive it from, so it has to round-trip
+      // through here like every other manually-typed field.
+      unit: String(it.unit || "").trim(),
     }));
 
     await db.collection("gem_bids").updateOne({ _id: new ObjectId(bidId) }, { $set: { boqRates, boqRatesUpdatedAt: now } });

@@ -28,7 +28,7 @@ export async function OPTIONS() {
 // ?light=1 returns just {_id, bidNo, items, currentSection, address,
 // departmentNameAndAddress, boqDetailDoc, selectedPartyIds, selectedPartyId,
 // bidLink, buyerAddedBidSpecificAtcUrl, bidToRaEnabled, raQualificationRule,
-// typeOfBid, evaluationMethod, emdAmount, bidEndDateTime} - the Bid Rate page's bid picker
+// typeOfBid, evaluationMethod, emdAmount, bidEndDateTime, bidType} - the Bid Rate page's bid picker
 // needs enough to populate/filter its dropdown, guess the matched institute
 // client-side (see lib/gemBids/instituteMatch.ts), know whether a BOQ
 // source file already exists for a bid, auto-pick the firm a bid's party
@@ -79,6 +79,7 @@ export async function GET(req: Request) {
                 evaluationMethod: 1,
                 emdAmount: 1,
                 bidEndDateTime: 1,
+                bidType: 1,
               },
             }
           : undefined

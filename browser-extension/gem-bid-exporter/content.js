@@ -24,6 +24,14 @@
   // search form, whichever this site actually does.
   const CITY_BATCH_KEY = "gemCityBatch";
 
+  // Last "[city] page N — M bids scanned" phase string sent to the OMS
+  // (see autoScanAllPages below) - kept here too, not just posted to the
+  // server, so a stall/error notification (runBatchStepIfActive's catch
+  // block) can say exactly where it was ("stopped at page N") without a
+  // round trip, even for a failure that isn't a thrown exception at all
+  // (a stall this was last updated well before NO_PROGRESS_STALE_MS ago).
+  let lastScanPhaseLabel = "";
+
   // Item-keyword filters, read fresh from storage by filterRowsByItemKeywords()
   // below and applied to every row before it's saved anywhere - manual scans,
   // city batches, AND OMS-triggered city batches (an omsRunId-tagged batch -
@@ -247,9 +255,30 @@
     return false;
   }
 
+  // Plain fetch() has no timeout of its own - a single stalled request
+  // (network drop, GeM's server going quiet mid-response) used to hang
+  // here forever with no error ever thrown, which froze the entire page
+  // loop in scanRowsWithPdf/autoScanAllPages indefinitely: no exception
+  // means no error notification, no notification means nothing ever
+  // retries or reports it, just "Syncing... page N" sitting unchanged
+  // forever (this is what a run stuck mid-scan with no error actually
+  // looked like). AbortController forces every fetch below to fail
+  // cleanly - and therefore actually reach the catch block and return a
+  // real status - instead of waiting on a connection that may never
+  // resolve either way.
+  async function fetchWithTimeout(url, options, timeoutMs = 25000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function fetchAndParsePdf(url, labels) {
     try {
-      const resp = await fetch(url, { credentials: "include" });
+      const resp = await fetchWithTimeout(url, { credentials: "include" });
       if (!resp.ok) return { status: "http_" + resp.status, fields: {}, pdfUrl: "" };
       const ct = (resp.headers.get("content-type") || "").toLowerCase();
 
@@ -270,7 +299,7 @@
         html.match(/href=["']([^"']*(?:showbiddocument|ShowBidDocument|showBidDocument)[^"']*)["']/i);
       if (m) {
         const pdfUrl = new URL(m[1], url).href;
-        const resp2 = await fetch(pdfUrl, { credentials: "include" });
+        const resp2 = await fetchWithTimeout(pdfUrl, { credentials: "include" });
         const ct2 = (resp2.headers.get("content-type") || "").toLowerCase();
         if (resp2.ok && ct2.includes("pdf")) {
           const buf2 = await resp2.arrayBuffer();
@@ -284,7 +313,8 @@
       }
       return { status: "not_pdf", fields: {}, pdfUrl: "" };
     } catch (e) {
-      return { status: "error: " + String((e && e.message) || e), fields: {}, pdfUrl: "" };
+      const timedOut = e && e.name === "AbortError";
+      return { status: "error: " + (timedOut ? "timed out" : String((e && e.message) || e)), fields: {}, pdfUrl: "" };
     }
   }
 
@@ -785,10 +815,18 @@
             : "";
         const omsRowsData = await chrome.storage.local.get(OMS_BATCH_ROWS_KEY);
         const rowCount = (omsRowsData[OMS_BATCH_ROWS_KEY] || []).length;
+        lastScanPhaseLabel = `${cityLabel}page ${pageNum} — ${rowCount} bids scanned`;
+        // Persisted onto the batch itself (not just this module's in-memory
+        // variable) so background.js's own staleness check - a completely
+        // separate execution context, it only ever sees chrome.storage, never
+        // this file's variables - can report it if this batch stalls out
+        // with no exception ever thrown (see clearOrphanedClaimIfAny).
+        cb.lastScanPhaseLabel = lastScanPhaseLabel;
+        await chrome.storage.local.set({ [CITY_BATCH_KEY]: cb });
         await sendToBackground("GEM_BID_SYNC_PROGRESS", {
           runId: omsRunId,
           percent: Math.min(90, pageNum * 10),
-          phase: `${cityLabel}page ${pageNum} — ${rowCount} bids scanned`,
+          phase: lastScanPhaseLabel,
         });
       }
 
@@ -929,9 +967,10 @@
             // whether to just click Start Sync again (it'll re-scan from
             // city 1, but bidNo-keyed dedup means nothing already applied
             // gets duplicated) rather than wondering what, if anything, made it in.
+            const pageInfo = lastScanPhaseLabel ? ` (last seen at ${lastScanPhaseLabel})` : "";
             notify(
               "GeM Bid Sync failed",
-              `Stopped after ${doneCount}/${total} cities (${emptyCount} empty) — ${msg}`
+              `Stopped after ${doneCount}/${total} cities (${emptyCount} empty)${pageInfo} — ${msg}`
             );
           }
         }

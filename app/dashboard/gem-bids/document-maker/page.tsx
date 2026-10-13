@@ -67,6 +67,7 @@ interface GemBid {
   evaluationMethod?: string;
   emdAmount?: string;
   bidEndDateTime?: string;
+  bidType?: "regular" | "boq";
 }
 
 interface BoqItem {
@@ -399,6 +400,29 @@ function DocumentMakerPageInner() {
 
   const selectedBid = useMemo(() => bids.find((b) => b._id === selectedBidId) || null, [bids, selectedBidId]);
 
+  // "boq" (GeM gave a BOQ Detail Document to upload/parse - the original,
+  // still-default flow) or "regular" (built straight off a catalog Item
+  // Link, no BOQ file at all - items are typed in by hand instead, see the
+  // Fill Rates panel below). Derived straight from the bid itself, not a
+  // separate piece of state, so toggling it (setBidType below, which
+  // patches `bids` in place) and switching bids both just fall out of this
+  // the same way everything else already keyed off selectedBid does.
+  const bidType: "regular" | "boq" = selectedBid?.bidType === "regular" ? "regular" : "boq";
+
+  const setBidType = async (type: "regular" | "boq") => {
+    if (!selectedBidId) return;
+    setBids((prev) => prev.map((b) => (b._id === selectedBidId ? { ...b, bidType: type } : b)));
+    try {
+      await fetch("/api/gem-bids/bid-type", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidId: selectedBidId, bidType: type }),
+      });
+    } catch (err) {
+      console.error("Failed to save bid type", err);
+    }
+  };
+
   // Computed once for every bid (not just the selected one, and not just
   // the eligible-for-picking ones - a deep-linked bidId from Final Rates
   // can point at a bid outside that list) so the Bid combobox's dropdown
@@ -570,10 +594,11 @@ function DocumentMakerPageInner() {
   // Once a BOQ source file is known to exist for the selected bid (either
   // already fetched by the extension, or just uploaded below), load its
   // items + any already-saved rates automatically - no separate "load"
-  // click needed.
+  // click needed. A Regular Bid has no file to wait on at all - its saved
+  // items (if any) are loaded the moment it's selected.
   useEffect(() => {
-    if (hasBoqDocument && selectedBidId) loadBoqItems();
-  }, [hasBoqDocument, selectedBidId, loadBoqItems]);
+    if (selectedBidId && (hasBoqDocument || bidType === "regular")) loadBoqItems();
+  }, [hasBoqDocument, selectedBidId, bidType, loadBoqItems]);
 
   const uploadBoqFile = async (file: File) => {
     if (!selectedBidId) return;
@@ -618,6 +643,36 @@ function DocumentMakerPageInner() {
     } finally {
       setUploadingSpec(false);
     }
+  };
+
+  // Regular Bid items (see bidType above) have no source file to parse
+  // from - the user builds the list by hand instead.
+  const addRegularItem = () => {
+    setBoqItems((prev) => [
+      ...prev,
+      {
+        itemNumber: `r${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+        itemTitle: "",
+        itemDescription: "",
+        quantity: "",
+        unit: "",
+        consigneeId: "",
+        deliveryPeriod: "",
+        baseRate: "",
+        marginPercent: "",
+        rate: "",
+        suggestedRate: "",
+        suggestedFromBidNo: "",
+      },
+    ]);
+  };
+
+  const removeRegularItem = (itemNumber: string) => {
+    setBoqItems((prev) => prev.filter((it) => it.itemNumber !== itemNumber));
+  };
+
+  const updateRegularItemField = (itemNumber: string, field: "itemTitle" | "quantity" | "unit", value: string) => {
+    setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, [field]: value } : it)));
   };
 
   const updateBoqRate = (itemNumber: string, rate: string) => {
@@ -711,6 +766,7 @@ function DocumentMakerPageInner() {
             quantity: it.quantity,
             baseRate: it.baseRate,
             marginPercent: it.marginPercent,
+            unit: it.unit,
           })),
         }),
       });
@@ -920,12 +976,12 @@ function DocumentMakerPageInner() {
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-100">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                  <FiCheckSquare className="text-amber-600" size={14} /> Fill BOQ Rates
+                  <FiCheckSquare className="text-amber-600" size={14} /> Fill Rates
                 </h3>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Upload the bid&apos;s BOQ Detail Document (CSV or Excel, as downloaded from GeM) to fill in rates per
-                  item, save them against this bid, and download the rate-filled file back out. Saved rates are kept
-                  here for reopening and changing later, and also feed suggestions for the same item on other bids.
+                  {bidType === "regular"
+                    ? "A Regular Bid (built off a catalog Item Link, no BOQ file) - add items by hand below and fill in rates. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."
+                    : "Upload the bid's BOQ Detail Document (CSV or Excel, as downloaded from GeM) to fill in rates per item, save them against this bid, and download the rate-filled file back out. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."}
                 </p>
               </div>
               {!selectedBidId ? (
@@ -934,30 +990,57 @@ function DocumentMakerPageInner() {
                 </div>
               ) : (
                 <div className="p-5 flex flex-col gap-3">
-                  <input
-                    ref={boqFileRef}
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) uploadBoqFile(f);
-                      e.target.value = "";
-                    }}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      disabled={uploadingBoq}
-                      onClick={() => boqFileRef.current?.click()}
-                      className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
-                    >
-                      <FiUploadCloud size={13} />
-                      {uploadingBoq ? "Uploading..." : hasBoqDocument ? "Replace BOQ File" : "Upload BOQ File"}
-                    </button>
-                    {hasBoqDocument && (
-                      <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
-                    )}
+                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
+                    {(["boq", "regular"] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setBidType(t)}
+                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
+                          bidType === t ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        {t === "boq" ? "BOQ Bid" : "Regular Bid"}
+                      </button>
+                    ))}
                   </div>
+
+                  {bidType === "regular" ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={addRegularItem}
+                        className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                      >
+                        <FiPlus size={13} /> Add Item
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        ref={boqFileRef}
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadBoqFile(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          disabled={uploadingBoq}
+                          onClick={() => boqFileRef.current?.click()}
+                          className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
+                        >
+                          <FiUploadCloud size={13} />
+                          {uploadingBoq ? "Uploading..." : hasBoqDocument ? "Replace BOQ File" : "Upload BOQ File"}
+                        </button>
+                        {hasBoqDocument && (
+                          <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                        )}
+                      </div>
+                    </>
+                  )}
 
                   <input
                     ref={specFileRef}
@@ -1013,7 +1096,11 @@ function DocumentMakerPageInner() {
                     </div>
                   ) : boqItems.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-6">
-                      {hasBoqDocument ? "No items found in this BOQ." : "Upload a BOQ file for this bid to fill rates."}
+                      {bidType === "regular"
+                        ? 'No items yet - click "Add Item" above to start.'
+                        : hasBoqDocument
+                        ? "No items found in this BOQ."
+                        : "Upload a BOQ file for this bid to fill rates."}
                     </p>
                   ) : (
                     <>
@@ -1025,18 +1112,111 @@ function DocumentMakerPageInner() {
                               <th className="py-2 px-2 text-left">Item Title</th>
                               <th className="py-2 px-2 text-left">Qty</th>
                               <th className="py-2 px-2 text-left">Unit</th>
-                              <th className="py-2 px-2 text-left">Delivery</th>
+                              {bidType === "boq" && <th className="py-2 px-2 text-left">Delivery</th>}
                               <th className="py-2 px-2 text-left w-28">Base Rate</th>
                               <th className="py-2 px-2 text-left w-20">%</th>
                               <th className="py-2 px-2 text-left w-32">Rate</th>
                               <th className="py-2 px-2 text-right">Total</th>
+                              {bidType === "regular" && <th className="py-2 px-2 text-center w-10"></th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {boqItems.map((it) => {
+                            {boqItems.map((it, idx) => {
                               const qty = parseFloat(it.quantity) || 0;
                               const rate = parseFloat(it.rate) || 0;
                               const total = qty * rate;
+                              if (bidType === "regular") {
+                                return (
+                                  <tr key={it.itemNumber}>
+                                    <td className="py-2 px-2 text-slate-500">{idx + 1}</td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="text"
+                                        value={it.itemTitle}
+                                        onChange={(e) => updateRegularItemField(it.itemNumber, "itemTitle", e.target.value)}
+                                        placeholder="Item name"
+                                        className="w-full min-w-[160px] border border-slate-200 rounded px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        value={it.quantity}
+                                        onChange={(e) => updateRegularItemField(it.itemNumber, "quantity", e.target.value)}
+                                        placeholder="Qty"
+                                        className="w-20 border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="text"
+                                        value={it.unit}
+                                        onChange={(e) => updateRegularItemField(it.itemNumber, "unit", e.target.value)}
+                                        placeholder="Unit"
+                                        className="w-20 border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        value={it.baseRate}
+                                        onChange={(e) => updateBoqBaseRate(it.itemNumber, e.target.value)}
+                                        placeholder="Base Rate"
+                                        className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        value={it.marginPercent}
+                                        onChange={(e) => updateBoqMarginPercent(it.itemNumber, e.target.value)}
+                                        placeholder="%"
+                                        className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        value={it.rate}
+                                        onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
+                                        placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
+                                        className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                      {it.suggestedRate && (
+                                        <button
+                                          type="button"
+                                          onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
+                                          className="text-[9px] text-amber-700 underline mt-0.5"
+                                          title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
+                                        >
+                                          Use {it.suggestedRate}
+                                        </button>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-bold text-slate-700 whitespace-nowrap">
+                                      {total ? total.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+                                    </td>
+                                    <td className="py-2 px-2 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => removeRegularItem(it.itemNumber)}
+                                        className="text-slate-400 hover:text-rose-600 transition-colors"
+                                        title="Remove item"
+                                      >
+                                        <FiTrash2 size={13} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              }
                               return (
                                 <tr key={it.itemNumber}>
                                   <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
@@ -1098,12 +1278,16 @@ function DocumentMakerPageInner() {
                           </tbody>
                           <tfoot>
                             <tr className="border-t-2 border-slate-800">
-                              <td colSpan={8} className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700">
+                              <td
+                                colSpan={bidType === "regular" ? 7 : 8}
+                                className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700"
+                              >
                                 Grand Total
                               </td>
                               <td className="py-2 px-2 text-right font-black text-slate-900 whitespace-nowrap">
                                 {boqGrandTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                               </td>
+                              {bidType === "regular" && <td></td>}
                             </tr>
                           </tfoot>
                         </table>
@@ -1114,13 +1298,15 @@ function DocumentMakerPageInner() {
                             Download ready
                           </a>
                         )}
-                        <button
-                          onClick={exportBoq}
-                          disabled={boqItems.length === 0}
-                          className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
-                        >
-                          Download Filled BOQ
-                        </button>
+                        {bidType === "boq" && (
+                          <button
+                            onClick={exportBoq}
+                            disabled={boqItems.length === 0}
+                            className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
+                          >
+                            Download Filled BOQ
+                          </button>
+                        )}
                         <button
                           onClick={saveBoqRates}
                           disabled={savingBoq || boqItems.length === 0}
