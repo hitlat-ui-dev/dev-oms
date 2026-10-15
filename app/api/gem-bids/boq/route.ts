@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 import { getFileFromR2 } from "@/lib/cloudflareR2";
 import { parseBoqXlsx, normalizeItemKey } from "@/lib/documentMaker/boqEngine";
+import { parseSpecificationPdf } from "@/lib/documentMaker/specEngine";
 
 const DB_NAME = "dev_oms_db";
 
@@ -73,6 +74,23 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Couldn't find any rows in this BOQ file" }, { status: 422 });
       }
 
+      // Specification Document (uploaded separately - see the Fill Rates
+      // panel's own Upload button) has no Item Number column of its own,
+      // but its row order and Sr No both line up 1:1 with the BOQ's own
+      // Item Number (same underlying GeM item list) - see specEngine.ts's
+      // own comment for how its table is actually read off the PDF. A bid
+      // with no Specification Document uploaded, or one specEngine
+      // couldn't make sense of, just gets no specification/unit override
+      // per item below - the same table as always, nothing lost.
+      const specByItemNumber = new Map<string, { specification: string; unit: string }>();
+      if (bid.specificationDoc?.fileKey) {
+        const specBytes = await getFileFromR2(bid.specificationDoc.fileKey);
+        const specRows = await parseSpecificationPdf(specBytes);
+        for (const row of specRows) {
+          if (row.srNo) specByItemNumber.set(row.srNo, { specification: row.specification, unit: row.unit });
+        }
+      }
+
       const savedRates: Record<string, string> = {};
       const savedBaseRates: Record<string, string> = {};
       const savedMarginPercents: Record<string, string> = {};
@@ -93,8 +111,15 @@ export async function GET(req: Request) {
       items = parsedItems.map((it) => {
         const key = normalizeItemKey(it.itemTitle || it.itemDescription);
         const history = historyByKey.get(key);
+        const spec = specByItemNumber.get(it.itemNumber);
         return {
           ...it,
+          // Spec's own unit, when found, is preferred over the BOQ file's -
+          // in practice they've matched in every sample seen so far, but
+          // the spec is the more detailed of the two sources (e.g. "NOS
+          // EACH" vs a plain "NOS") so it wins when both exist.
+          unit: spec?.unit || it.unit,
+          specification: spec?.specification || "",
           rate: savedRates[it.itemNumber] || "",
           baseRate: savedBaseRates[it.itemNumber] || "",
           marginPercent: savedMarginPercents[it.itemNumber] || "",

@@ -83,6 +83,10 @@ interface BoqItem {
   rate: string;
   suggestedRate: string;
   suggestedFromBidNo: string;
+  // From the bid's separately-uploaded Specification Document, matched in
+  // by Item Number server-side (see /api/gem-bids/boq's GET) - blank for a
+  // bid with none uploaded, or a Regular Bid (no Specification concept).
+  specification?: string;
 }
 
 // Rate = Base Rate marked up by Margin % - recomputed live whenever either
@@ -1297,8 +1301,11 @@ function DocumentMakerPageInner() {
                               return (
                                 <tr key={it.itemNumber}>
                                   <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
-                                  <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px]" title={it.itemDescription}>
-                                    {it.itemTitle}
+                                  <td className="py-2 px-2 max-w-[260px]" title={it.itemDescription}>
+                                    <div className="font-bold text-slate-700">{it.itemTitle}</div>
+                                    {it.specification && (
+                                      <div className="text-[10px] font-normal text-slate-400 mt-0.5">{it.specification}</div>
+                                    )}
                                   </td>
                                   <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.quantity}</td>
                                   <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
