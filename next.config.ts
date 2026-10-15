@@ -22,6 +22,13 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/document-maker/atc": ["./node_modules/pdfjs-dist/legacy/build/**"],
     "/api/document-maker/bundle": ["./node_modules/pdfjs-dist/legacy/build/**"],
+    // specEngine.ts (Specification Document parsing - see
+    // /api/gem-bids/boq) dynamically imports pdfjs-dist the same way, so it
+    // hits this exact same missing-worker failure without being listed
+    // here too - silently, in its case, since parseSpecificationPdf
+    // catches and logs rather than throwing, so a bid just came back with
+    // every specification blank instead of an obvious error.
+    "/api/gem-bids/boq": ["./node_modules/pdfjs-dist/legacy/build/**"],
   },
 };
 
