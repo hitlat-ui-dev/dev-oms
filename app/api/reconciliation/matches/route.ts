@@ -16,6 +16,8 @@ import {
   isHighConfidenceMatch,
   filterBillsByCutoffDate,
   comboSignature,
+  parseDateToSortable,
+  buildConfirmedDatesBySeller,
   SellerForMatching,
   InstituteCandidate,
 } from "@/lib/reconciliation/matchingEngine";
@@ -36,6 +38,11 @@ async function connectMongoose() {
 // page's "Run Matching" button.
 export const maxDuration = 60;
 
+// How many pending bulkWrite ops accumulate before being flushed early (see
+// the flush inside generateSuggestions' main loop) - bounds both memory and
+// how much work a mid-run timeout could still lose.
+const GENERATE_FLUSH_BATCH_SIZE = 150;
+
 // Builds (or refreshes, if still pending) a suggested match row for every credited
 // transaction across the given statements that doesn't already have a final
 // (confirmed/rejected) match on file.
@@ -46,9 +53,21 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
   const existing: any[] = await db
     .collection("bank_reconciliation_matches")
     .find(firmCode ? { firmCode } : {})
-    .project({ transactionKey: 1, status: 1, _id: 1, createdAt: 1, rejectedBillIds: 1 })
+    .project({ transactionKey: 1, status: 1, _id: 1, createdAt: 1, rejectedBillIds: 1, rejectedComboSignatures: 1 })
     .toArray();
   const existingByKey = new Map(existing.map((m: any) => [m.transactionKey, m]));
+
+  // Same-date tie-breaker lookup for scoreInstituteCandidates - built ONCE
+  // here (across every firm, not just this run's) instead of queried per
+  // candidate per ambiguous transaction inside it; that per-candidate query
+  // was slow enough in production to blow through Vercel's 60s function
+  // timeout on the all-firms Run Matching request. Confirmed live.
+  const confirmedForDateLookup = await db
+    .collection("bank_reconciliation_matches")
+    .find({ status: "confirmed" })
+    .project({ sellerId: 1, transactionDate: 1 })
+    .toArray();
+  const confirmedDatesBySeller = buildConfirmedDatesBySeller(confirmedForDateLookup);
 
   const ops: any[] = [];
 
@@ -102,6 +121,7 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
           creditedAmount: t.credit,
           transactionDate: t.date,
           firmCode: statement.firmCode,
+          confirmedDatesBySeller,
         });
         const [top, second] = scored;
         const clearWinner = !second || top.score - second.score > AMBIGUITY_SCORE_MARGIN;
@@ -266,6 +286,17 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
         ops.push({
           insertOne: { document: { ...doc, createdAt: new Date() } },
         });
+      }
+
+      // Flushed periodically rather than only once at the very end - a
+      // function killed by its own timeout partway through a large run
+      // would otherwise lose every bit of work done so far, not just what
+      // didn't finish (confirmed live: an all-firms Run Matching request
+      // hit Vercel's 60s FUNCTION_INVOCATION_TIMEOUT and silently discarded
+      // everything, including statements/transactions already fully scored).
+      if (ops.length >= GENERATE_FLUSH_BATCH_SIZE) {
+        await db.collection("bank_reconciliation_matches").bulkWrite(ops);
+        ops.length = 0;
       }
     }
   }

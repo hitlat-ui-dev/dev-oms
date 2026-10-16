@@ -358,6 +358,23 @@ export const AMBIGUITY_SCORE_MARGIN = 60;
 // exact combo matches for unrelated same-amount transactions.
 const SAME_DATE_CONFIRMED_BOOST = 70;
 
+// Builds the sellerId -> {confirmed credit dates, as sortable ints} index
+// scoreInstituteCandidates' same-date tie-breaker reads from. Called ONCE
+// per Run Matching pass (not once per candidate per ambiguous transaction -
+// see scoreInstituteCandidates' confirmedDatesBySeller param for why that
+// mattered).
+export function buildConfirmedDatesBySeller(confirmed: { sellerId: any; transactionDate?: string }[]): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  for (const cm of confirmed) {
+    const sortable = parseDateToSortable(cm.transactionDate);
+    if (!sortable) continue;
+    const key = String(cm.sellerId);
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key)!.add(sortable);
+  }
+  return map;
+}
+
 /**
  * Scores each candidate institute by (a) whether the credited amount fits one of
  * its open bills/combinations and (b) whether the payment date falls near its
@@ -368,7 +385,22 @@ const SAME_DATE_CONFIRMED_BOOST = 70;
 export async function scoreInstituteCandidates(
   db: Db,
   candidates: InstituteCandidate[],
-  { creditedAmount, transactionDate, firmCode }: { creditedAmount: number; transactionDate?: string; firmCode?: string }
+  {
+    creditedAmount,
+    transactionDate,
+    firmCode,
+    confirmedDatesBySeller,
+  }: {
+    creditedAmount: number;
+    transactionDate?: string;
+    firmCode?: string;
+    // Precomputed once per Run Matching pass (see buildConfirmedDatesBySeller)
+    // instead of queried per candidate here - that per-candidate query was
+    // slow enough in production to blow through Vercel's 60s function
+    // timeout on the all-firms Run Matching request, silently discarding
+    // the entire run's work since nothing gets written until the very end.
+    confirmedDatesBySeller?: Map<string, Set<number>>;
+  }
 ): Promise<ScoredInstituteCandidate[]> {
   const txnDateSortable = parseDateToSortable(transactionDate);
   const txnDate = sortableToDate(txnDateSortable);
@@ -417,17 +449,8 @@ export async function scoreInstituteCandidates(
         }
       }
 
-      let sameDateConfirmedElsewhere = false;
-      if (txnDateValid) {
-        const confirmedForSeller = await db
-          .collection("bank_reconciliation_matches")
-          .find({ sellerId: String(c.sellerId), status: "confirmed" })
-          .project({ transactionDate: 1 })
-          .toArray();
-        sameDateConfirmedElsewhere = confirmedForSeller.some(
-          (cm: any) => parseDateToSortable(cm.transactionDate) === txnDateSortable
-        );
-      }
+      const sameDateConfirmedElsewhere =
+        txnDateValid && !!confirmedDatesBySeller?.get(String(c.sellerId))?.has(txnDateSortable);
 
       const amountScore = isExactFit ? 100 : amountFit ? 15 : 0;
       const score =
