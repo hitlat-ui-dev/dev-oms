@@ -359,6 +359,10 @@ export default function ReconciliationPage() {
   // tweak a selection doesn't lose what was already chosen.
   const [ledgerSelectedIds, setLedgerSelectedIds] = useState<Set<string>>(new Set());
   const [runningMatching, setRunningMatching] = useState(false);
+  // "firm X of N" while an all-firms Run Matching is working through the
+  // list one request at a time - null outside of that (single-firm runs
+  // don't need it, they're already one request).
+  const [runningMatchingProgress, setRunningMatchingProgress] = useState<string | null>(null);
   const [detailsFor, setDetailsFor] = useState<Match | null>(null);
   const [detailsBills, setDetailsBills] = useState<BillLineDetail[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -486,17 +490,34 @@ export default function ReconciliationPage() {
   // Matching used to re-run automatically inside every fetchMatches() call,
   // which meant just opening this page re-scanned every statement against
   // every seller. It's now only triggered here, explicitly.
+  //
+  // One request covering every firm at once got big enough to blow through
+  // the server's own time limit (confirmed live in production -
+  // FUNCTION_INVOCATION_TIMEOUT, "Matching run failed", repeatably) once
+  // there was enough data across every firm's statements. Split into one
+  // request per firm instead when no single firm is selected - each firm's
+  // own data is comfortably small enough on its own, so this is the fix
+  // regardless of any one request's internal efficiency, and it'll keep
+  // working as more firms/statements get added over time.
   const handleRunMatching = async () => {
     setRunningMatching(true);
     try {
-      const res = await fetch("/api/reconciliation/matches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate", firmCode: firmFilter || undefined }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Matching run failed");
+      const firmCodes = firmFilter
+        ? [firmFilter]
+        : [...new Set(companies.map((c) => c.firmCode).filter(Boolean))];
+      if (firmCodes.length === 0) throw new Error("Firms haven't loaded yet - try again in a moment");
+      for (let i = 0; i < firmCodes.length; i++) {
+        const code = firmCodes[i];
+        if (firmCodes.length > 1) setRunningMatchingProgress(`${i + 1}/${firmCodes.length}: ${code}`);
+        const res = await fetch("/api/reconciliation/matches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "generate", firmCode: code }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(`${code}: ${data?.error || "Matching run failed"}`);
+        }
       }
       fetchMatches();
       fetchCorrectionAlerts();
@@ -504,6 +525,7 @@ export default function ReconciliationPage() {
       alert(err.message || "Matching run failed");
     } finally {
       setRunningMatching(false);
+      setRunningMatchingProgress(null);
     }
   };
 
@@ -1095,7 +1117,7 @@ export default function ReconciliationPage() {
                 className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2 px-4 text-[11px] font-black uppercase tracking-wide transition-colors"
               >
                 <FiRefreshCw size={12} className={runningMatching ? "animate-spin" : ""} />
-                {runningMatching ? "Running..." : "Run Matching"}
+                {runningMatching ? runningMatchingProgress || "Running..." : "Run Matching"}
               </button>
             </div>
           </div>
