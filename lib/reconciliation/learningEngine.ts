@@ -6,6 +6,40 @@ const MAX_GAP_SAMPLES = 20;
 // These hooks operate on a live (non-lean) Mongoose Seller document so callers
 // can `.save()` it once after learning has been applied.
 
+// A confirmed/rejected match often shares an institute with other matches in
+// the same bulk action, and the UI fires those concurrently - each one loads
+// the same Seller doc, mutates it in memory, and saves, so whichever save()
+// lands second sees a stale version and fails outright (Mongoose
+// VersionError: "No matching document found for id ... version ..."). The
+// payment/match write itself is unaffected either way - this only protects
+// the Seller learning side-effect. Confirmed live on a 45-match bulk confirm
+// where several shared an institute (9 of them failed this way). Retries by
+// re-fetching the CURRENT doc and re-applying the mutation on top of IT
+// (rather than the stale, already-mutated in-memory copy), so a retried save
+// reflects both the other request's change and this one, instead of either
+// silently losing one of them or failing the whole confirm outright.
+// `mutate` returning `false` means nothing changed - skip the save entirely
+// rather than writing a no-op (or retrying one).
+async function saveSellerWithRetry(
+  seller: any,
+  mutate: (seller: any) => boolean | void,
+  maxAttempts = 5
+): Promise<void> {
+  let current = seller;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const changed = mutate(current);
+    if (changed === false) return;
+    try {
+      await current.save();
+      return;
+    } catch (err: any) {
+      if (err?.name !== "VersionError" || attempt === maxAttempts - 1) throw err;
+      current = await current.constructor.findById(current._id);
+      if (!current) return;
+    }
+  }
+}
+
 interface FeedbackContext {
   firmId?: string;
   firmCode?: string;
@@ -67,20 +101,22 @@ export async function learnFromManualMatch(
   ctx: FeedbackContext
 ): Promise<string[]> {
   const candidates = extractKeywords(ctx.transactionDescription);
-  const existingKeywords = new Set(
-    (seller.statementDescriptionName || []).map((k: string) => k.trim().toLowerCase())
-  );
 
-  let added = false;
-  for (const keyword of candidates) {
-    if (existingKeywords.has(keyword.toLowerCase())) continue;
-    seller.statementDescriptionName = seller.statementDescriptionName || [];
-    seller.statementDescriptionName.push(keyword);
-    seller.aliasMeta = seller.aliasMeta || [];
-    seller.aliasMeta.push({ keyword, confidence: 1, lastUsed: new Date(), source: "learned" });
-    added = true;
-  }
-  if (added) await seller.save();
+  await saveSellerWithRetry(seller, (s) => {
+    const existingKeywords = new Set(
+      (s.statementDescriptionName || []).map((k: string) => k.trim().toLowerCase())
+    );
+    let added = false;
+    for (const keyword of candidates) {
+      if (existingKeywords.has(keyword.toLowerCase())) continue;
+      s.statementDescriptionName = s.statementDescriptionName || [];
+      s.statementDescriptionName.push(keyword);
+      s.aliasMeta = s.aliasMeta || [];
+      s.aliasMeta.push({ keyword, confidence: 1, lastUsed: new Date(), source: "learned" });
+      added = true;
+    }
+    return added;
+  });
 
   await MatchFeedbackLog.create({
     firmId: ctx.firmId,
@@ -109,34 +145,34 @@ export async function reinforceOnConfirm(
     clusterOrderDates?: string[];
   }
 ): Promise<void> {
-  if (ctx.matchedKeyword) {
-    seller.aliasMeta = seller.aliasMeta || [];
-    const alias = seller.aliasMeta.find(
-      (a: any) => (a.keyword || "").trim().toLowerCase() === ctx.matchedKeyword!.trim().toLowerCase()
-    );
-    if (alias) {
-      alias.confidence += 1;
-      alias.lastUsed = new Date();
-    } else {
-      // First time this manual-seed keyword led to a real confirmed match
-      seller.aliasMeta.push({
-        keyword: ctx.matchedKeyword,
-        confidence: 2,
-        lastUsed: new Date(),
-        source: "manual_seed",
-      });
+  await saveSellerWithRetry(seller, (s) => {
+    if (ctx.matchedKeyword) {
+      s.aliasMeta = s.aliasMeta || [];
+      const alias = s.aliasMeta.find(
+        (a: any) => (a.keyword || "").trim().toLowerCase() === ctx.matchedKeyword!.trim().toLowerCase()
+      );
+      if (alias) {
+        alias.confidence += 1;
+        alias.lastUsed = new Date();
+      } else {
+        // First time this manual-seed keyword led to a real confirmed match
+        s.aliasMeta.push({
+          keyword: ctx.matchedKeyword,
+          confidence: 2,
+          lastUsed: new Date(),
+          source: "manual_seed",
+        });
+      }
     }
-  }
 
-  if (ctx.deductionType) {
-    updateDeductionProfile(seller, ctx.deductionType, ctx.deductionAmount || 0, ctx.billAmount || 0);
-  }
+    if (ctx.deductionType) {
+      updateDeductionProfile(s, ctx.deductionType, ctx.deductionAmount || 0, ctx.billAmount || 0);
+    }
 
-  if (ctx.clusterOrderDates && ctx.clusterOrderDates.length >= 2) {
-    updateClusterProfile(seller, ctx.clusterOrderDates);
-  }
-
-  await seller.save();
+    if (ctx.clusterOrderDates && ctx.clusterOrderDates.length >= 2) {
+      updateClusterProfile(s, ctx.clusterOrderDates);
+    }
+  });
 
   await MatchFeedbackLog.create({
     firmId: ctx.firmId,
@@ -160,8 +196,9 @@ export async function learnFromDeductionCorrection(
   seller: any,
   ctx: FeedbackContext & { suggestedType?: string | null; correctedType: DeductionType }
 ): Promise<void> {
-  updateDeductionProfile(seller, ctx.correctedType, ctx.deductionAmount || 0, ctx.billAmount || 0);
-  await seller.save();
+  await saveSellerWithRetry(seller, (s) => {
+    updateDeductionProfile(s, ctx.correctedType, ctx.deductionAmount || 0, ctx.billAmount || 0);
+  });
 
   await MatchFeedbackLog.create({
     firmId: ctx.firmId,
@@ -201,16 +238,15 @@ export async function learnFromRejection(
   // excludes - just deprioritizes slightly in future scoring), since
   // confidence only affects ranking among candidates, not whether one
   // appears at all.
-  if (ctx.matchedKeyword && ctx.isAmbiguous) {
+  await saveSellerWithRetry(seller, (s) => {
+    if (!ctx.matchedKeyword || !ctx.isAmbiguous) return false;
     const keyword = ctx.matchedKeyword.trim();
-    seller.aliasMeta = seller.aliasMeta || [];
-    const alias = seller.aliasMeta.find(
+    s.aliasMeta = s.aliasMeta || [];
+    const alias = s.aliasMeta.find(
       (a: any) => (a.keyword || "").trim().toLowerCase() === keyword.toLowerCase()
     );
     if (alias) alias.confidence = Math.max(0, alias.confidence - 2);
-  }
-
-  await seller.save();
+  });
 
   await MatchFeedbackLog.create({
     firmId: ctx.firmId,
