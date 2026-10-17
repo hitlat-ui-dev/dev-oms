@@ -419,17 +419,24 @@ export async function scoreInstituteCandidates(
       const singleMatch = findAmountMatch(openBills, creditedAmount);
       const comboMatch = singleMatch ? null : findCombinationMatch(openBills, creditedAmount);
       const amountFit = !!(singleMatch || comboMatch);
-      // An EXACT match (combo search here is always exact-sum; a single
-      // match is exact when matchType is "exact") is strong evidence - two
-      // institutes can coincidentally share a keyword, but essentially never
-      // also coincidentally owe the exact same precise amount. A "deduction"
-      // single match is much weaker: it only means some bill's shortfall
-      // happens to land in a plausible TDS/Kasar percentage band, which
-      // several unrelated bills can coincidentally do, especially for small
-      // amounts. Confirmed live: a true exact ₹480 match lost the "clear
-      // winner" margin to a same-pool ~3%-short ₹495 "deduction" match,
-      // because flat amountFit scoring treated them as equally strong.
-      const isExactFit = !!comboMatch || singleMatch?.matchType === "exact";
+      // A TRUE exact match (the matched bill/combo total equals the credited
+      // amount to within a rupee of rounding - OVERPAY_ROUNDING_BUFFER, not
+      // the full search tolerance) is strong evidence - two institutes can
+      // coincidentally share a keyword, but essentially never also
+      // coincidentally owe the exact same precise amount. Anything else -
+      // a "deduction" single match, OR a combo that only landed within the
+      // broader ±tolerance search window without actually summing to the
+      // credited amount - is much weaker: a combo payment can never
+      // legitimately total MORE than what was actually received unless a
+      // deduction explains the gap, so a few-rupee-off "near match" is only
+      // as trustworthy as a guessed deduction, not a real exact fit.
+      // Confirmed live twice: a true exact ₹480 single match lost the clear-
+      // winner margin to a same-pool ~3%-short ₹495 "deduction" match, and a
+      // true exact ₹12,400 combo tied against a different institute's
+      // ₹12,404 combo that only fit because of search tolerance slack - both
+      // because flat amountFit scoring treated every "fits" case the same.
+      const matchedTotal = singleMatch ? singleMatch.remainingAmount : comboMatch ? comboMatch.totalAmount : null;
+      const isExactFit = matchedTotal !== null && Math.abs(matchedTotal - creditedAmount) <= OVERPAY_ROUNDING_BUFFER;
       const matchedBillNos = singleMatch
         ? singleMatch.bills.map((b) => b.orderNo)
         : comboMatch
