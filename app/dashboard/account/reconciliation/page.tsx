@@ -13,6 +13,7 @@ import {
   FiAlertTriangle,
   FiLayers,
   FiFileText,
+  FiSearch,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { buildClusters, OrderCluster } from "@/lib/reconciliation/clusterEngine";
@@ -376,6 +377,11 @@ export default function ReconciliationPage() {
   const [selectedUnresolvedIds, setSelectedUnresolvedIds] = useState<Set<string>>(new Set());
   const [bulkTagValue, setBulkTagValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Filters the Unmatched Transactions table by description or any
+  // candidate/assigned institute name - this list is long enough (hundreds
+  // of rows) that finding one specific transaction by scrolling wasn't
+  // practical.
+  const [unresolvedSearch, setUnresolvedSearch] = useState("");
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
@@ -849,7 +855,7 @@ export default function ReconciliationPage() {
 
   const toggleSelectAllUnresolved = () => {
     setSelectedUnresolvedIds((prev) =>
-      prev.size === pendingUnresolved.length ? new Set() : new Set(pendingUnresolved.map((m) => m._id))
+      prev.size === filteredPendingUnresolved.length ? new Set() : new Set(filteredPendingUnresolved.map((m) => m._id))
     );
   };
 
@@ -1047,6 +1053,17 @@ export default function ReconciliationPage() {
   const pendingUnresolved = matches.filter(
     (m) => (m.status === "pending" && (!m.sellerId || m.billIds.length === 0)) || m.status === "rejected"
   );
+  const filteredPendingUnresolved = (() => {
+    const q = unresolvedSearch.trim().toLowerCase();
+    if (!q) return pendingUnresolved;
+    return pendingUnresolved.filter((m) => {
+      if ((m.transactionDescription || "").toLowerCase().includes(q)) return true;
+      if ((m.instituteName || "").toLowerCase().includes(q)) return true;
+      const manualInstitute = manualState[m._id]?.sellerId ? sellerById[manualState[m._id].sellerId]?.instituteName : "";
+      if ((manualInstitute || "").toLowerCase().includes(q)) return true;
+      return (m.ambiguousCandidates || []).some((c) => c.instituteName.toLowerCase().includes(q));
+    });
+  })();
 
   const patternsSeller = patternsFor ? sellerById[patternsFor] : null;
 
@@ -1370,7 +1387,8 @@ export default function ReconciliationPage() {
                     <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                       <FiAlertTriangle className="text-amber-500" size={14} /> {tab === "rejected" ? "Rejected — Pick A Different Bill" : "Unmatched Transactions"}
                       <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
-                        {pendingUnresolved.length}
+                        {filteredPendingUnresolved.length}
+                        {unresolvedSearch.trim() && ` / ${pendingUnresolved.length}`}
                       </span>
                     </h3>
                     <p className="text-[10px] text-slate-400 mt-1">
@@ -1378,6 +1396,25 @@ export default function ReconciliationPage() {
                         ? "The earlier suggestion for these was wrong - pick the correct institute + bill below."
                         : "Assign an institute + bill manually — the description's keyword is learned as a new alias for next time."}
                     </p>
+                  </div>
+                  <div className="relative flex-1 min-w-[220px] max-w-sm">
+                    <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                    <input
+                      type="text"
+                      value={unresolvedSearch}
+                      onChange={(e) => setUnresolvedSearch(e.target.value)}
+                      placeholder="Search description or institute..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 pl-8 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                    />
+                    {unresolvedSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setUnresolvedSearch("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                      >
+                        <FiX size={13} />
+                      </button>
+                    )}
                   </div>
                   {selectedUnresolvedIds.size > 0 && (
                     <div className="flex items-center gap-2">
@@ -1411,9 +1448,9 @@ export default function ReconciliationPage() {
                     </div>
                   )}
                 </div>
-                {pendingUnresolved.length === 0 ? (
+                {filteredPendingUnresolved.length === 0 ? (
                   <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
-                    Nothing unmatched
+                    {unresolvedSearch.trim() ? "No matches for this search" : "Nothing unmatched"}
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -1423,7 +1460,7 @@ export default function ReconciliationPage() {
                           <th className="py-2.5 px-3">
                             <input
                               type="checkbox"
-                              checked={pendingUnresolved.length > 0 && selectedUnresolvedIds.size === pendingUnresolved.length}
+                              checked={filteredPendingUnresolved.length > 0 && selectedUnresolvedIds.size === filteredPendingUnresolved.length}
                               onChange={toggleSelectAllUnresolved}
                               className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                               title="Select all"
@@ -1440,7 +1477,7 @@ export default function ReconciliationPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {pendingUnresolved.map((m) => {
+                        {filteredPendingUnresolved.map((m) => {
                           const man = getManual(m);
                           const bills = openBillsFor(sellerById[man.sellerId]?.instituteName || null, m.firmCode, m.transactionDate);
                           return (
