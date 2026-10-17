@@ -56,6 +56,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       fetch("/api/gem-bids/expire-and-purge", { method: "POST" }).catch((err) =>
         console.error("GeM bid expire-and-purge check failed silently:", err)
       );
+      // Self-throttled to roughly every 2 minutes (see autoDocLinksJob.ts) -
+      // queues a Bid Document fetch for any Bids to Fill/Submitted Bids bid
+      // that doesn't have one, then auto-fetches that bid's own embedded
+      // Specification/BOQ Detail Document links once it does.
+      fetch("/api/gem-bids/auto-doc-links", { method: "POST" }).catch((err) =>
+        console.error("GeM bid auto-doc-links check failed silently:", err)
+      );
     }
   }, [isLoginPage, router]);
 

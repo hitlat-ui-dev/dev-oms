@@ -87,6 +87,16 @@ interface BoqItem {
   // by Item Number server-side (see /api/gem-bids/boq's GET) - blank for a
   // bid with none uploaded, or a Regular Bid (no Specification concept).
   specification?: string;
+  // Real GeM result data (who actually won, at what rate) imported from
+  // the user's own result-scraping extension - see
+  // lib/documentMaker/marketRateEngine.ts. Averaged across however many
+  // past results matched this item by title; min/max diff% is the spread
+  // across those samples (how much lower the winner tended to be than the
+  // rate quoted at the time), not a single fixed number.
+  marketRate?: string;
+  marketRateMinDiff?: number | null;
+  marketRateMaxDiff?: number | null;
+  marketRateSampleCount?: number;
 }
 
 // Rate = Base Rate marked up by Margin % - recomputed live whenever either
@@ -649,6 +659,30 @@ function DocumentMakerPageInner() {
     }
   };
 
+  // Bid Results import (see lib/documentMaker/marketRateEngine.ts) - not
+  // tied to the selected bid at all, unlike every other upload on this
+  // panel: the Excel this reads already names its own bid number
+  // internally, and what it feeds (gem_bid_item_market_rate_history) is
+  // looked up by item title across every bid, not stored against one.
+  const [importingMarketResults, setImportingMarketResults] = useState(false);
+  const marketResultsFileRef = useRef<HTMLInputElement>(null);
+  const importMarketResults = async (file: File) => {
+    setImportingMarketResults(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/gem-bids/market-rates/import", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Import failed");
+      alert(`Imported ${data.importedCount} item rate(s)${data.bidNo ? ` from ${data.bidNo}` : ""}.`);
+      if (selectedBidId && (hasBoqDocument || bidType === "regular")) loadBoqItems(); // refresh suggestions if a bid's already open
+    } catch (err: any) {
+      alert(err.message || "Import failed");
+    } finally {
+      setImportingMarketResults(false);
+    }
+  };
+
   // Regular Bid items (see bidType above) have no source file to parse
   // from - the user builds the list by hand instead.
   const addRegularItem = () => {
@@ -733,6 +767,41 @@ function DocumentMakerPageInner() {
 
   const updateBoqRate = (itemNumber: string, rate: string) => {
     setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, rate } : it)));
+  };
+
+  // Rendered next to the "Use <suggestedRate>" button (our own past quote
+  // for this item) in both the BOQ-bid and Regular-bid tables below - a
+  // second, independent suggestion from real GeM result data (see
+  // marketRateEngine.ts/Import Bid Results above). Averaged across however
+  // many imported results matched this item by title.
+  const renderMarketRateSuggestion = (it: BoqItem) => {
+    if (!it.marketRate) return null;
+    const hasRange = it.marketRateMinDiff != null && it.marketRateMaxDiff != null;
+    // diffPercent (from the imported Excel) is (quoted rate - L1 rate) /
+    // quoted rate * 100 - positive means L1 undercut the quote, negative
+    // means the quote was already below L1. Shown sign-aware rather than
+    // always "lower", since an item can genuinely go either way across
+    // different bids/sellers.
+    let rangeLabel = "";
+    if (hasRange) {
+      const lo = Math.round(it.marketRateMinDiff!);
+      const hi = Math.round(it.marketRateMaxDiff!);
+      const direction = lo + hi >= 0 ? "lower" : "higher";
+      const absLo = Math.abs(lo);
+      const absHi = Math.abs(hi);
+      rangeLabel = absLo === absHi ? `${absLo}% ${direction}` : `${Math.min(absLo, absHi)}–${Math.max(absLo, absHi)}% ${direction}`;
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
+        className="text-[9px] text-purple-700 underline mt-0.5 block"
+        title={`From ${it.marketRateSampleCount} past result(s) - how much lower/higher the winning (L1) rate was than the rate quoted at the time`}
+      >
+        Market L1: {it.marketRate}
+        {rangeLabel ? ` (${rangeLabel})` : ""}
+      </button>
+    );
   };
 
   const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
@@ -1030,15 +1099,39 @@ function DocumentMakerPageInner() {
           {tab === "rate" ? (
             <>
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-              <div className="p-5 border-b border-slate-100">
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                  <FiCheckSquare className="text-amber-600" size={14} /> Fill Rates
-                </h3>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  {bidType === "regular"
-                    ? "A Regular Bid (built off a catalog Item Link, no BOQ file) - add items by hand below and fill in rates. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."
-                    : "Upload the bid's BOQ Detail Document (CSV or Excel, as downloaded from GeM) to fill in rates per item, save them against this bid, and download the rate-filled file back out. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."}
-                </p>
+              <div className="p-5 border-b border-slate-100 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiCheckSquare className="text-amber-600" size={14} /> Fill Rates
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {bidType === "regular"
+                      ? "A Regular Bid (built off a catalog Item Link, no BOQ file) - add items by hand below and fill in rates. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."
+                      : "Upload the bid's BOQ Detail Document (CSV or Excel, as downloaded from GeM) to fill in rates per item, save them against this bid, and download the rate-filled file back out. Saved rates are kept here for reopening and changing later, and also feed suggestions for the same item on other bids."}
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <input
+                    ref={marketResultsFileRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) importMarketResults(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <button
+                    disabled={importingMarketResults}
+                    onClick={() => marketResultsFileRef.current?.click()}
+                    title="Import a Bid Results Excel (from the gem-result-extension) to feed real market L1 rates into suggestions below"
+                    className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3.5 rounded-lg transition-colors"
+                  >
+                    <FiUploadCloud size={12} />
+                    {importingMarketResults ? "Importing..." : "Import Bid Results"}
+                  </button>
+                </div>
               </div>
               {!selectedBidId ? (
                 <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">
@@ -1281,6 +1374,7 @@ function DocumentMakerPageInner() {
                                           Use {it.suggestedRate}
                                         </button>
                                       )}
+                                      {renderMarketRateSuggestion(it)}
                                     </td>
                                     <td className="py-2 px-2 text-right font-bold text-slate-700 whitespace-nowrap">
                                       {total ? total.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
@@ -1352,6 +1446,7 @@ function DocumentMakerPageInner() {
                                         Use {it.suggestedRate}
                                       </button>
                                     )}
+                                    {renderMarketRateSuggestion(it)}
                                   </td>
                                   <td className="py-2 px-2 text-right font-bold text-slate-700 whitespace-nowrap">
                                     {total ? total.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}

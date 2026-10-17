@@ -217,6 +217,18 @@
   // exclude-list always removes a match regardless of include. Both blank
   // is a no-op (returns rows unchanged) so an install that never touches
   // these two popup fields behaves exactly as before this filter existed.
+  // Every OTHER reason a scraped bid doesn't end up in the OMS (category
+  // exclusion, a standing delete tombstone, Submitted-Bids protection) is
+  // already counted server-side, per sync run (see applyImport.ts's
+  // excludedCount/protectedSkippedCount/tombstoneSkippedCount) - this
+  // filter runs entirely client-side, before a row is ever sent to the
+  // server at all, so without tracking it separately there was no way to
+  // tell "genuinely wasn't on GeM" apart from "was on GeM but a Skip-
+  // keyword quietly dropped it" when a bid turned up missing. Reset per
+  // OMS-triggered batch (see runBatchStepIfActive) and read back by
+  // finishOmsBatch to report alongside the sync/apply call.
+  let keywordExcludedThisBatch = [];
+
   async function filterRowsByItemKeywords(rows) {
     const data = await chrome.storage.local.get([INCLUDE_KEYWORDS_KEY, EXCLUDE_KEYWORDS_KEY]);
     const include = parseKeywordList(data[INCLUDE_KEYWORDS_KEY]);
@@ -224,8 +236,15 @@
     if (!include.length && !exclude.length) return rows;
     return rows.filter((row) => {
       const items = (row.items || "").toLowerCase();
-      if (include.length && !include.some((kw) => items.includes(kw))) return false;
-      if (exclude.length && exclude.some((kw) => items.includes(kw))) return false;
+      if (include.length && !include.some((kw) => items.includes(kw))) {
+        keywordExcludedThisBatch.push({ bidNo: row.bidNo, items: row.items, reason: "no include-keyword match" });
+        return false;
+      }
+      const matchedExclude = exclude.find((kw) => items.includes(kw));
+      if (matchedExclude) {
+        keywordExcludedThisBatch.push({ bidNo: row.bidNo, items: row.items, reason: `matched exclude keyword "${matchedExclude}"` });
+        return false;
+      }
       return true;
     });
   }
@@ -590,6 +609,119 @@
     // matches the previous city's by coincidence) rather than failing a
     // search that may actually have succeeded.
     return findBidCards().length > 0;
+  }
+
+  // ---------------------------------------------------------------------
+  // Bid/RA Status lookup (bidplus.gem.gov.in/all-bids) - checks a
+  // Submitted Bid's live status (Active/Technically Qualified/Cancelled/
+  // Technical Evaluation/Financial Evaluation/Awarded etc.), the only way
+  // to see this short of opening the bid individually. Written from a
+  // description + screenshot of this page, not live access to it - if a
+  // step below can't find something, that's the first thing to check
+  // against the real page (open DevTools on bidplus.gem.gov.in/all-bids
+  // and inspect the element in question), same "adjust the matcher, not
+  // the message handler" situation runConsigneeSearch's own comment flags.
+  // ---------------------------------------------------------------------
+
+  // Same label-proximity approach as findSelectByKeywords, for a
+  // <input type="checkbox"> instead of a <select> - used for the "Bid/RA
+  // Status" filter checkbox in the left sidebar, which is what makes the
+  // Status line actually appear in each result card at all.
+  function findCheckboxByLabelKeywords(keywords) {
+    const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+    for (const cb of checkboxes) {
+      let labelText = "";
+      if (cb.id) {
+        const lbl = document.querySelector(`label[for="${CSS.escape(cb.id)}"]`);
+        if (lbl) labelText = lbl.textContent || "";
+      }
+      if (!labelText) {
+        const parentLabel = cb.closest("label");
+        if (parentLabel) labelText = parentLabel.textContent || "";
+      }
+      if (!labelText) {
+        const wrapper = cb.closest("div") || cb.parentElement;
+        if (wrapper) labelText = wrapper.textContent || "";
+      }
+      const norm = (labelText || "").toLowerCase().replace(/\s+/g, " ");
+      if (keywords.some((k) => norm.includes(k))) return cb;
+    }
+    return null;
+  }
+
+  // The search-type selector next to the main search box defaults to
+  // "Contain" - needs switching to "Exact Search" so a bid number search
+  // doesn't just substring-match. Could be a native <select> (tried first,
+  // reusing findSelectByOptionText/selectOptionByText) or a styled
+  // click-to-open dropdown (fallback) depending on how this particular
+  // page template renders it.
+  async function setExactSearchMode() {
+    const select = findSelectByOptionText("exact search");
+    if (select && selectOptionByText(select, "exact search")) return true;
+
+    const isLeaf = (el) => el.children.length === 0;
+    const toggle = Array.from(document.querySelectorAll("button, a, div, span")).find(
+      (el) => isLeaf(el) && /^\s*contain\s*$/i.test(el.textContent || "")
+    );
+    if (toggle) {
+      toggle.click();
+      await sleep(300);
+      const option = Array.from(document.querySelectorAll("li, a, div, span")).find(
+        (el) => isLeaf(el) && /exact search/i.test(el.textContent || "")
+      );
+      if (option) {
+        option.click();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The main bid-number search box near the top of the page (not one of
+  // the left-sidebar filter fields).
+  function findTopSearchInput() {
+    const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
+    return (
+      inputs.find((el) => /search/i.test(el.placeholder || "") || /search/i.test(el.getAttribute("aria-label") || "")) ||
+      inputs.find((el) => /search/i.test([el.id, el.name, el.className].join(" "))) ||
+      null
+    );
+  }
+
+  async function runBidStatusSearch(bidNo) {
+    const statusCheckbox = findCheckboxByLabelKeywords(["bid/ra status", "bid status"]);
+    if (!statusCheckbox) return { ok: false, error: "status_filter_checkbox_not_found" };
+    if (!statusCheckbox.checked) {
+      statusCheckbox.click();
+      await sleep(500);
+    }
+
+    const modeSet = await setExactSearchMode();
+    if (!modeSet) return { ok: false, error: "exact_search_mode_not_found" };
+
+    const searchInput = findTopSearchInput();
+    if (!searchInput) return { ok: false, error: "search_input_not_found" };
+    setInputValue(searchInput, bidNo);
+
+    const searchButton = findSearchButtonNearby(searchInput.closest("form") || searchInput.parentElement || document);
+    if (searchButton) {
+      searchButton.click();
+    } else {
+      searchInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      searchInput.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true, cancelable: true }));
+    }
+
+    const gotResults = await waitForResults(12000, null);
+    if (!gotResults) return { ok: false, error: "no_results_detected" };
+
+    const cards = findBidCards();
+    const card = cards.find((c) => c.bidNo === bidNo) || cards[0];
+    if (!card) return { ok: false, error: "bid_card_not_found" };
+
+    const statusMatch = (card.containerEl.innerText || "").match(/Status\s*:\s*([^\n]+)/i);
+    if (!statusMatch) return { ok: false, error: "status_text_not_found" };
+
+    return { ok: true, status: statusMatch[1].trim() };
   }
 
   // Lists every <select> on the page with enough detail (id/name/class/
@@ -1024,12 +1156,22 @@
       runId,
       rows: rows.map(mapBidRowToOmsSchema),
       userName: userData[OMS_USER_KEY] || "",
+      // See filterRowsByItemKeywords' own comment - the only skip reason
+      // that happens entirely client-side, so it has to be reported
+      // explicitly here rather than falling out of the server's own
+      // per-run counts the way every other skip reason already does.
+      keywordExcludedCount: keywordExcludedThisBatch.length,
+      keywordExcludedSample: keywordExcludedThisBatch.slice(0, 25),
     });
+    keywordExcludedThisBatch = [];
     await chrome.storage.local.remove([OMS_BATCH_ROWS_KEY, CLAIMED_RUN_KEY]);
     const citySummary = totalCities > 1 ? ` across ${totalCities} cities (${emptyCities.length} empty)` : "";
     if (applyResult && applyResult.ok) {
       await setStatus({ scanning: false, lastAction: "city_batch_done", omsApplied: true, omsRowCount: rows.length });
-      notify("GeM Bid Sync finished", `${rows.length} bid(s) sent to the OMS${citySummary}.`);
+      const skippedNote = applyResult.result?.keywordExcludedCount
+        ? ` (${applyResult.result.keywordExcludedCount} skipped by your exclude-keyword list)`
+        : "";
+      notify("GeM Bid Sync finished", `${rows.length} bid(s) sent to the OMS${citySummary}${skippedNote}.`);
     } else {
       const errorMessage = (applyResult && applyResult.error) || "apply failed";
       await setStatus({ scanning: false, lastAction: "city_batch_error", errorMessage });
@@ -1133,6 +1275,22 @@
         try {
           const { selects, inputs } = await listAllSelectsForDebug();
           sendResponse({ ok: true, selects, inputs });
+        } catch (e) {
+          try {
+            sendResponse({ ok: false, error: "exception: " + String((e && e.message) || e) });
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      })();
+      return true;
+    }
+
+    if (msg.action === "RUN_BID_STATUS_SEARCH") {
+      (async () => {
+        try {
+          const result = await runBidStatusSearch(msg.bidNo);
+          sendResponse(result);
         } catch (e) {
           try {
             sendResponse({ ok: false, error: "exception: " + String((e && e.message) || e) });

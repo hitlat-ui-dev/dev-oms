@@ -129,6 +129,39 @@ export async function GET(req: Request) {
       });
     }
 
+    // Market-rate suggestion (see lib/documentMaker/marketRateEngine.ts) -
+    // a second, independent suggestion from real GeM result data imported
+    // via /api/gem-bids/market-rates/import, layered on top of the
+    // suggestedRate above (our own past quote for this item) rather than
+    // replacing it - "what we charged before" and "what actually won" are
+    // both useful context and can disagree.
+    const marketItemKeys = items.map((it) => normalizeItemKey(it.itemTitle)).filter(Boolean);
+    if (marketItemKeys.length > 0) {
+      const marketDocs = await db
+        .collection("gem_bid_item_market_rate_history")
+        .find({ itemKey: { $in: marketItemKeys } })
+        .toArray();
+      const marketByKey = new Map<string, any[]>();
+      for (const d of marketDocs) {
+        const list = marketByKey.get(d.itemKey) || [];
+        list.push(d);
+        marketByKey.set(d.itemKey, list);
+      }
+      items = items.map((it) => {
+        const samples = marketByKey.get(normalizeItemKey(it.itemTitle));
+        if (!samples || samples.length === 0) return it;
+        const avgRate = samples.reduce((sum, s) => sum + s.l1Rate, 0) / samples.length;
+        const diffs = samples.map((s) => s.diffPercent).filter((d) => typeof d === "number" && !Number.isNaN(d));
+        return {
+          ...it,
+          marketRate: String(Math.round(avgRate * 100) / 100),
+          marketRateMinDiff: diffs.length ? Math.min(...diffs) : null,
+          marketRateMaxDiff: diffs.length ? Math.max(...diffs) : null,
+          marketRateSampleCount: samples.length,
+        };
+      });
+    }
+
     return NextResponse.json({ items });
   } catch (error: any) {
     console.error("GeM bid BOQ parse error:", error);

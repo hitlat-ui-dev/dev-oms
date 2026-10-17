@@ -32,7 +32,7 @@ export async function OPTIONS() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { runId, rows, userName, submittedStatusUpdates } = body;
+    const { runId, rows, userName, submittedStatusUpdates, keywordExcludedCount, keywordExcludedSample } = body;
     if (!runId || !ObjectId.isValid(runId) || !Array.isArray(rows)) {
       return NextResponse.json({ error: "runId and rows are required" }, { status: 400, headers: corsHeaders });
     }
@@ -78,12 +78,34 @@ export async function POST(req: Request) {
 
       const statusUpdatedCount = await applySubmittedStatusUpdates(db, submittedStatusUpdates || []);
 
+      // keywordExcludedCount/Sample: the one skip reason that happens
+      // entirely client-side (the extension's own "Skip bids whose Items
+      // contain" filter, before a row is ever sent here at all) - see
+      // content.js's filterRowsByItemKeywords for why this has to be
+      // reported explicitly rather than falling out of applyImport's own
+      // counts the way every other skip reason does. Stored on the run so
+      // "why didn't bid X show up" has a complete answer: excludedCount
+      // (category list) + protectedSkippedCount + tombstoneSkippedCount
+      // (all server-side, from importResult) + this (client-side).
       await syncRunsCollection.updateOne(
         { _id: run._id },
-        { $set: { status: "completed", finishedAt: new Date(), progressPercent: 100, importResult, statusUpdatedCount } }
+        {
+          $set: {
+            status: "completed",
+            finishedAt: new Date(),
+            progressPercent: 100,
+            importResult,
+            statusUpdatedCount,
+            keywordExcludedCount: typeof keywordExcludedCount === "number" ? keywordExcludedCount : 0,
+            keywordExcludedSample: Array.isArray(keywordExcludedSample) ? keywordExcludedSample.slice(0, 25) : [],
+          },
+        }
       );
 
-      return NextResponse.json({ success: true, ...importResult, statusUpdatedCount }, { headers: corsHeaders });
+      return NextResponse.json(
+        { success: true, ...importResult, statusUpdatedCount, keywordExcludedCount: keywordExcludedCount || 0 },
+        { headers: corsHeaders }
+      );
     } catch (applyError: any) {
       console.error("GeM bid sync apply error (mid-apply):", applyError);
       await syncRunsCollection.updateOne(

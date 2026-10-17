@@ -29,6 +29,10 @@ const nextConfig: NextConfig = {
     // catches and logs rather than throwing, so a bid just came back with
     // every specification blank instead of an obvious error.
     "/api/gem-bids/boq": ["./node_modules/pdfjs-dist/legacy/build/**"],
+    // autoDocLinksJob.ts (extractOrderItemLinks) hits the same missing-
+    // worker failure mode - this route is what app/layout.tsx's self-
+    // throttled site-visit job actually calls.
+    "/api/gem-bids/auto-doc-links": ["./node_modules/pdfjs-dist/legacy/build/**"],
   },
 };
 

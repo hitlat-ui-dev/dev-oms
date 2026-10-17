@@ -82,6 +82,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             rows: message.rows,
             userName: message.userName,
             submittedStatusUpdates: [],
+            keywordExcludedCount: message.keywordExcludedCount || 0,
+            keywordExcludedSample: message.keywordExcludedSample || [],
           }),
         });
         const data = await res.json().catch(() => ({}));
@@ -214,10 +216,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === POLL_ALARM_NAME) {
     pollAndMaybeStartAutoSync();
     pollAndMaybeFetchBidDocuments();
+    pollAndMaybeRefreshBidStatuses();
   }
 });
 pollAndMaybeStartAutoSync();
 pollAndMaybeFetchBidDocuments();
+pollAndMaybeRefreshBidStatuses();
 
 // Clearing the claim is content.js's job (finishOmsBatch, or the error/
 // cancel paths in runBatchStepIfActive) - all of which run *inside* the GeM
@@ -616,5 +620,60 @@ async function pollAndMaybeFetchBidDocuments() {
     console.error("[GeM Bid Exporter] bid-document fetch poll failed:", e);
   } finally {
     docFetchInFlight = false;
+  }
+}
+
+// ===== Bid Status refresh (bidplus.gem.gov.in/all-bids) =====
+//
+// The OMS's "Bid Status Refresh" button (Submitted Bids) queues bids via
+// POST /api/gem-bids/refresh-status, same pattern as docFetch above. Unlike
+// every other job here, this one genuinely needs a live page (GeM's status
+// isn't behind a plain fetchable link - see content.js's runBidStatusSearch
+// for the actual search-and-read automation) - a dedicated tab is opened
+// just for this, kept hidden (active: false) per request so it doesn't
+// interrupt whatever the user is doing in their other tabs, and closed
+// again once every claimed bid this round is done.
+let statusRefreshInFlight = false;
+const ALL_BIDS_URL = "https://bidplus.gem.gov.in/all-bids";
+
+async function pollAndMaybeRefreshBidStatuses() {
+  if (statusRefreshInFlight) return;
+  statusRefreshInFlight = true;
+  let tabId = null;
+  try {
+    const apiBase = await getApiBase();
+    const res = await fetch(`${apiBase}/api/gem-bids/refresh-status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const pendingBids = Array.isArray(data.bids) ? data.bids : [];
+    if (pendingBids.length === 0) return;
+
+    const created = await chrome.tabs.create({ url: ALL_BIDS_URL, active: false });
+    tabId = created.id;
+    // A fresh navigation needs both the content script to inject AND
+    // GeM's own client-rendered filters/search box to actually paint
+    // before runBidStatusSearch has anything to find - sendTabMessageWithRetry
+    // below only retries message *delivery*, not DOM readiness, so this
+    // buys that render time up front rather than burning through several
+    // of those retries on a page that genuinely isn't ready yet.
+    await new Promise((r) => setTimeout(r, 2500));
+
+    for (const bid of pendingBids) {
+      let result = await sendTabMessageWithRetry(tabId, { action: "RUN_BID_STATUS_SEARCH", bidNo: bid.bidNo }, 10, 800);
+      const body =
+        result && result.ok
+          ? { bidId: bid._id, status: result.status }
+          : { bidId: bid._id, error: (result && result.error) || "no response from tab" };
+      await fetch(`${apiBase}/api/gem-bids/refresh-status/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.error("[GeM Bid Exporter] bid status refresh poll failed:", e);
+  } finally {
+    if (tabId) chrome.tabs.remove(tabId).catch(() => {});
+    statusRefreshInFlight = false;
   }
 }
