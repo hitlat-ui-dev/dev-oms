@@ -206,11 +206,27 @@
     });
   }
 
+  // raw is either a plain string (the popup's own text box - the user
+  // types "keyword1, keyword2" directly, so splitting on "," is genuinely
+  // what they mean there) or an array (an OMS-triggered run's own
+  // excludeKeywords, stored in Mongo as discrete elements already - see
+  // background.js's pollAndMaybeStartAutoSync). These used to always be
+  // flattened to a comma-joined string before being stored here, then
+  // split right back apart by this same comma - round-tripping fine for
+  // an ordinary keyword, but silently shredding any keyword that itself
+  // contains a real comma (several of GeM's own official category names
+  // do, e.g. "Cleaning, Sanitation and Disinfection Services") into
+  // garbage fragments. One of those fragments turning out to be a bare
+  // "..." (the tail of one keyword glued to another's start) was a real,
+  // confirmed production incident - it matched almost every scraped bid,
+  // since GeM's own listing truncates long item text with "..." too, and
+  // silently excluded thousands of genuinely wanted bids in one sync run.
+  // Storing the array as-is below (no join/re-split) is what actually
+  // fixes it; this isArray branch is what makes that safe to land without
+  // the popup's own comma-separated text box breaking.
   function parseKeywordList(raw) {
-    return (raw || "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
+    const items = Array.isArray(raw) ? raw : (raw || "").split(",");
+    return items.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
   }
 
   // Include-list wins over nothing (blank include = "everything passes"),

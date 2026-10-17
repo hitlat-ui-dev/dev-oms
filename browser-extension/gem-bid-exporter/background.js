@@ -371,7 +371,11 @@ async function pollAndMaybeStartAutoSync() {
       await chrome.storage.local.set({
         [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
         [BID_START_DATE_TO_KEY]: run.dateTo || "",
-        [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords.join(", ") : "",
+        // Stored as the array it already is - see content.js's
+        // parseKeywordList for why joining this into a comma string here
+        // (then splitting it back apart there) was a real bug, not just
+        // unnecessary round-tripping.
+        [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords : [],
       });
       const tabId = await ensureGemTab();
       await chrome.storage.local.set({ [CITY_BATCH_KEY]: { ...existingBatch, running: true } });
@@ -453,7 +457,7 @@ async function pollAndMaybeStartAutoSync() {
     await chrome.storage.local.set({
       [BID_START_DATE_FROM_KEY]: run.dateFrom || "",
       [BID_START_DATE_TO_KEY]: run.dateTo || "",
-      [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords.join(", ") : "",
+      [EXCLUDE_KEYWORDS_KEY]: Array.isArray(run.excludeKeywords) ? run.excludeKeywords : [],
       [CITY_BATCH_KEY]: {
         state,
         cities,
