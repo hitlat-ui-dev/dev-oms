@@ -400,6 +400,16 @@ export default function Header() {
           )}
         </div>
 
+        {/* Tasks - assign / track / follow-up module (separate from the legacy
+            Workspace to-do dropdown above, which stays as-is until Phase 5). */}
+        <Link
+          href="/dashboard/tasks"
+          className="text-[10px] md:text-xs font-black uppercase tracking-wider bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+          title="Tasks"
+        >
+          <FiCheckSquare size={13} /> <span className="hidden sm:inline">Tasks</span>
+        </Link>
+
         {/* GeM Login Setup - opens the same firm-wise credentials manager as
             /dashboard/orders/gem-credentials, but as a popup right next to
             Workspace so it's reachable from every page without navigating

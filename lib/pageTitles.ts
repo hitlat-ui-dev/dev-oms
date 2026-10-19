@@ -32,6 +32,7 @@ const EXACT_TITLES: Record<string, string> = {
   "/dashboard/print-labels": "Print Labels",
   "/dashboard/summary": "Summary",
   "/dashboard/todo-chat": "Chat",
+  "/dashboard/tasks": "Tasks",
   "/dashboard/settings": "Settings",
   "/dashboard/admin/backup": "Backup",
 };
@@ -46,6 +47,7 @@ const PREFIX_TITLES: [string, string][] = [
   ["/dashboard/account", "Account"],
   ["/dashboard/gem-bids", "GeM Bids"],
   ["/dashboard/gem-sync", "GeM Sync"],
+  ["/dashboard/tasks", "Tasks"],
 ];
 
 export function getPageTitle(pathname: string): string {

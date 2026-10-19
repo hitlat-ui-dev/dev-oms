@@ -26,5 +26,9 @@ const userSchema = new mongoose.Schema({
         // Standalone Delivery Challan module (Orders hub) - separate from the
         // order-derived challan download, which rides on order access.
         deliveryChallan: { type: Boolean, default: false },
-    }
+        // Task module: manager role (admin is permissions.boss).
+        taskManager: { type: Boolean, default: false },
+    },
+    // Task module: a manager's team = users whose managerUsername is theirs.
+    managerUsername: { type: String, default: null },
 });

@@ -196,6 +196,29 @@ export async function GET() {
     await gemOrderIntake.createIndex({ disabled: 1, createdAt: -1 });
     indexResults["gem_order_intake"] = ["{ contractNo: 1 } (unique)", "{ disabled: 1, createdAt: -1 }"];
 
+    // Task module (tasks / task_activities / task_followups)
+    const tasks = db.collection("tasks");
+    await tasks.createIndex({ taskNo: 1 }, { unique: true });
+    await tasks.createIndex({ assignee: 1, status: 1, dueAt: 1 });
+    await tasks.createIndex({ assignedBy: 1, status: 1 });
+    await tasks.createIndex({ status: 1, nextFollowUpAt: 1 });
+    await tasks.createIndex({ isDeleted: 1, dueAt: 1 });
+    await tasks.createIndex({ "links.sellerOrderId": 1 });
+    await tasks.createIndex({ "links.bidId": 1 });
+    await tasks.createIndex({ "links.billId": 1 });
+    await tasks.createIndex(
+      { title: "text", description: "text", "links.buyerName": "text", "links.gemOrderNo": "text" },
+      { name: "tasks_text" }
+    );
+    await db.collection("task_activities").createIndex({ taskId: 1, createdAt: -1 });
+    await db.collection("task_followups").createIndex({ taskId: 1 });
+    indexResults["tasks"] = [
+      "{ taskNo: 1 } (unique)", "{ assignee: 1, status: 1, dueAt: 1 }", "{ assignedBy: 1, status: 1 }",
+      "{ status: 1, nextFollowUpAt: 1 }", "{ isDeleted: 1, dueAt: 1 }", "links.* ids", "text index",
+    ];
+    indexResults["task_activities"] = ["{ taskId: 1, createdAt: -1 }"];
+    indexResults["task_followups"] = ["{ taskId: 1 }"];
+
     return NextResponse.json({
       success: true,
       message: "Successfully ensured performance indexes across all MongoDB collections",

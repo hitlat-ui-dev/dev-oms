@@ -8,6 +8,7 @@ import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 const initialState = {
     username: "",
     password: "",
+    managerUsername: "",
     permissions: {
         addSeller: false,
         purchaseReq: false,
@@ -33,6 +34,7 @@ const initialState = {
         gemBids: false,
         generateBill: false,
         deliveryChallan: false,
+        taskManager: false,
     },
 };
 
@@ -69,6 +71,7 @@ const MODULE_GROUPS = [
         title: "🛡️ System & Admin Pages",
         permissions: [
             { key: "boss", label: "Super Admin Bypass (Full Access)" },
+            { key: "taskManager", label: "Task Manager (assign, verify, team tasks)" },
             { key: "users", label: "Settings / User Access Page" },
             { key: "backup", label: "Database JSON Zip Backup" },
             { key: "printLabels", label: "Print Labels Page" },
@@ -186,6 +189,7 @@ export default function ManageUsers() {
         setFormData({
             username: user.username || "",
             password: user.password || "", // Ensure the existing password fills the box
+            managerUsername: user.managerUsername || "",
             permissions: {
                 addSeller: user.permissions?.addSeller || false,
                 purchaseReq: user.permissions?.purchaseReq || false,
@@ -211,6 +215,7 @@ export default function ManageUsers() {
                 gemBids: user.permissions?.gemBids || false,
                 generateBill: user.permissions?.generateBill || false,
                 deliveryChallan: user.permissions?.deliveryChallan || false,
+                taskManager: user.permissions?.taskManager || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -255,6 +260,13 @@ export default function ManageUsers() {
                                 className="p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 required
+                            />
+                            <input
+                                type="text"
+                                placeholder="Task manager username (optional - who manages this user's tasks)"
+                                value={formData.managerUsername || ""}
+                                className="p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 md:col-span-2"
+                                onChange={(e) => setFormData({ ...formData, managerUsername: e.target.value.trim() })}
                             />
                         </div>
 
