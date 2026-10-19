@@ -1,15 +1,16 @@
-import { ObjectId } from "mongodb";
 import { getFileFromR2, uploadFileToR2 } from "@/lib/cloudflareR2";
 import { extractOrderItemLinks } from "@/lib/documentMaker/linkExtractEngine";
 
 const SETTINGS_COLLECTION = "gem_bid_settings";
 const LAST_RUN_KEY = "lastAutoDocLinksJobDate";
 const MIN_INTERVAL_MS = 2 * 60 * 1000;
+const ENQUEUE_BATCH_SIZE = 10;
 const EXTRACT_BATCH_SIZE = 5;
 
 export interface AutoDocLinksJobResult {
   ran: boolean;
   reason?: string;
+  queuedForFetch?: number;
   extracted?: number;
 }
 
@@ -24,39 +25,32 @@ async function fetchPublicDoc(url: string): Promise<{ buffer: Buffer; contentTyp
   }
 }
 
-// POST /api/gem-bids/fetch-documents/bulk — queues a Bid Document fetch
-// (docFetch, same mechanism the Generate ATC button already uses) for
-// exactly the bids the user selected in Bids to Fill/Submitted Bids and
-// clicked "Fetch Documents" for. Deliberately NOT automatic for every bid
-// in those sections (an earlier version of this feature was, and was
-// reverted by request - GeM blocks non-browser requests for the Bid
-// Document itself, so this always costs a real extension round trip per
-// bid; only fetching what was actually asked for keeps that bounded to
-// what the user is actually working on right now).
-export async function enqueueDocFetchForBids(db: any, bidIds: string[]): Promise<{ queuedCount: number }> {
-  const objectIds = bidIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
-  if (objectIds.length === 0) return { queuedCount: 0 };
-
-  const now = new Date();
-  const result = await db.collection("gem_bids").updateMany(
-    { _id: { $in: objectIds }, "docFetch.status": { $nin: ["pending", "fetching"] } },
-    { $set: { docFetch: { status: "pending", requestedAt: now, finishedAt: null, error: null } } }
-  );
-  return { queuedCount: result.modifiedCount || 0 };
-}
-
 /**
  * Self-throttled, site-visit-triggered (see app/layout.tsx), same pattern
- * as runExpireBidsJobIfDue. For any Bids to Fill/Submitted Bids bid whose
- * Bid Document has already been fetched (manually via "Fetch Documents",
- * see enqueueDocFetchForBids above, or Generate ATC) but not yet checked
- * for embedded Specification/BOQ Detail Document links, reads them
- * (extractOrderItemLinks) and fetches+stores those two files directly -
- * mkp.gem.gov.in serves them with no GeM login at all (confirmed: a plain
- * curl, no cookies, returns the real file), so this needs no extension
- * round trip of its own. A bid that already has one set (a manual upload)
- * is never overwritten. Marked checked either way so a bid with no such
- * table (a Regular Bid with no BOQ at all) isn't re-parsed forever.
+ * as runExpireBidsJobIfDue. Automatic for every Bids to Fill/Submitted
+ * Bids bid, by request - an earlier version of this gated it behind a
+ * manual "Fetch Documents" selection, which was reverted: every bid should
+ * already show BOQ Rates/BOQ Specifications the same way a manual upload
+ * always has, with no extra click needed. Two steps each run:
+ *
+ * 1. Queue a Bid Document fetch (docFetch, same mechanism Generate ATC
+ *    already uses) for any bid that doesn't have one yet - GeM blocks
+ *    non-browser requests for the Bid Document itself, so this can only be
+ *    queued here, not fetched directly; the extension's existing
+ *    background worker (already polling for pending docFetch jobs) picks
+ *    it up. A bid that already has its Bid Document (a prior sync already
+ *    queued and fetched it, or Generate ATC did) is never re-queued -
+ *    "already has it" is exactly "has bidLinkDoc.fileKey", so this is
+ *    naturally a no-op for every bid past its first sync.
+ * 2. For any such bid whose Bid Document has since been fetched but not
+ *    yet checked for embedded Specification/BOQ Detail Document links,
+ *    reads them (extractOrderItemLinks) and fetches+stores those two files
+ *    directly - mkp.gem.gov.in serves them with no GeM login at all
+ *    (confirmed: a plain curl, no cookies, returns the real file), so this
+ *    needs no extension round trip of its own. A bid that already has one
+ *    set (a manual upload, or an auto-fetch from an earlier run) is never
+ *    overwritten. Marked checked either way so a bid with no such table (a
+ *    Regular Bid with no BOQ at all) isn't re-parsed forever.
  */
 export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobResult> {
   const now = new Date();
@@ -68,6 +62,26 @@ export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobR
 
   const bidsCollection = db.collection("gem_bids");
   const sections = ["bids_to_fill", "submitted_bids"];
+
+  const toQueue = await bidsCollection
+    .find(
+      {
+        currentSection: { $in: sections },
+        "bidLinkDoc.fileKey": { $exists: false },
+        "docFetch.status": { $nin: ["pending", "fetching"] },
+      },
+      { projection: { _id: 1 } }
+    )
+    .limit(ENQUEUE_BATCH_SIZE)
+    .toArray();
+  let queuedForFetch = 0;
+  if (toQueue.length > 0) {
+    const res = await bidsCollection.updateMany(
+      { _id: { $in: toQueue.map((b: any) => b._id) } },
+      { $set: { docFetch: { status: "pending", requestedAt: now, finishedAt: null, error: null } } }
+    );
+    queuedForFetch = res.modifiedCount || 0;
+  }
 
   const toExtract = await bidsCollection
     .find(
@@ -127,5 +141,5 @@ export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobR
 
   await settingsCollection.updateOne({ key: LAST_RUN_KEY }, { $set: { key: LAST_RUN_KEY, ranAt: now } }, { upsert: true });
 
-  return { ran: true, extracted };
+  return { ran: true, queuedForFetch, extracted };
 }

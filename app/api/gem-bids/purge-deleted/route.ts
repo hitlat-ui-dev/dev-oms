@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
+import { deleteBidDocumentsFromR2 } from "@/lib/gemBids/bidDocCleanup";
 
 const DB_NAME = "dev_oms_db";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -20,8 +21,18 @@ export async function POST() {
     const client = await clientPromise;
     const db = client.db(DB_NAME);
     const cutoff = new Date(Date.now() - SEVEN_DAYS_MS);
+    const bidsCollection = db.collection("gem_bids");
 
-    const result = await db.collection("gem_bids").deleteMany({ deletedAt: { $lte: cutoff } });
+    const toPurge = await bidsCollection
+      .find({ deletedAt: { $lte: cutoff } })
+      .project({ bidLinkDoc: 1, boqDetailDoc: 1, specificationDoc: 1, bidSpecificAtc: 1 })
+      .toArray();
+    if (toPurge.length === 0) {
+      return NextResponse.json({ success: true, purgedCount: 0 });
+    }
+
+    await deleteBidDocumentsFromR2(toPurge);
+    const result = await bidsCollection.deleteMany({ _id: { $in: toPurge.map((b: any) => b._id) } });
 
     return NextResponse.json({ success: true, purgedCount: result.deletedCount || 0 });
   } catch (error: any) {

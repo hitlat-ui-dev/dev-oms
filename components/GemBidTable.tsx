@@ -1,6 +1,17 @@
 "use client";
 import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
-import { FiChevronUp, FiChevronDown, FiChevronLeft, FiChevronRight, FiCornerUpLeft, FiTrash2, FiEdit2, FiX, FiRefreshCw } from "react-icons/fi";
+import {
+  FiChevronUp,
+  FiChevronDown,
+  FiChevronLeft,
+  FiChevronRight,
+  FiCornerUpLeft,
+  FiTrash2,
+  FiEdit2,
+  FiX,
+  FiRefreshCw,
+  FiUploadCloud,
+} from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, RAW_DATA_SECTIONS } from "@/lib/gemBids/columns";
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
 import { guessInstituteForAddress } from "@/lib/gemBids/instituteMatch";
@@ -64,6 +75,12 @@ export interface GemBid {
 // editing is offered starting at Bids to Fill onward, not while a bid is
 // still New/Fetched raw data).
 const EDITABLE_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
+
+// Result (Submitted Bids only) - what actually happened to a submitted
+// bid, tracked separately from Bid Status (GeM's own evaluation-stage
+// text, e.g. "Technical Evaluation") since this is the OMS's own final
+// outcome, set by hand once it's known.
+const BID_RESULT_OPTIONS = ["Bid Won", "Bid Lost", "Bid Cancelled"];
 
 interface Company {
   _id: string;
@@ -297,6 +314,28 @@ export default function GemBidTable({
   const [loadingBoq, setLoadingBoq] = useState(false);
   const [savingBoq, setSavingBoq] = useState(false);
   const [boqExportUrl, setBoqExportUrl] = useState<string | null>(null);
+
+  // Same Bid Results import as document-maker/page.tsx's Fill Rates panel
+  // (see lib/documentMaker/marketRateEngine.ts) - also reachable right
+  // from Submitted Bids, since that's the section this is actually about
+  // (comparing what we quoted against what the bid's result page shows).
+  const [importingMarketResults, setImportingMarketResults] = useState(false);
+  const marketResultsFileRef = useRef<HTMLInputElement>(null);
+  const importMarketResults = async (file: File) => {
+    setImportingMarketResults(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/gem-bids/market-rates/import", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Import failed");
+      alert(`Imported ${data.importedCount} item rate(s)${data.bidNo ? ` from ${data.bidNo}` : ""}.`);
+    } catch (err: any) {
+      alert(err.message || "Import failed");
+    } finally {
+      setImportingMarketResults(false);
+    }
+  };
 
   const openDocPreview = async (bidId: string, kind: "boq" | "spec") => {
     try {
@@ -532,8 +571,9 @@ export default function GemBidTable({
   // useful; reverted to simple single-section visibility by request.
   const PARTY_COL_SECTIONS = new Set<SectionKey>(["bids_to_fill", "submitted_bids"]);
   const showBidStatusCol = !allSectionsMode && currentSectionKey === "submitted_bids";
+  const showBidResultCol = !allSectionsMode && currentSectionKey === "submitted_bids";
   const showPartyCol = !allSectionsMode && PARTY_COL_SECTIONS.has(currentSectionKey);
-  const extraColCount = [showSectionCol, showBidStatusCol, showPartyCol].filter(Boolean).length;
+  const extraColCount = [showSectionCol, showBidStatusCol, showBidResultCol, showPartyCol].filter(Boolean).length;
 
   const dropdownOptions = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -580,6 +620,7 @@ export default function GemBidTable({
       // specially by this table, not scraped data), so it's filtered here
       // rather than in the generic loop below.
       if (filters.tag && b.tag !== filters.tag) return false;
+      if (filters.bidResult && b.bidResult !== filters.bidResult) return false;
       for (const col of BID_COLUMNS) {
         const f = filters[col.key];
         if (!f) continue;
@@ -654,39 +695,6 @@ export default function GemBidTable({
       alert(err.message || "Move failed");
     } finally {
       setBusy(false);
-    }
-  };
-
-  const [fetchingDocs, setFetchingDocs] = useState(false);
-
-  // "Fetch Documents" bulk action (Bids to Fill/Submitted Bids) - queues
-  // just the selected bids' Bid Document fetch, not every bid in the
-  // section (see autoDocLinksJob.ts's own comment for why this is
-  // selection-driven rather than automatic). Once fetched, the embedded
-  // Specification/BOQ Detail Document links get picked up on their own
-  // within a couple of minutes - no further action needed here, so this
-  // only has to queue and report how many actually got queued.
-  const fetchDocumentsForSelected = async (bidNos: string[]) => {
-    if (bidNos.length === 0) return;
-    const bidNoSet = new Set(bidNos);
-    const bidIds = bids.filter((b) => bidNoSet.has(b.bidNo)).map((b) => b._id);
-    if (bidIds.length === 0) return;
-    setFetchingDocs(true);
-    try {
-      const res = await fetch("/api/gem-bids/fetch-documents/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidIds }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to queue document fetch");
-      alert(
-        `Queued ${data.queuedCount} bid(s) for document fetch. BOQ Rates/Specifications will appear here within a few minutes once the extension picks them up.`
-      );
-    } catch (err: any) {
-      alert(err.message || "Failed to queue document fetch");
-    } finally {
-      setFetchingDocs(false);
     }
   };
 
@@ -775,7 +783,7 @@ export default function GemBidTable({
   // record who/when" endpoint rather than several near-identical ones.
   const quickUpdate = async (
     bidNo: string,
-    field: "selectedPartyIds" | "bidStatus",
+    field: "selectedPartyIds" | "bidStatus" | "bidResult",
     value: string | string[]
   ) => {
     setBusy(true);
@@ -819,7 +827,6 @@ export default function GemBidTable({
   const uniformSelectedSection: SectionKey | undefined =
     allSectionsMode && selectedSections.length === 1 ? (selectedSections[0] as SectionKey) : undefined;
   const sendToFromSection = allSectionsMode ? uniformSelectedSection : currentSectionKey;
-  const showFetchDocsButton = sendToFromSection === "bids_to_fill" || sendToFromSection === "submitted_bids";
   const otherSections = !sendToFromSection
     ? []
     : RAW_DATA_SECTIONS_SET.has(sendToFromSection)
@@ -842,16 +849,6 @@ export default function GemBidTable({
       {selectedList.length > 0 && (
         <div className="p-3 bg-blue-50 border-b border-blue-100 rounded-t-2xl flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-black text-blue-700 uppercase">{selectedList.length} selected</span>
-          {showFetchDocsButton && (
-            <button
-              disabled={fetchingDocs}
-              onClick={() => fetchDocumentsForSelected(selectedList)}
-              title="Fetch this bid's BOQ Rates/Specifications from its own Bid Document"
-              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-colors"
-            >
-              {fetchingDocs ? "Queuing..." : "Fetch Documents"}
-            </button>
-          )}
           {otherSections.length > 0 && (
             <>
               <span className="text-[10px] text-blue-400 font-bold uppercase">Send to:</span>
@@ -892,6 +889,31 @@ export default function GemBidTable({
         </div>
       )}
 
+      {!allSectionsMode && currentSectionKey === "submitted_bids" && (
+        <div className="p-3 border-b border-slate-100 flex items-center gap-2">
+          <input
+            ref={marketResultsFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importMarketResults(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            disabled={importingMarketResults}
+            onClick={() => marketResultsFileRef.current?.click()}
+            title="Import a Bid Results Excel (from the gem-result-extension) to feed real market L1 rates into Fill Rates suggestions"
+            className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2 px-3.5 rounded-lg transition-colors"
+          >
+            <FiUploadCloud size={12} />
+            {importingMarketResults ? "Importing..." : "Import Bid Results"}
+          </button>
+        </div>
+      )}
+
       {/* Filters live here, outside the table, so they stay put and legible
           regardless of how far the table itself is scrolled horizontally -
           they used to be a second header row inside the table and scrolled
@@ -920,6 +942,22 @@ export default function GemBidTable({
               ))}
             </select>
           )}
+          {showBidResultCol &&
+            filterField(
+              "Result",
+              <select
+                value={filters.bidResult || ""}
+                onChange={(e) => setFilters((f) => ({ ...f, bidResult: e.target.value }))}
+                className="w-full bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px]"
+              >
+                <option value="">All</option>
+                {BID_RESULT_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            )}
           {filterField(
             "Bid No",
             <input
@@ -1139,6 +1177,7 @@ export default function GemBidTable({
                   </div>
                 </th>
               )}
+              {showBidResultCol && <th className="py-2 px-2 whitespace-nowrap">Result</th>}
               {showPartyCol && <th className="py-2 px-2 whitespace-nowrap">Party</th>}
               {otherColumns.map((col) => (
                 <th key={col.key} className="py-2 px-2 cursor-pointer whitespace-nowrap" onClick={() => toggleSort(col.key)}>
@@ -1244,6 +1283,24 @@ export default function GemBidTable({
                         placeholder="—"
                         className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-32"
                       />
+                    </td>
+                  )}
+                  {showBidResultCol && (
+                    <td className="py-2 px-2">
+                      <select
+                        key={b.bidResult || ""}
+                        defaultValue={b.bidResult || ""}
+                        disabled={busy}
+                        onChange={(e) => quickUpdate(b.bidNo, "bidResult", e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[10px] w-28"
+                      >
+                        <option value="">—</option>
+                        {BID_RESULT_OPTIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                   )}
                   {showPartyCol && (

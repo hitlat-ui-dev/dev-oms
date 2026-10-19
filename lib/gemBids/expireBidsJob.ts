@@ -1,5 +1,6 @@
 import { AUTO_DELETE_EXPIRED_SECTIONS } from "./columns";
 import { parseGemDate } from "./expirySweep";
+import { deleteBidDocumentsFromR2 } from "./bidDocCleanup";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SETTINGS_COLLECTION = "gem_bid_settings";
@@ -76,8 +77,16 @@ export async function runExpireBidsJobIfDue(db: any): Promise<ExpireBidsJobResul
   // protect against re-appearing; the normal sync-vs-existing-doc logic
   // already means a still-live bid just gets re-inserted as new.
   const purgeCutoff = new Date(now.getTime() - SEVEN_DAYS_MS);
-  const purgeResult = await bidsCollection.deleteMany({ expiredAt: { $lte: purgeCutoff } });
-  const purgedCount = purgeResult.deletedCount || 0;
+  const toPurge = await bidsCollection
+    .find({ expiredAt: { $lte: purgeCutoff } })
+    .project({ bidLinkDoc: 1, boqDetailDoc: 1, specificationDoc: 1, bidSpecificAtc: 1 })
+    .toArray();
+  let purgedCount = 0;
+  if (toPurge.length > 0) {
+    await deleteBidDocumentsFromR2(toPurge);
+    const purgeResult = await bidsCollection.deleteMany({ _id: { $in: toPurge.map((b: any) => b._id) } });
+    purgedCount = purgeResult.deletedCount || 0;
+  }
 
   await settingsCollection.updateOne(
     { key: LAST_RUN_KEY },

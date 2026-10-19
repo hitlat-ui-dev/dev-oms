@@ -11,11 +11,12 @@ const DB_NAME = "dev_oms_db";
 // filled under more than one party - split quantities, alternates, etc.);
 // existing docs still carrying selectedPartyId are read as a fallback by
 // GemBidTable.tsx rather than migrated, so this endpoint never needs to.
-const ALLOWED_FIELDS = ["selectedPartyIds", "bidStatus"];
+const ALLOWED_FIELDS = ["selectedPartyIds", "bidStatus", "bidResult"];
 
 // POST: set one workflow field on a bid and record who/when - backs the
-// Party multi-select (Bids to Fill, Submitted Bids) and the Bid Status
-// field (Submitted Bids) in GemBidTable.tsx. body: { bidNo, field, value, changedBy? }
+// Party multi-select (Bids to Fill, Submitted Bids), the Bid Status field
+// (Submitted Bids), and the Result dropdown (Submitted Bids) in
+// GemBidTable.tsx. body: { bidNo, field, value, changedBy? }
 export async function POST(req: Request) {
   try {
     const body = await req.json();

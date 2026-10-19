@@ -636,10 +636,9 @@ function DocumentMakerPageInner() {
   // Specification Document - uploaded separately from the BOQ Excel (GeM
   // shows them as two different downloads on the bid itself). Stored the
   // same way as the BOQ/ATC/Bid Document already are (see KIND_FIELD in
-  // fetch-documents/upload/route.ts). Not parsed/merged into the rate table
-  // yet - that needs a real sample of GeM's own Specification Document PDF
-  // first, same as BOQ parsing did, so this just gets it uploaded and
-  // tracked (✓ loaded) for now.
+  // fetch-documents/upload/route.ts). Parsed and merged into the rate
+  // table's Item Title/Unit columns server-side (see specEngine.ts), on
+  // top of being previewable as-is via "BOQ Specifications" in the table.
   const uploadSpecFile = async (file: File) => {
     if (!selectedBidId) return;
     setUploadingSpec(true);
@@ -656,6 +655,34 @@ function DocumentMakerPageInner() {
       alert(err.message || "Upload failed");
     } finally {
       setUploadingSpec(false);
+    }
+  };
+
+  // "Remove" next to Replace (both BOQ and Specification) - for a wrong
+  // document auto-fetched from the Bid Document's own embedded links (see
+  // autoDocLinksJob.ts) or uploaded by mistake. Doesn't touch
+  // autoDocLinksCheckedAt, so that job never silently re-fetches whatever
+  // was just removed on its own - Upload/Replace is the only way a new one
+  // goes back in, same as any other deliberate action on this page.
+  const [removingDoc, setRemovingDoc] = useState<"boq" | "spec" | null>(null);
+  const removeDocument = async (kind: "boq" | "spec") => {
+    if (!selectedBidId) return;
+    if (!confirm(`Remove the ${kind === "boq" ? "BOQ Detail" : "Specification"} Document from this bid?`)) return;
+    setRemovingDoc(kind);
+    try {
+      const res = await fetch("/api/gem-bids/fetch-documents/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidId: selectedBidId, kind }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to remove document");
+      fetchDocStatus();
+      if (kind === "boq") setBoqItems([]);
+    } catch (err: any) {
+      alert(err.message || "Failed to remove document");
+    } finally {
+      setRemovingDoc(null);
     }
   };
 
@@ -1210,7 +1237,17 @@ function DocumentMakerPageInner() {
                           {uploadingBoq ? "Uploading..." : hasBoqDocument ? "Replace BOQ File" : "Upload BOQ File"}
                         </button>
                         {hasBoqDocument && (
-                          <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                          <>
+                            <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                            <button
+                              disabled={removingDoc === "boq"}
+                              onClick={() => removeDocument("boq")}
+                              title="Remove this BOQ Detail Document"
+                              className="flex items-center gap-1 text-[10px] font-black uppercase text-rose-600 hover:text-rose-800 disabled:opacity-40"
+                            >
+                              <FiTrash2 size={11} /> Remove
+                            </button>
+                          </>
                         )}
                       </div>
                     </>
@@ -1237,7 +1274,17 @@ function DocumentMakerPageInner() {
                       {uploadingSpec ? "Uploading..." : hasSpecDocument ? "Replace Specification Document" : "Upload Specification Document"}
                     </button>
                     {hasSpecDocument && (
-                      <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                      <>
+                        <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                        <button
+                          disabled={removingDoc === "spec"}
+                          onClick={() => removeDocument("spec")}
+                          title="Remove this Specification Document"
+                          className="flex items-center gap-1 text-[10px] font-black uppercase text-rose-600 hover:text-rose-800 disabled:opacity-40"
+                        >
+                          <FiTrash2 size={11} /> Remove
+                        </button>
+                      </>
                     )}
                   </div>
 
