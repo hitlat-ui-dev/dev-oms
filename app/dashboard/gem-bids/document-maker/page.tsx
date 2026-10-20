@@ -160,6 +160,43 @@ interface RateVariantRow {
   variants: { rate: number; diff: number; total: number }[];
 }
 
+// BOQ Rate Variants: unlike the ± Rate Variants above (just a what-if
+// preview), this builds the two actual files needed to submit under
+// multiple seller accounts - a GeM-ready "BOQ-Filled" workbook (same
+// VARIANT 1/2/3 + TOTAL column layout, and the same L1=dark green/
+// L2=light green/L3=blue color coding, as a real reference file the user
+// supplied) and one "gem-offer-price-items" upload file per variant, in
+// GeM's own exact 3-column format. Variant 1 (L1) is always exactly the
+// already-filled Rate column, unchanged; every variant after it is bumped
+// UP only (never down, unlike the ± tool) by a cumulative random amount
+// from the same brackets, so the grand total strictly increases L1 < L2 <
+// L3 by construction - the whole point being that L1 always wins.
+const BOQ_VARIANT_COLORS = ["00B050", "92D050", "00B0F0"]; // L1, L2, L3 - matches the user's own reference file exactly
+function positiveVariantDelta(rate: number): number {
+  const b = bracketForRate(rate);
+  const mag = b.min === b.max ? b.min : b.min + Math.random() * (b.max - b.min);
+  return Math.round(mag * 100) / 100;
+}
+// GeM's own gem-offer-price-items export title-cases each item and
+// appends "∗ :" (confirmed against a real sample file) - replicated
+// exactly so the generated file matches what GeM itself would produce.
+function toGemOfferItemLabel(title: string): string {
+  const titleCased = (title || "").replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  return `${titleCased}∗ :`;
+}
+
+interface BoqVariantRow {
+  itemNumber: string;
+  itemTitle: string;
+  itemDescription: string;
+  quantity: string;
+  unit: string;
+  consigneeId: string;
+  deliveryPeriod: string;
+  rate: number;
+  variants: { rate: number; total: number }[];
+}
+
 interface DownloadResult {
   partCount: number;
   downloads: { fileName: string; url: string }[];
@@ -253,6 +290,16 @@ function DocumentMakerPageInner() {
   // separately uploaded file.
   const [variantCount, setVariantCount] = useState<2 | 3>(2);
   const [rateVariants, setRateVariants] = useState<RateVariantRow[] | null>(null);
+
+  // BOQ Rate Variants - see BoqVariantRow/toGemOfferItemLabel above.
+  // boqVariantParties is purely for the user's own reference (which real
+  // GeM seller account to upload each variant's file under) - it isn't
+  // part of any computed value or file name, which per spec are always
+  // literally "L1"/"L2"/"L3".
+  const [boqVariantCount, setBoqVariantCount] = useState<2 | 3>(2);
+  const [boqVariantParties, setBoqVariantParties] = useState<Record<number, string>>({});
+  const [boqRateVariants, setBoqRateVariants] = useState<BoqVariantRow[] | null>(null);
+  const [downloadingBoqVariants, setDownloadingBoqVariants] = useState(false);
 
   // Deep link from Final Rates ("Edit" on a row there opens this page with
   // the same bid already selected) - read once on mount, doesn't need to
@@ -900,6 +947,130 @@ function DocumentMakerPageInner() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Rate Variants");
     XLSX.writeFile(wb, `Rate-Variants-${selectedBid?.bidNo || selectedBidId}.xlsx`);
+  };
+
+  const generateBoqRateVariants = () => {
+    const rows: BoqVariantRow[] = boqItems.map((it) => {
+      const qty = parseFloat(it.quantity) || 0;
+      const baseRate = parseFloat(it.rate) || 0;
+      const variants: { rate: number; total: number }[] = [{ rate: baseRate, total: Math.round(qty * baseRate * 100) / 100 }];
+      let cumulativeRate = baseRate;
+      for (let v = 2; v <= boqVariantCount; v++) {
+        cumulativeRate = baseRate ? Math.round((cumulativeRate + positiveVariantDelta(baseRate)) * 100) / 100 : 0;
+        variants.push({ rate: cumulativeRate, total: Math.round(qty * cumulativeRate * 100) / 100 });
+      }
+      return {
+        itemNumber: it.itemNumber,
+        itemTitle: it.itemTitle,
+        itemDescription: it.itemDescription,
+        quantity: it.quantity,
+        unit: it.unit,
+        consigneeId: it.consigneeId,
+        deliveryPeriod: it.deliveryPeriod,
+        rate: baseRate,
+        variants,
+      };
+    });
+    setBoqRateVariants(rows);
+  };
+
+  const boqVariantGrandTotals = useMemo(() => {
+    if (!boqRateVariants) return [];
+    return Array.from({ length: boqVariantCount }, (_, i) => boqRateVariants.reduce((sum, r) => sum + (r.variants[i]?.total || 0), 0));
+  }, [boqRateVariants, boqVariantCount]);
+
+  // Builds the GeM-ready "BOQ-Filled" workbook (VARIANT 1/2/3 + TOTAL
+  // columns, color-coded L1/L2/L3 exactly as the reference file does) plus
+  // one "gem-offer-price-items" file per variant in GeM's own exact
+  // upload format, bundled into one ZIP - same "bundle multiple generated
+  // files together" pattern the ATC ZIP bundle already uses elsewhere in
+  // this app, chosen over triggering several separate downloads at once
+  // (unreliable - browsers can block/prompt on multi-file downloads).
+  const downloadBoqRateVariants = async () => {
+    if (!boqRateVariants) return;
+    setDownloadingBoqVariants(true);
+    try {
+      const XLSX = (await import("xlsx-js-style")).default;
+      const JSZip = (await import("jszip")).default;
+
+      const safeBidNo = String(selectedBid?.bidNo || selectedBidId || "BOQ").replace(/[\\/:*?"<>|]/g, "-");
+
+      const headers: (string | number)[] = [
+        "Item Number",
+        "Item Title",
+        "Item Description",
+        "Item Quantity",
+        "Unit of Measure",
+        "Consignee ID",
+        "Delivery Period (In number of days)",
+        "Rate",
+      ];
+      for (let v = 1; v <= boqVariantCount; v++) headers.push(`VARIANT ${v}`, `VARIANT ${v} TOTAL`);
+      const aoa: (string | number)[][] = [headers];
+      boqRateVariants.forEach((r) => {
+        const row: (string | number)[] = [
+          r.itemNumber,
+          r.itemTitle,
+          r.itemDescription,
+          r.quantity,
+          r.unit,
+          r.consigneeId,
+          r.deliveryPeriod,
+          r.rate,
+        ];
+        r.variants.forEach((v) => row.push(v.rate, v.total));
+        aoa.push(row);
+      });
+      const grandRow: (string | number)[] = ["", "", "", "", "", "", "", ""];
+      boqVariantGrandTotals.forEach((t) => grandRow.push("", Math.round(t * 100) / 100));
+      aoa.push(grandRow);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      for (let v = 0; v < boqVariantCount; v++) {
+        const colRate = 8 + v * 2;
+        const colTotal = colRate + 1;
+        const rgb = BOQ_VARIANT_COLORS[v];
+        for (let r = 0; r <= boqRateVariants.length; r++) {
+          for (const c of [colRate, colTotal]) {
+            const addr = XLSX.utils.encode_cell({ r, c });
+            if (ws[addr]) ws[addr].s = { fill: { patternType: "solid", fgColor: { rgb } } };
+          }
+        }
+      }
+      const mainWb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(mainWb, ws, "BOQ");
+      const mainBuf = XLSX.write(mainWb, { type: "array", bookType: "xlsx" });
+
+      const zip = new JSZip();
+      const mainFileName = `BOQ-Filled-${safeBidNo}.xlsx`;
+      zip.file(mainFileName, mainBuf);
+
+      for (let v = 0; v < boqVariantCount; v++) {
+        const offerAoa: (string | number)[][] = [["Item", "Quantity Required", "Unit Price Inclusive of all Taxes"]];
+        boqRateVariants.forEach((r) => {
+          offerAoa.push([toGemOfferItemLabel(r.itemTitle), r.quantity, r.variants[v]?.rate ?? ""]);
+        });
+        const offerWs = XLSX.utils.aoa_to_sheet(offerAoa);
+        const offerWb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(offerWb, offerWs, "Offer Price");
+        const offerBuf = XLSX.write(offerWb, { type: "array", bookType: "xlsx" });
+        zip.file(`gem-offer-price-items - L${v + 1}.xlsx`, offerBuf);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `BOQ-Filled-${safeBidNo}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || "Failed to build the download");
+    } finally {
+      setDownloadingBoqVariants(false);
+    }
   };
 
   const saveBoqRates = async () => {
@@ -1647,6 +1818,146 @@ function DocumentMakerPageInner() {
                         className="w-fit px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
                       >
                         Download Excel
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedBidId && boqItems.length > 0 && (
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                    <FiPercent className="text-purple-600" size={14} /> BOQ Rate Variants
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Builds a GeM-ready BOQ-Filled file (VARIANT 1/2/3 columns, color-coded exactly like GeM&apos;s own
+                    L1/L2/L3) plus one gem-offer-price-items upload file per variant, ready to download together.
+                    Variant 1 (L1) is always exactly your filled Rate column; each variant after it is bumped up only,
+                    so the grand total always comes out L1 &lt; L2{boqVariantCount === 3 ? " < L3" : ""} - L1 wins, every time.
+                  </p>
+                </div>
+                <div className="p-5 flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1">
+                      {([2, 3] as const).map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setBoqVariantCount(n)}
+                          className={`px-4 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
+                            boqVariantCount === n ? "bg-purple-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          {n} Variants
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={generateBoqRateVariants}
+                      className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[10px] tracking-wide py-2 px-4 rounded-lg transition-colors"
+                    >
+                      <FiPercent size={12} /> {boqRateVariants ? "Re-roll" : "Generate BOQ Rate Variants"}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    {Array.from({ length: boqVariantCount }, (_, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <span
+                          className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded text-white"
+                          style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[i]}` }}
+                        >
+                          L{i + 1} Party
+                        </span>
+                        <select
+                          value={boqVariantParties[i + 1] || ""}
+                          onChange={(e) => setBoqVariantParties((p) => ({ ...p, [i + 1]: e.target.value }))}
+                          className="border border-slate-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-purple-400"
+                        >
+                          <option value="">Select party...</option>
+                          {companies.map((c) => (
+                            <option key={c._id} value={c.firmName}>
+                              {c.firmName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                    <span className="text-[9px] text-slate-400">
+                      Reference only - which real GeM seller account to upload each file under.
+                    </span>
+                  </div>
+
+                  {boqRateVariants && (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="text-[10px] font-black uppercase">
+                            <tr className="bg-slate-50 text-slate-500">
+                              <th className="py-2 px-2 text-left">Item Title</th>
+                              <th className="py-2 px-2 text-right">Qty</th>
+                              <th className="py-2 px-2 text-right">Rate</th>
+                              {Array.from({ length: boqVariantCount }, (_, i) => (
+                                <th
+                                  key={i}
+                                  colSpan={2}
+                                  className="py-2 px-2 text-right text-white"
+                                  style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[i]}` }}
+                                >
+                                  VARIANT {i + 1} (L{i + 1})
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {boqRateVariants.map((r) => (
+                              <tr key={r.itemNumber}>
+                                <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px] truncate" title={r.itemTitle}>
+                                  {r.itemTitle}
+                                </td>
+                                <td className="py-2 px-2 text-right text-slate-500 whitespace-nowrap">{r.quantity}</td>
+                                <td className="py-2 px-2 text-right text-slate-700 whitespace-nowrap">{r.rate || "—"}</td>
+                                {r.variants.map((v, i) => (
+                                  <td
+                                    key={i}
+                                    colSpan={2}
+                                    className="py-2 px-2 text-right whitespace-nowrap"
+                                    style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[i]}22` }}
+                                  >
+                                    <span className="font-bold text-slate-700">{v.rate || "—"}</span>{" "}
+                                    <span className="text-slate-400">({v.total.toLocaleString("en-IN", { maximumFractionDigits: 2 })})</span>
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-slate-800">
+                              <td colSpan={3} className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700">
+                                Grand Total
+                              </td>
+                              {boqVariantGrandTotals.map((t, i) => (
+                                <td
+                                  key={i}
+                                  colSpan={2}
+                                  className="py-2 px-2 text-right font-black text-slate-900 whitespace-nowrap"
+                                  style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[i]}22` }}
+                                >
+                                  {t.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                                </td>
+                              ))}
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                      <button
+                        disabled={downloadingBoqVariants}
+                        onClick={downloadBoqRateVariants}
+                        className="w-fit flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white transition-colors"
+                      >
+                        <FiDownload size={12} />
+                        {downloadingBoqVariants ? "Building..." : "Download BOQ-Filled + Offer Price Files (ZIP)"}
                       </button>
                     </>
                   )}
