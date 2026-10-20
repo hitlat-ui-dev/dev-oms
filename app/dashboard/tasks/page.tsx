@@ -7,7 +7,7 @@ import {
 import TaskStatsRow from "./components/TaskStatsRow";
 import TaskTable from "./components/TaskTable";
 import TaskDrawer from "./components/TaskDrawer";
-import CreateTaskModal from "./components/CreateTaskModal";
+import { NEW_TASK_EVENT, TASK_CREATED_EVENT } from "@/components/GlobalTaskCreate";
 import { ApiError, CATEGORY_LABEL, TaskCtx, api, readSessionUser, roleFromSession } from "./components/taskUi";
 
 type View = "my" | "watching" | "byme" | "team" | "all";
@@ -37,7 +37,6 @@ export default function TasksPage() {
   const [assignee, setAssignee] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [firms, setFirms] = useState<string[]>([]);
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "err" } | null>(null);
@@ -112,22 +111,29 @@ export default function TasksPage() {
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", tick); };
   }, [fetchAll]);
 
-  // N opens the create modal (not while typing); Esc closes drawer/modal.
+  // The New Task modal lives in GlobalTaskCreate (root layout, Alt+N on every page).
+  // Here, plain N (not while typing) just asks it to open; Esc closes the drawer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       const typing = el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.tagName === "SELECT" || el?.isContentEditable;
-      if (e.key === "Escape") { if (showCreate) setShowCreate(false); else if (openId) setOpenId(null); return; }
-      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "n" && !showCreate && !openId) {
+      if (e.key === "Escape") { if (openId) setOpenId(null); return; }
+      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "n" && !openId) {
         e.preventDefault();
-        setShowCreate(true);
+        window.dispatchEvent(new Event(NEW_TASK_EVENT));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showCreate, openId]);
+  }, [openId]);
 
-  const refreshAll = () => { fetchAll(); fetchUsers(); };
+  const refreshAll = useCallback(() => { fetchAll(); fetchUsers(); }, [fetchAll, fetchUsers]);
+
+  // A task created from the global modal (possibly while on this page) refreshes the list.
+  useEffect(() => {
+    window.addEventListener(TASK_CREATED_EVENT, refreshAll);
+    return () => window.removeEventListener(TASK_CREATED_EVENT, refreshAll);
+  }, [refreshAll]);
 
   async function quick(task: TaskDTO, action: "start" | "done" | "verify") {
     if (!me) return;
@@ -192,8 +198,8 @@ export default function TasksPage() {
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={refreshAll} title="Refresh" className="p-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 cursor-pointer"><FiRefreshCw size={15} /></button>
-            <button type="button" onClick={() => setShowCreate(true)} className="flex items-center gap-2 bg-[#ff9933] hover:bg-[#f08a24] text-white text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-xl cursor-pointer">
-              <FiPlus /> New Task <kbd className="hidden sm:inline bg-white/25 rounded px-1.5 text-[10px]">N</kbd>
+            <button type="button" onClick={() => window.dispatchEvent(new Event(NEW_TASK_EVENT))} className="flex items-center gap-2 bg-[#ff9933] hover:bg-[#f08a24] text-white text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-xl cursor-pointer">
+              <FiPlus /> New Task <kbd className="hidden sm:inline bg-white/25 rounded px-1.5 text-[10px]">Alt+N</kbd>
             </button>
           </div>
         </div>
@@ -282,14 +288,6 @@ export default function TasksPage() {
       </div>
 
       {openId && <TaskDrawer taskId={openId} ctx={ctx} onClose={() => setOpenId(null)} onChanged={refreshAll} />}
-      {showCreate && (
-        <CreateTaskModal
-          ctx={ctx}
-          onClose={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); refreshAll(); }}
-        />
-      )}
-
       {toast && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-5 py-3 rounded-xl text-sm font-bold shadow-xl ${toast.kind === "err" ? "bg-red-600 text-white" : "bg-[#0a2540] text-white"}`}>
           {toast.msg}

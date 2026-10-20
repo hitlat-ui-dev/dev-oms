@@ -2,6 +2,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import GlobalTaskCreate from "@/components/GlobalTaskCreate";
 import Footer from "@/components/Footer";
 import UrgentTaskPopup from "@/components/UrgentTaskPopup";
 import { getPageTitle } from "@/lib/pageTitles";
@@ -103,6 +104,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </main>
             <Footer />
             <UrgentTaskPopup />
+            <GlobalTaskCreate />
           </div>
         ) : (
           <main className="h-full">{children}</main>
