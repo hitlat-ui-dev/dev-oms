@@ -10,7 +10,9 @@ import {
   FiCheckCircle,
   FiXCircle,
   FiEdit3,
-  FiCopy
+  FiCopy,
+  FiChevronUp,
+  FiChevronDown
 } from "react-icons/fi";
 
 interface PurchaseOrder {
@@ -81,6 +83,50 @@ export default function OrderPlaceTable({ data, vendors, onRefresh, onCancel }: 
       return dateMatch && itemMatch && vendorMatch;
     });
   }, [data, filterDate, filterItem, filterVendor]);
+
+  // Column sort - click a header to sort ascending, click again for
+  // descending. "date" is a virtual key (orderedAt falling back to
+  // createdAt, same as what's actually displayed in that column) since
+  // orders aren't guaranteed to have orderedAt set.
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+  const NUMERIC_SORT_KEYS = new Set(["prQty", "orderQty", "rate"]);
+
+  const requestSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (prev?.key === key && prev.direction === "asc") return { key, direction: "desc" };
+      return { key, direction: "asc" };
+    });
+  };
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig?.key !== key) return <FiChevronDown className="text-slate-300" size={12} />;
+    return sortConfig.direction === "asc" ? (
+      <FiChevronUp className="text-blue-600" size={12} />
+    ) : (
+      <FiChevronDown className="text-blue-600" size={12} />
+    );
+  };
+
+  const sortedData = useMemo(() => {
+    if (!sortConfig) return filteredData;
+    const { key, direction } = sortConfig;
+    const dir = direction === "asc" ? 1 : -1;
+    return [...filteredData].sort((a, b) => {
+      if (key === "date") {
+        const aT = new Date(a.orderedAt || a.createdAt).getTime();
+        const bT = new Date(b.orderedAt || b.createdAt).getTime();
+        return (aT - bT) * dir;
+      }
+      if (NUMERIC_SORT_KEYS.has(key)) {
+        return (((a as any)[key] || 0) - ((b as any)[key] || 0)) * dir;
+      }
+      const aVal = ((a as any)[key] || "").toString().toLowerCase();
+      const bVal = ((b as any)[key] || "").toString().toLowerCase();
+      if (aVal < bVal) return -1 * dir;
+      if (aVal > bVal) return 1 * dir;
+      return 0;
+    });
+  }, [filteredData, sortConfig]);
 
 
   // Toggle single selection
@@ -214,7 +260,7 @@ export default function OrderPlaceTable({ data, vendors, onRefresh, onCancel }: 
     const pageWidth = doc.internal.pageSize.getWidth();
 
     // Get Full Vendor Name
-    const firstItem = filteredData[0];
+    const firstItem = sortedData[0];
     const fullVendorName = filterVendor && firstItem ? firstItem.vendor : "All Vendors";
     const reportTitle = sanitizeForPdf(`${fullVendorName.toUpperCase()} - PURCHASE ORDER`);
     const fileNameDate = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
@@ -233,8 +279,8 @@ export default function OrderPlaceTable({ data, vendors, onRefresh, onCancel }: 
     const tableColumn = ["Order ID", "Date", "Item Name", "Order Qty"];
 
     const dataToExport = selectedIds.length > 0
-      ? filteredData.filter(item => selectedIds.includes(item._id))
-      : filteredData;
+      ? sortedData.filter(item => selectedIds.includes(item._id))
+      : sortedData;
 
     const tableRows = dataToExport.map(item => [
       sanitizeForPdf(item.orderNumber || "N/A"),
@@ -429,21 +475,66 @@ export default function OrderPlaceTable({ data, vendors, onRefresh, onCancel }: 
                     onChange={toggleSelectAll}
                   />
                 </th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Order ID</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Date</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Item Details</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Category</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">PR Qty</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Order Qty</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Rate</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Vendor</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400">Remarks</th>
+                <th
+                  onClick={() => requestSort("orderNumber")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Order ID {renderSortIcon("orderNumber")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("date")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Date {renderSortIcon("date")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("itemName")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Item Details {renderSortIcon("itemName")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("category")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Category {renderSortIcon("category")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("prQty")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center justify-center gap-1">PR Qty {renderSortIcon("prQty")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("orderQty")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center justify-center gap-1">Order Qty {renderSortIcon("orderQty")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("rate")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Rate {renderSortIcon("rate")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("vendor")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Vendor {renderSortIcon("vendor")}</div>
+                </th>
+                <th
+                  onClick={() => requestSort("remark")}
+                  className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1">Remarks {renderSortIcon("remark")}</div>
+                </th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-center">Note</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredData.map((req) => (
+              {sortedData.map((req) => (
                 <tr key={req._id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                   <td className="py-3 px-4">
                     <input
