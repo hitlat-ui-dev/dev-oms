@@ -11,6 +11,7 @@ export default function PurchasePage() {
     //{ name: "Payment of Purchase", path: "/dashboard/purchase/payment", icon: <FiPlusCircle />, color: "bg-[#00a86b]" },
     //{ name: "Purchase Return", path: "/dashboard/purchase/return", icon: <FiRotateCcw />, color: "bg-[#f20505]" },
     { name: "Purchase", path: "/dashboard/purchase/purchase", icon: <FiSend />, color: "bg-[#00a86b]" },
+    { name: "Pricelist", path: "/dashboard/purchase/pricelist", icon: <FiFileText />, color: "bg-[#f97316]" },
     { name: "Add Vendor", path: "/dashboard/purchase/add-vendor", icon: <FiUserPlus />, color: "bg-[#8b2ef5]" },
     //{ name: "Purchase Reports", path: "/dashboard/purchase/reports", icon: <FiFileText />, color: "bg-[#5c5cf5]" },
     
