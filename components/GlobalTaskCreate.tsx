@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TaskUserDTO } from "@/lib/tasks/types";
+import { notifyTasksChanged } from "@/lib/tasks/usePendingTaskCount";
 import CreateTaskModal from "@/app/dashboard/tasks/components/CreateTaskModal";
 import { TaskCtx, api, readSessionUser, roleFromSession } from "@/app/dashboard/tasks/components/taskUi";
 
@@ -62,7 +63,7 @@ export default function GlobalTaskCreate() {
         <CreateTaskModal
           ctx={ctx}
           onClose={() => setOpen(false)}
-          onCreated={() => { setOpen(false); window.dispatchEvent(new Event(TASK_CREATED_EVENT)); }}
+          onCreated={() => { setOpen(false); window.dispatchEvent(new Event(TASK_CREATED_EVENT)); notifyTasksChanged(); }}
         />
       )}
       {toast && (

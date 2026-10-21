@@ -20,6 +20,10 @@ export type TaskRole = "admin" | "manager" | "staff";
 /** Statuses in which a task is still live (overdue clock runs). */
 export const ACTIVE_STATUSES: TaskStatus[] = ["OPEN", "IN_PROGRESS", "WAITING"];
 
+/** Statuses that no longer count as "pending" for the navbar badge: DONE = "Done (verify)",
+ *  CLOSED = "Done", CANCELLED = no longer anybody's work. Edit here to change the badge rule. */
+export const DONE_STATUSES: TaskStatus[] = ["DONE", "CLOSED", "CANCELLED"];
+
 /** Single source of truth for lifecycle transitions made via the status route.
  *  DONE -> CLOSED/IN_PROGRESS go through verify/reject, CLOSED -> OPEN through reopen. */
 export const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {

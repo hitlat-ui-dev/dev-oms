@@ -7,6 +7,7 @@ import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 import GemCredentialsPanel from "@/components/GemCredentialsPanel";
 import MetalCalculatorPanel from "@/components/MetalCalculatorPanel";
 import AttendanceReminder from "@/components/AttendanceReminder";
+import { usePendingTaskCount } from "@/lib/tasks/usePendingTaskCount";
 
 export default function Header() {
   const router = useRouter();
@@ -26,6 +27,7 @@ export default function Header() {
   const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
   const [showGemLoginModal, setShowGemLoginModal] = useState(false);
   const [showMetalCalcModal, setShowMetalCalcModal] = useState(false);
+  const { count: pendingTasks, pulse: pendingPulse } = usePendingTaskCount(user?.username ?? null);
 
   useEffect(() => {
     // 1. Next.js Guard: Ensure window is available
@@ -404,10 +406,17 @@ export default function Header() {
             Workspace to-do dropdown above, which stays as-is until Phase 5). */}
         <Link
           href="/dashboard/tasks"
-          className="text-[10px] md:text-xs font-black uppercase tracking-wider bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
-          title="Tasks"
+          className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+          title={pendingTasks > 0 ? `Tasks (${pendingTasks} pending)` : "Tasks"}
         >
           <FiCheckSquare size={13} /> <span className="hidden sm:inline">Tasks</span>
+          {pendingTasks > 0 && (
+            <span
+              className={`absolute -top-2 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center border border-[#0a2540] ${pendingPulse ? "animate-pulse" : ""}`}
+            >
+              {pendingTasks > 99 ? "99+" : pendingTasks}
+            </span>
+          )}
         </Link>
 
         {/* GeM Login Setup - opens the same firm-wise credentials manager as

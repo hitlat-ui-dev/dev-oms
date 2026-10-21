@@ -259,6 +259,27 @@ async function main() {
   check("users list has no password field, roles resolved", us.status === 200 && us.data.every((u: any) => !("password" in u)) && us.data.find((u: any) => u.username === MGR)?.role === "manager" && us.data.find((u: any) => u.username === ADMIN)?.role === "admin");
   check("staff sees only self as assignable", us.data.filter((u: any) => u.assignable).map((u: any) => u.username).join() === S1);
 
+  // ---- navbar pending-count badge
+  const pc = async (u: string) => (await call(u, "GET", "/api/tasks/pending-count")).data.count as number;
+  expectStatus("pending-count without user -> 401", await call(null, "GET", "/api/tasks/pending-count"), 401);
+  const pcBase = await pc(S2);
+  const openList = await call(S2, "GET", "/api/tasks?view=my&stat=open");
+  check("pending-count == own open (not done) tasks", pcBase === openList.data.total, `${pcBase} vs ${openList.data.total}`);
+  const pt = await mk(MGR, { title: "badge task", assignee: S2 });
+  check("assigned task -> count +1", (await pc(S2)) === pcBase + 1);
+  await st(S2, pt._id, { status: "DONE" });
+  check("Done (verify) -> count -1", (await pc(S2)) === pcBase);
+  await call(MGR, "POST", `/api/tasks/${pt._id}/reject`, { reason: "redo" });
+  check("rejected back to In Progress -> count +1", (await pc(S2)) === pcBase + 1);
+  const s1Before = await pc(S1);
+  await call(MGR, "POST", `/api/tasks/${pt._id}/assign`, { assignee: S1 });
+  check("reassign S2 -> S1: S2 -1, S1 +1", (await pc(S2)) === pcBase && (await pc(S1)) === s1Before + 1);
+  await call(MGR, "POST", `/api/tasks/${pt._id}/status`, { status: "CANCELLED", reason: "x" });
+  check("cancelled task not counted", (await pc(S1)) === s1Before);
+  const pd = await mk(MGR, { title: "badge delete", assignee: S2 });
+  await call(ADMIN, "DELETE", `/api/tasks/${pd._id}`);
+  check("deleted task not counted", (await pc(S2)) === pcBase);
+
   // ---- report
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);

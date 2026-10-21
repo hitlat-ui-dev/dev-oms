@@ -7,7 +7,7 @@ import {
   TaskActor, TaskError, canAssignTo, canViewTask, getTaskRole, isManagerOrAdmin, usersCollection, visibilityFilter,
 } from "./permissions";
 import {
-  ACTIVE_STATUSES, ALLOWED_TRANSITIONS, TASK_CATEGORIES, TASK_PRIORITIES, TASK_STATUSES, WAITING_ON,
+  ACTIVE_STATUSES, ALLOWED_TRANSITIONS, DONE_STATUSES, TASK_CATEGORIES, TASK_PRIORITIES, TASK_STATUSES, WAITING_ON,
   TaskStatKey, TaskStatus,
 } from "./types";
 
@@ -259,6 +259,16 @@ export async function taskSummary(actor: TaskActor, view: string) {
   const keys: TaskStatKey[] = ["open", "dueToday", "overdue", "waiting", "followUpsToday", "toVerify"];
   const counts = await Promise.all(keys.map((k) => Task.countDocuments({ $and: [base, statFilter(k, now)] })));
   return Object.fromEntries(keys.map((k, i) => [k, counts[i]]));
+}
+
+/** Navbar badge: tasks assigned to the acting user that are not done (uses the assignee+status index). */
+export async function pendingTaskCount(actor: TaskActor) {
+  const count = await Task.countDocuments({
+    assignee: actor.username,
+    status: { $nin: DONE_STATUSES },
+    isDeleted: { $ne: true },
+  });
+  return { count };
 }
 
 /* ------------------------------------------------------------------- detail */

@@ -8,6 +8,7 @@ import TaskStatsRow from "./components/TaskStatsRow";
 import TaskTable from "./components/TaskTable";
 import TaskDrawer from "./components/TaskDrawer";
 import { NEW_TASK_EVENT, TASK_CREATED_EVENT } from "@/components/GlobalTaskCreate";
+import { notifyTasksChanged } from "@/lib/tasks/usePendingTaskCount";
 import { ApiError, CATEGORY_LABEL, TaskCtx, api, readSessionUser, roleFromSession } from "./components/taskUi";
 
 type View = "my" | "watching" | "byme" | "team" | "all";
@@ -127,7 +128,8 @@ export default function TasksPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [openId]);
 
-  const refreshAll = useCallback(() => { fetchAll(); fetchUsers(); }, [fetchAll, fetchUsers]);
+  // Used after every user action (create/status/reassign/bulk/...), so also tell the navbar badge.
+  const refreshAll = useCallback(() => { fetchAll(); fetchUsers(); notifyTasksChanged(); }, [fetchAll, fetchUsers]);
 
   // A task created from the global modal (possibly while on this page) refreshes the list.
   useEffect(() => {
