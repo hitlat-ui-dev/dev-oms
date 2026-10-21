@@ -4,6 +4,7 @@ import clientPromise from "@/lib/mongodb";
 import { getFileFromR2 } from "@/lib/cloudflareR2";
 import { parseBoqXlsx, normalizeItemKey } from "@/lib/documentMaker/boqEngine";
 import { parseSpecificationPdf } from "@/lib/documentMaker/specEngine";
+import { tokenizeMatchText, scoreTokenSimilarity } from "@/lib/gemSync/catalogueMatch";
 
 const DB_NAME = "dev_oms_db";
 
@@ -158,6 +159,48 @@ export async function GET(req: Request) {
           marketRateMinDiff: diffs.length ? Math.min(...diffs) : null,
           marketRateMaxDiff: diffs.length ? Math.max(...diffs) : null,
           marketRateSampleCount: samples.length,
+        };
+      });
+    }
+
+    // Purchase-cost suggestion (shown under Base Rate, not Rate - this is
+    // what WE actually paid a vendor for this item, per the "Received
+    // Purchase" ledger, not what we'd charge GeM). Matched by token
+    // similarity rather than an exact/normalized-key match like
+    // suggestedRate/marketRate above, since a Received Purchase itemName
+    // ("M S FLAT 50 X 6 MM") and a GeM BOQ item title are two completely
+    // independently-typed strings with no shared history the way two GeM
+    // bids' own item titles do - same 0.5-score/≥1-overlap threshold
+    // already established for exactly this kind of cross-system item-name
+    // matching in gem-sync/catalogue (see catalogueMatch.ts). Capped and
+    // sorted newest-first so a tie between two matches of equal score
+    // favors the more recent purchase.
+    const purchaseDocs = await db
+      .collection("Received purchase")
+      .find({ itemName: { $exists: true, $ne: "" } }, { projection: { itemName: 1, rate: 1, vendor: 1, receivedAt: 1 } })
+      .sort({ receivedAt: -1 })
+      .limit(5000)
+      .toArray();
+    if (purchaseDocs.length > 0) {
+      const purchaseTokens = purchaseDocs.map((p: any) => tokenizeMatchText(p.itemName || ""));
+      items = items.map((it) => {
+        const queryTokens = tokenizeMatchText(it.itemTitle || "");
+        if (queryTokens.length === 0) return it;
+        let best: any = null;
+        let bestScore = 0;
+        purchaseDocs.forEach((p: any, i: number) => {
+          const { score, overlap } = scoreTokenSimilarity(queryTokens, purchaseTokens[i]);
+          if (score > bestScore && overlap >= 1) {
+            bestScore = score;
+            best = p;
+          }
+        });
+        if (!best || bestScore < 0.5 || typeof best.rate !== "number") return it;
+        return {
+          ...it,
+          purchaseRate: String(best.rate),
+          purchaseVendor: best.vendor || "",
+          purchaseDate: best.receivedAt || null,
         };
       });
     }

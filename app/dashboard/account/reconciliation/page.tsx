@@ -428,21 +428,7 @@ export default function ReconciliationPage() {
       .then((data) => setCompanies(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load firms", err));
 
-    // ?all=1 - reconciliation exists specifically to clear old backlog, so it
-    // needs every open order, not just the system-wide most-recent-250 the
-    // Orders board defaults to. Without this, any institute whose unpaid
-    // orders are all older than that recent-250 window (common - the whole
-    // point here is catching up on a backlog) silently showed "no open
-    // orders" even when real matching bills existed.
-    // &light=1 skips the Orders-dashboard-only PR/OP/stock enrichment this
-    // endpoint otherwise does on every order - Reconciliation only ever
-    // reads the plain bill fields (see OrderLite), and that enrichment work
-    // was most of why this fetch was so slow (5.6MB full response vs well
-    // under 1MB light, for the same ~6k orders).
-    fetch("/api/seller-orders?all=1&light=1")
-      .then((res) => res.json())
-      .then((data) => setOrders(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Failed to load orders", err));
+    refreshOrders();
 
     fetch("/api/account-statements")
       .then((res) => res.json())
@@ -464,6 +450,30 @@ export default function ReconciliationPage() {
       .then((res) => res.json())
       .then((data) => setSellers(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Failed to load sellers", err));
+  };
+
+  // Re-fetched after every confirm/reverse (see runAction/handleSaveManual/
+  // runBulkAction) - `orders` was only ever loaded once on page load, so a
+  // bill that just got paid (isPaid now true server-side) kept showing up as
+  // "open" and pickable in every OTHER transaction's Order Ledger/Bill
+  // dropdown for the rest of the session, since nothing ever refreshed the
+  // local copy. Confirmed live.
+  const refreshOrders = () => {
+    // ?all=1 - reconciliation exists specifically to clear old backlog, so it
+    // needs every open order, not just the system-wide most-recent-250 the
+    // Orders board defaults to. Without this, any institute whose unpaid
+    // orders are all older than that recent-250 window (common - the whole
+    // point here is catching up on a backlog) silently showed "no open
+    // orders" even when real matching bills existed.
+    // &light=1 skips the Orders-dashboard-only PR/OP/stock enrichment this
+    // endpoint otherwise does on every order - Reconciliation only ever
+    // reads the plain bill fields (see OrderLite), and that enrichment work
+    // was most of why this fetch was so slow (5.6MB full response vs well
+    // under 1MB light, for the same ~6k orders).
+    fetch("/api/seller-orders?all=1&light=1")
+      .then((res) => res.json())
+      .then((data) => setOrders(Array.isArray(data) ? data : []))
+      .catch((err) => console.error("Failed to load orders", err));
   };
 
   const fetchMatches = useCallback(() => {
@@ -547,6 +557,7 @@ export default function ReconciliationPage() {
       if (!res.ok) throw new Error(data?.error || "Action failed");
       fetchCorrectionAlerts();
       fetchMatches();
+      if (action === "accept") refreshOrders();
     } catch (err: any) {
       alert(err.message || "Action failed");
     } finally {
@@ -802,6 +813,7 @@ export default function ReconciliationPage() {
       // currently open, so it no longer belongs in this list either way.
       setMatches((prev) => prev.filter((match) => match._id !== id));
       refreshSellers();
+      refreshOrders();
     } catch (err: any) {
       alert(err.message || "Action failed");
     } finally {
@@ -898,6 +910,7 @@ export default function ReconciliationPage() {
     if (succeededIds.size > 0) {
       setMatches((prev) => prev.filter((m) => !succeededIds.has(m._id)));
       refreshSellers();
+      refreshOrders();
     }
     clearSelection();
     setBulkBusy(false);
@@ -1025,6 +1038,7 @@ export default function ReconciliationPage() {
       // moved to "confirmed" either way, so it no longer belongs here.
       setMatches((prev) => prev.filter((match) => match._id !== m._id));
       refreshSellers();
+      refreshOrders();
     } catch (err: any) {
       alert(err.message || "Failed to save");
     } finally {

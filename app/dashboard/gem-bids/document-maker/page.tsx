@@ -97,6 +97,13 @@ interface BoqItem {
   marketRateMinDiff?: number | null;
   marketRateMaxDiff?: number | null;
   marketRateSampleCount?: number;
+  // What we actually paid a vendor for this item, per the Received
+  // Purchase ledger (token-matched server-side, see /api/gem-bids/boq's
+  // GET) - a cost reference for Base Rate, not Rate, so it's shown under
+  // that input instead of next to the Rate suggestions.
+  purchaseRate?: string;
+  purchaseVendor?: string;
+  purchaseDate?: string | null;
 }
 
 // Rate = Base Rate marked up by Margin % - recomputed live whenever either
@@ -878,6 +885,24 @@ function DocumentMakerPageInner() {
     );
   };
 
+  // What we actually paid for this item last time, per Received Purchase -
+  // a cost reference for Base Rate specifically (unlike the two Rate
+  // suggestions above), so it fills baseRate (not rate) when clicked.
+  const renderPurchaseRateSuggestion = (it: BoqItem) => {
+    if (!it.purchaseRate) return null;
+    const dateLabel = it.purchaseDate ? new Date(it.purchaseDate).toLocaleDateString("en-IN") : "";
+    return (
+      <button
+        type="button"
+        onClick={() => updateBoqBaseRate(it.itemNumber, it.purchaseRate!)}
+        className="text-[9px] text-emerald-700 underline mt-0.5 block"
+        title={[it.purchaseVendor, dateLabel].filter(Boolean).join(" — ") || undefined}
+      >
+        Purchased: {it.purchaseRate}
+      </button>
+    );
+  };
+
   const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
     setBoqItems((prev) =>
       prev.map((it) => (it.itemNumber === itemNumber ? { ...it, baseRate, rate: computeRateFromBase(baseRate, it.marginPercent) || it.rate } : it))
@@ -1560,6 +1585,7 @@ function DocumentMakerPageInner() {
                                         placeholder="Base Rate"
                                         className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                       />
+                                      {renderPurchaseRateSuggestion(it)}
                                     </td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1632,6 +1658,7 @@ function DocumentMakerPageInner() {
                                       placeholder="Base Rate"
                                       className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                     />
+                                    {renderPurchaseRateSuggestion(it)}
                                   </td>
                                   <td className="py-2 px-2">
                                     <input
