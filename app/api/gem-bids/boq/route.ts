@@ -135,12 +135,19 @@ export async function GET(req: Request) {
     // via /api/gem-bids/market-rates/import, layered on top of the
     // suggestedRate above (our own past quote for this item) rather than
     // replacing it - "what we charged before" and "what actually won" are
-    // both useful context and can disagree.
+    // both useful context and can disagree. The headline number is the
+    // MOST RECENT result, not an average across every sample ever
+    // imported - an average blurs a genuine price trend (steadily rising
+    // or falling) into one static number, which is exactly the thing a
+    // trend view is for. Up to 5 most recent samples (full breakdown:
+    // rate/date/place/evaluation type/L1 party) ride along for the
+    // frontend's hover table, newest first.
     const marketItemKeys = items.map((it) => normalizeItemKey(it.itemTitle)).filter(Boolean);
     if (marketItemKeys.length > 0) {
       const marketDocs = await db
         .collection("gem_bid_item_market_rate_history")
         .find({ itemKey: { $in: marketItemKeys } })
+        .sort({ importedAt: -1 })
         .toArray();
       const marketByKey = new Map<string, any[]>();
       for (const d of marketDocs) {
@@ -151,14 +158,19 @@ export async function GET(req: Request) {
       items = items.map((it) => {
         const samples = marketByKey.get(normalizeItemKey(it.itemTitle));
         if (!samples || samples.length === 0) return it;
-        const avgRate = samples.reduce((sum, s) => sum + s.l1Rate, 0) / samples.length;
-        const diffs = samples.map((s) => s.diffPercent).filter((d) => typeof d === "number" && !Number.isNaN(d));
+        const latest = samples[0];
         return {
           ...it,
-          marketRate: String(Math.round(avgRate * 100) / 100),
-          marketRateMinDiff: diffs.length ? Math.min(...diffs) : null,
-          marketRateMaxDiff: diffs.length ? Math.max(...diffs) : null,
+          marketRate: String(latest.l1Rate),
           marketRateSampleCount: samples.length,
+          marketRateSamples: samples.slice(0, 5).map((s) => ({
+            rate: s.l1Rate,
+            party: s.l1Party || "",
+            date: s.importedAt || null,
+            place: s.place || "",
+            evaluationType: s.evaluationType || "",
+            bidNo: s.bidNo || "",
+          })),
         };
       });
     }

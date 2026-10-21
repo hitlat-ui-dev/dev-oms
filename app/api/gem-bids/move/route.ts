@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { SECTION_KEYS } from "@/lib/gemBids/columns";
+import { clearBidDocsIfLeavingProtectedSections } from "@/lib/gemBids/bidDocCleanup";
 
 const DB_NAME = "dev_oms_db";
 
@@ -45,6 +46,7 @@ export async function PATCH(req: Request) {
         { bidNo },
         { $set: setDoc, $push: { sectionStack: bid.currentSection } }
       );
+      await clearBidDocsIfLeavingProtectedSections(bidsCollection, bid, bid.currentSection, toSection);
       moveHistoryDocs.push({
         bidNo,
         fromSection: bid.currentSection,

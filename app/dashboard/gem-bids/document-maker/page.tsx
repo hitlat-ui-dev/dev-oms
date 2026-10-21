@@ -19,6 +19,8 @@ import {
 import BlockGuard from "@/components/BlockGuard";
 import { guessInstituteForAddress, SellerLite } from "@/lib/gemBids/instituteMatch";
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
+import { normalizeName } from "@/lib/pricelist/normalize";
+import PricelistRateChip, { PricelistRate } from "@/components/purchase/pricelist/PricelistRateChip";
 
 interface Company {
   _id: string;
@@ -89,14 +91,14 @@ interface BoqItem {
   specification?: string;
   // Real GeM result data (who actually won, at what rate) imported from
   // the user's own result-scraping extension - see
-  // lib/documentMaker/marketRateEngine.ts. Averaged across however many
-  // past results matched this item by title; min/max diff% is the spread
-  // across those samples (how much lower the winner tended to be than the
-  // rate quoted at the time), not a single fixed number.
+  // lib/documentMaker/marketRateEngine.ts. marketRate is the MOST RECENT
+  // result for this item (not an average - a trend needs real history,
+  // not a blurred single number), marketRateSamples the up-to-5 most
+  // recent full rows (rate/party/date/place/evaluation type) behind it,
+  // newest first, for the hover table.
   marketRate?: string;
-  marketRateMinDiff?: number | null;
-  marketRateMaxDiff?: number | null;
   marketRateSampleCount?: number;
+  marketRateSamples?: { rate: number; party: string; date: string | null; place: string; evaluationType: string; bidNo: string }[];
   // What we actually paid a vendor for this item, per the Received
   // Purchase ledger (token-matched server-side, see /api/gem-bids/boq's
   // GET) - a cost reference for Base Rate, not Rate, so it's shown under
@@ -279,6 +281,30 @@ function DocumentMakerPageInner() {
 
   // Rate tab - BOQ items/rates for the selected bid (see /api/gem-bids/boq*).
   const [boqItems, setBoqItems] = useState<BoqItem[]>([]);
+  // Supplier pricelist rates (Purchase > Pricelist) keyed by normalized item name - one batched
+  // call per set of item titles, refetched only when the titles themselves change.
+  const [pricelistRates, setPricelistRates] = useState<Record<string, PricelistRate[]>>({});
+  const pricelistTitlesKey = useMemo(
+    () => Array.from(new Set(boqItems.map((it) => normalizeName(it.itemTitle)).filter(Boolean))).sort().join("\n"),
+    [boqItems]
+  );
+  useEffect(() => {
+    if (!pricelistTitlesKey) {
+      setPricelistRates({});
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch("/api/purchase/pricelist/rates-for-names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names: pricelistTitlesKey.split("\n") }),
+      })
+        .then((r) => r.json())
+        .then((d) => setPricelistRates(d.rates || {}))
+        .catch(() => setPricelistRates({}));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pricelistTitlesKey]);
   const [loadingBoq, setLoadingBoq] = useState(false);
   const [savingBoq, setSavingBoq] = useState(false);
   const [uploadingBoq, setUploadingBoq] = useState(false);
@@ -855,33 +881,56 @@ function DocumentMakerPageInner() {
   // second, independent suggestion from real GeM result data (see
   // marketRateEngine.ts/Import Bid Results above). Averaged across however
   // many imported results matched this item by title.
+  // Headline = the most recent result; hovering reveals the up-to-5-row
+  // trend table behind it (rate/party/date/place/evaluation type, newest
+  // first) - a native title tooltip can't hold a real table, so this is a
+  // CSS-only (no per-row hover state needed) group-hover reveal instead.
   const renderMarketRateSuggestion = (it: BoqItem) => {
     if (!it.marketRate) return null;
-    const hasRange = it.marketRateMinDiff != null && it.marketRateMaxDiff != null;
-    // diffPercent (from the imported Excel) is (quoted rate - L1 rate) /
-    // quoted rate * 100 - positive means L1 undercut the quote, negative
-    // means the quote was already below L1. Shown sign-aware rather than
-    // always "lower", since an item can genuinely go either way across
-    // different bids/sellers.
-    let rangeLabel = "";
-    if (hasRange) {
-      const lo = Math.round(it.marketRateMinDiff!);
-      const hi = Math.round(it.marketRateMaxDiff!);
-      const direction = lo + hi >= 0 ? "lower" : "higher";
-      const absLo = Math.abs(lo);
-      const absHi = Math.abs(hi);
-      rangeLabel = absLo === absHi ? `${absLo}% ${direction}` : `${Math.min(absLo, absHi)}–${Math.max(absLo, absHi)}% ${direction}`;
-    }
+    const samples = it.marketRateSamples || [];
     return (
-      <button
-        type="button"
-        onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
-        className="text-[9px] text-purple-700 underline mt-0.5 block"
-        title={`From ${it.marketRateSampleCount} past result(s) - how much lower/higher the winning (L1) rate was than the rate quoted at the time`}
-      >
-        Market L1: {it.marketRate}
-        {rangeLabel ? ` (${rangeLabel})` : ""}
-      </button>
+      <div className="relative inline-block group/market mt-0.5">
+        <button
+          type="button"
+          onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
+          className="text-[9px] text-purple-700 underline font-bold block"
+        >
+          Market L1: {it.marketRate}
+          {it.marketRateSampleCount && it.marketRateSampleCount > 1 ? ` (${it.marketRateSampleCount} results)` : ""}
+        </button>
+        {samples.length > 0 && (
+          <div className="hidden group-hover/market:block absolute z-50 left-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 w-max max-w-sm">
+            <table className="text-[9px] border-collapse">
+              <thead>
+                <tr className="text-slate-400 font-black uppercase">
+                  <th className="text-left pr-3 pb-1">Rate</th>
+                  <th className="text-left pr-3 pb-1">L1 Party</th>
+                  <th className="text-left pr-3 pb-1">Date</th>
+                  <th className="text-left pr-3 pb-1">Place</th>
+                  <th className="text-left pb-1">Eval</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {samples.map((s, i) => (
+                  <tr key={i} className={i === 0 ? "font-bold text-slate-800" : "text-slate-500"}>
+                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.rate}</td>
+                    <td className="pr-3 py-0.5 max-w-[110px] truncate" title={s.party}>
+                      {s.party || "—"}
+                    </td>
+                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
+                    <td className="pr-3 py-0.5 max-w-[140px] truncate" title={s.place}>
+                      {s.place || "—"}
+                    </td>
+                    <td className="py-0.5 whitespace-nowrap">
+                      {s.evaluationType === "ITEM_WISE" ? "Item-wise" : s.evaluationType === "TOTAL" ? "Total" : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -902,6 +951,13 @@ function DocumentMakerPageInner() {
       </button>
     );
   };
+
+  const renderPricelistRate = (it: BoqItem) => (
+    <PricelistRateChip
+      rates={pricelistRates[normalizeName(it.itemTitle)]}
+      onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
+    />
+  );
 
   const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
     setBoqItems((prev) =>
@@ -1585,7 +1641,8 @@ function DocumentMakerPageInner() {
                                         placeholder="Base Rate"
                                         className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                       />
-                                      {renderPurchaseRateSuggestion(it)}
+                                      {renderPricelistRate(it)}
+                                    {renderPurchaseRateSuggestion(it)}
                                     </td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1605,14 +1662,14 @@ function DocumentMakerPageInner() {
                                         min="0"
                                         value={it.rate}
                                         onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
-                                        placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
-                                        className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                        placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Final Rate"}
+                                        className="w-full border-2 border-blue-300 bg-blue-50/40 rounded px-2 py-1 text-[11px] font-bold text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
                                       />
                                       {it.suggestedRate && (
                                         <button
                                           type="button"
                                           onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
-                                          className="text-[9px] text-amber-700 underline mt-0.5"
+                                          className="text-[9px] text-amber-700 underline mt-0.5 block"
                                           title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
                                         >
                                           Use {it.suggestedRate}
@@ -1658,6 +1715,7 @@ function DocumentMakerPageInner() {
                                       placeholder="Base Rate"
                                       className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                     />
+                                    {renderPricelistRate(it)}
                                     {renderPurchaseRateSuggestion(it)}
                                   </td>
                                   <td className="py-2 px-2">
@@ -1678,14 +1736,14 @@ function DocumentMakerPageInner() {
                                       min="0"
                                       value={it.rate}
                                       onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
-                                      placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
-                                      className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Final Rate"}
+                                      className="w-full border-2 border-blue-300 bg-blue-50/40 rounded px-2 py-1 text-[11px] font-bold text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
                                     />
                                     {it.suggestedRate && (
                                       <button
                                         type="button"
                                         onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
-                                        className="text-[9px] text-amber-700 underline mt-0.5"
+                                        className="text-[9px] text-amber-700 underline mt-0.5 block"
                                         title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
                                       >
                                         Use {it.suggestedRate}

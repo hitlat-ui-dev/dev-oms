@@ -9,14 +9,27 @@ export interface MarketRateRow {
   diffPercent: number;
 }
 
-/** Reads the "Bid No" row off the Summary sheet, so an import can be tagged with (and deduped by) which bid it actually came from. */
-export function parseMarketRateBidNo(buffer: Buffer): string {
+export interface MarketRateSummary {
+  bidNo: string;
+  // "ITEM_WISE" or "TOTAL", straight from the Summary sheet's own
+  // "Evaluation" row - which kind of evaluation this bid's result page
+  // used (per-item L1 vs total-value L1), shown alongside each hover-table
+  // row by request so a trend across bids with different evaluation modes
+  // isn't read as directly comparable without that context.
+  evaluationType: string;
+}
+
+/** Reads the Summary sheet's "Bid No" and "Evaluation" rows, so an import can be tagged with (and deduped by) which bid it came from and how that bid was evaluated. */
+export function parseMarketRateSummary(buffer: Buffer): MarketRateSummary {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const sheetName = workbook.SheetNames.find((n) => n.toLowerCase() === "summary");
-  if (!sheetName) return "";
+  if (!sheetName) return { bidNo: "", evaluationType: "" };
   const rows: any[][] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
-  const row = rows.find((r) => String(r[0] || "").trim().toLowerCase() === "bid no");
-  return row ? String(row[1] || "").trim() : "";
+  const get = (label: string) => {
+    const row = rows.find((r) => String(r[0] || "").trim().toLowerCase() === label);
+    return row ? String(row[1] || "").trim() : "";
+  };
+  return { bidNo: get("bid no"), evaluationType: get("evaluation") };
 }
 
 // Parses the "Rates" sheet of a Bid Results Excel exported by the user's

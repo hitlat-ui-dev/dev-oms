@@ -366,21 +366,6 @@ export default function OrdersListPage() {
   // effect above and fetchTabData's own effect respectively — an extra
   // duplicate fetch of both used to happen here on every page load.
 
-  const handlePaymentToggle = async (orderId: string, currentStatus: boolean) => {
-    try {
-      setOrders(prev => prev.map(o => o._id === orderId ? { ...o, isPaid: !currentStatus } : o));
-      const res = await fetch(`/api/seller-orders/${orderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPaid: !currentStatus }),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-    } catch (err) {
-      alert("Payment status failed to save. Reverting...");
-      fetchOrders();
-    }
-  };
-
 
   const handleStatusUpdate = async (orderId: string, newStatus: string) => {
     const orderToUpdate = orders.find(o => o._id === orderId);
@@ -1685,7 +1670,14 @@ const shippingLock = useRef(false);
               <tr key={order._id} className="hover:bg-slate-50 transition-colors divide-x divide-slate-100">
                 {activeTab === "ALL" && (
                   <td className="px-2 py-2 text-center">
-                    <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer" checked={order.isPaid || false} onChange={() => handlePaymentToggle(order._id, order.isPaid)} />
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-not-allowed opacity-70"
+                      checked={order.isPaid || false}
+                      disabled
+                      readOnly
+                      title="Set by confirming the payment in Bank Reconciliation - not editable here"
+                    />
                   </td>
                 )}
                 {activeTab === "DELIVERY" && (

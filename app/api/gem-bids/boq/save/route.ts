@@ -57,17 +57,48 @@ export async function POST(req: Request) {
 
     await db.collection("gem_bids").updateOne({ _id: new ObjectId(bidId) }, { $set: { boqRates, boqRatesUpdatedAt: now } });
 
-    const historyOps = boqRates
-      .filter((it: any) => it.rate && it.itemTitle)
-      .map((it: any) => ({
-        updateOne: {
-          filter: { itemKey: normalizeItemKey(it.itemTitle) },
-          update: { $set: { itemKey: normalizeItemKey(it.itemTitle), itemTitle: it.itemTitle, rate: it.rate, bidNo: bid.bidNo, updatedAt: now } },
-          upsert: true,
-        },
-      }));
+    const ratedItems = boqRates.filter((it: any) => it.rate && it.itemTitle);
+    const historyOps = ratedItems.map((it: any) => ({
+      updateOne: {
+        filter: { itemKey: normalizeItemKey(it.itemTitle) },
+        update: { $set: { itemKey: normalizeItemKey(it.itemTitle), itemTitle: it.itemTitle, rate: it.rate, bidNo: bid.bidNo, updatedAt: now } },
+        upsert: true,
+      },
+    }));
     if (historyOps.length > 0) {
       await db.collection("gem_bid_item_rate_history").bulkWrite(historyOps, { ordered: false });
+    }
+
+    // Append-only log (unlike gem_bid_item_rate_history above, which only
+    // ever keeps the latest rate per item - this keeps every one, for the
+    // Central Item Rates page's trend view). Skips an item whose most
+    // recent logged entry for THIS bid already has the same rate, so
+    // re-saving unchanged values on every edit doesn't spam the log with
+    // identical rows - only a genuine change (or a first save) adds one.
+    if (ratedItems.length > 0) {
+      const logCollection = db.collection("gem_bid_item_rate_log");
+      const itemKeys = ratedItems.map((it: any) => normalizeItemKey(it.itemTitle));
+      const lastLogged = await logCollection
+        .find({ bidNo: bid.bidNo, itemKey: { $in: itemKeys } })
+        .sort({ savedAt: -1 })
+        .toArray();
+      const lastRateByKey = new Map<string, string>();
+      for (const l of lastLogged) if (!lastRateByKey.has(l.itemKey)) lastRateByKey.set(l.itemKey, l.rate);
+
+      const logDocs = ratedItems
+        .filter((it: any) => lastRateByKey.get(normalizeItemKey(it.itemTitle)) !== it.rate)
+        .map((it: any) => ({
+          itemKey: normalizeItemKey(it.itemTitle),
+          itemTitle: it.itemTitle,
+          rate: it.rate,
+          baseRate: it.baseRate || "",
+          marginPercent: it.marginPercent || "",
+          bidNo: bid.bidNo,
+          savedAt: now,
+        }));
+      if (logDocs.length > 0) {
+        await logCollection.insertMany(logDocs);
+      }
     }
 
     return NextResponse.json({ success: true, savedCount: boqRates.length });

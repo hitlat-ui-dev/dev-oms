@@ -108,9 +108,11 @@ interface BoqItem {
   suggestedFromBidNo: string;
   specification?: string;
   marketRate?: string;
-  marketRateMinDiff?: number | null;
-  marketRateMaxDiff?: number | null;
   marketRateSampleCount?: number;
+  marketRateSamples?: { rate: number; party: string; date: string | null; place: string; evaluationType: string; bidNo: string }[];
+  purchaseRate?: string;
+  purchaseVendor?: string;
+  purchaseDate?: string | null;
 }
 
 // Matching algorithm itself now lives in lib/gemBids/instituteMatch.ts
@@ -352,16 +354,17 @@ export default function GemBidTable({
   // Regular Bid's hand-typed items (boqRates with no source file at all -
   // see document-maker/page.tsx's Fill Rates panel) - either way there's a
   // rate list worth opening. "BOQ Specifications" only ever comes from an
-  // uploaded/auto-fetched Specification Document. "(REGULAR BID)" is shown
-  // once autoDocLinksJob.ts has actually checked this bid's Bid Document
-  // and found no such table in it at all - not just "nothing yet", which
-  // would flash on every bid for the few minutes before that job gets to
-  // it.
+  // uploaded/auto-fetched Specification Document. "(REGULAR BID)" is keyed
+  // on the BOQ Detail Document specifically (not Specification) - shown
+  // whenever autoDocLinksJob.ts has checked this bid's Bid Document and it
+  // still has no BOQ (neither auto-fetched nor manually typed in), by
+  // request: a bid can have a Specification link but no BOQ table at all,
+  // and that still counts as "regular" for this label's purposes.
   const renderDocLinks = (b: GemBid) => {
     const hasBoqRates = !!(b.boqDetailDoc?.fileKey || (Array.isArray(b.boqRates) && b.boqRates.length > 0));
     const hasSpec = !!b.specificationDoc?.fileKey;
-    const checkedEmpty = !!b.autoDocLinksCheckedAt && !b.autoDocLinksFound && !hasBoqRates && !hasSpec;
-    if (!hasBoqRates && !hasSpec && !checkedEmpty) return null;
+    const checkedNoBoq = !!b.autoDocLinksCheckedAt && !hasBoqRates;
+    if (!hasBoqRates && !hasSpec && !checkedNoBoq) return null;
     return (
       <div className="mt-1 flex flex-col items-start gap-0.5">
         {hasBoqRates && (
@@ -382,7 +385,7 @@ export default function GemBidTable({
             BOQ Specifications
           </button>
         )}
-        {checkedEmpty && <span className="text-[9px] text-slate-400 font-bold">(REGULAR BID)</span>}
+        {checkedNoBoq && <span className="text-[9px] text-slate-400 font-bold">(REGULAR BID)</span>}
       </div>
     );
   };
@@ -412,28 +415,72 @@ export default function GemBidTable({
   // Same real-GeM-result-data suggestion as document-maker/page.tsx's own
   // copy of this (see marketRateEngine.ts) - duplicated rather than
   // shared, consistent with this file already keeping its own BoqItem
-  // shape/update handlers separate from that page's.
+  // shape/update handlers separate from that page's. Headline = most
+  // recent result; hover reveals the up-to-5-row trend table behind it.
   const renderMarketRateSuggestion = (it: BoqItem) => {
     if (!it.marketRate) return null;
-    const hasRange = it.marketRateMinDiff != null && it.marketRateMaxDiff != null;
-    let rangeLabel = "";
-    if (hasRange) {
-      const lo = Math.round(it.marketRateMinDiff!);
-      const hi = Math.round(it.marketRateMaxDiff!);
-      const direction = lo + hi >= 0 ? "lower" : "higher";
-      const absLo = Math.abs(lo);
-      const absHi = Math.abs(hi);
-      rangeLabel = absLo === absHi ? `${absLo}% ${direction}` : `${Math.min(absLo, absHi)}–${Math.max(absLo, absHi)}% ${direction}`;
-    }
+    const samples = it.marketRateSamples || [];
+    return (
+      <div className="relative inline-block group/market mt-0.5">
+        <button
+          type="button"
+          onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
+          className="text-[9px] text-purple-700 underline font-bold block"
+        >
+          Market L1: {it.marketRate}
+          {it.marketRateSampleCount && it.marketRateSampleCount > 1 ? ` (${it.marketRateSampleCount} results)` : ""}
+        </button>
+        {samples.length > 0 && (
+          <div className="hidden group-hover/market:block absolute z-50 left-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 w-max max-w-sm">
+            <table className="text-[9px] border-collapse">
+              <thead>
+                <tr className="text-slate-400 font-black uppercase">
+                  <th className="text-left pr-3 pb-1">Rate</th>
+                  <th className="text-left pr-3 pb-1">L1 Party</th>
+                  <th className="text-left pr-3 pb-1">Date</th>
+                  <th className="text-left pr-3 pb-1">Place</th>
+                  <th className="text-left pb-1">Eval</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {samples.map((s, i) => (
+                  <tr key={i} className={i === 0 ? "font-bold text-slate-800" : "text-slate-500"}>
+                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.rate}</td>
+                    <td className="pr-3 py-0.5 max-w-[110px] truncate" title={s.party}>
+                      {s.party || "—"}
+                    </td>
+                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
+                    <td className="pr-3 py-0.5 max-w-[140px] truncate" title={s.place}>
+                      {s.place || "—"}
+                    </td>
+                    <td className="py-0.5 whitespace-nowrap">
+                      {s.evaluationType === "ITEM_WISE" ? "Item-wise" : s.evaluationType === "TOTAL" ? "Total" : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // What we actually paid for this item last time, per Received Purchase -
+  // same as document-maker/page.tsx's own copy (see /api/gem-bids/boq's
+  // GET). This modal has no Base Rate field of its own (just Rate), so
+  // this fills rate directly rather than a base/margin split.
+  const renderPurchaseRateSuggestion = (it: BoqItem) => {
+    if (!it.purchaseRate) return null;
+    const dateLabel = it.purchaseDate ? new Date(it.purchaseDate).toLocaleDateString("en-IN") : "";
     return (
       <button
         type="button"
-        onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
-        className="text-[9px] text-purple-700 underline mt-0.5 block"
-        title={`From ${it.marketRateSampleCount} past result(s) - how much lower/higher the winning (L1) rate was than the rate quoted at the time`}
+        onClick={() => updateBoqRate(it.itemNumber, it.purchaseRate!)}
+        className="text-[9px] text-emerald-700 underline mt-0.5 block"
+        title={[it.purchaseVendor, dateLabel].filter(Boolean).join(" — ") || undefined}
       >
-        Market L1: {it.marketRate}
-        {rangeLabel ? ` (${rangeLabel})` : ""}
+        Purchased: {it.purchaseRate}
       </button>
     );
   };
@@ -1584,17 +1631,23 @@ export default function GemBidTable({
                           <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
                           <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
                           <td className="py-2 px-2">
+                            {/* Blue = the actual decision - everything
+                                above/below it (green Purchased, orange
+                                Use, purple Market L1) is reference context
+                                you weigh before typing the number that
+                                actually counts. */}
                             <input
                               value={it.rate}
                               onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
-                              placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Rate"}
-                              className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                              placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Final Rate"}
+                              className="w-full border-2 border-blue-300 bg-blue-50/40 rounded px-2 py-1 text-[11px] font-bold text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
                             />
+                            {renderPurchaseRateSuggestion(it)}
                             {it.suggestedRate && (
                               <button
                                 type="button"
                                 onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
-                                className="text-[9px] text-amber-700 underline mt-0.5"
+                                className="text-[9px] text-amber-700 underline mt-0.5 block"
                                 title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
                               >
                                 Use {it.suggestedRate}

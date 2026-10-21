@@ -29,3 +29,33 @@ export async function deleteBidDocumentsFromR2(bids: any[]): Promise<void> {
     )
   );
 }
+
+const PROTECTED_DOC_SECTIONS = new Set(["bids_to_fill", "submitted_bids"]);
+
+/**
+ * Called from move/route.ts and send-back/route.ts right after a bid's
+ * currentSection actually changes - if it's LEAVING Bids to Fill/Submitted
+ * Bids (the only two sections the Fill Rates/BOQ Rates workflow ever
+ * touches), its fetched documents no longer serve any purpose there and
+ * are deleted, by request: "bina kaam ke documents space occupy na kare"
+ * (no point in them sitting around once the bid isn't somewhere they're
+ * usable). boqRates (the actual rates typed in) is deliberately left
+ * alone - that's real work product, not a fetched document, and should
+ * still be there if the bid comes back. autoDocLinksCheckedAt/
+ * autoDocLinksFound/autoDocLinksRetryCount and docFetch are reset too, so
+ * a bid that re-enters one of these two sections later (Send To again)
+ * gets a clean fetch attempt instead of silently staying empty forever
+ * because it already "looks checked".
+ */
+export async function clearBidDocsIfLeavingProtectedSections(
+  bidsCollection: any,
+  bid: any,
+  fromSection: string,
+  toSection: string
+): Promise<void> {
+  if (!PROTECTED_DOC_SECTIONS.has(fromSection) || PROTECTED_DOC_SECTIONS.has(toSection)) return;
+  await deleteBidDocumentsFromR2([bid]);
+  const unset: Record<string, string> = { docFetch: "", autoDocLinksCheckedAt: "", autoDocLinksFound: "", autoDocLinksRetryCount: "" };
+  for (const field of DOC_FIELDS) unset[field] = "";
+  await bidsCollection.updateOne({ _id: bid._id }, { $unset: unset });
+}

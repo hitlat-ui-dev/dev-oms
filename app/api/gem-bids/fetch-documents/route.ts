@@ -82,6 +82,17 @@ export async function GET() {
           bidLink: bid.bidLink || "",
           buyerAddedBidSpecificAtcUrl: bid.buyerAddedBidSpecificAtcUrl || "",
           boqDetailDocumentUrl: bid.boqDetailDocumentUrl || "",
+          // Already-fetched flags (manually uploaded, or auto-fetched by
+          // autoDocLinksJob.ts from the Bid Document's own embedded links -
+          // a more reliable source than this route's own
+          // boqDetailDocumentUrl/buyerAddedBidSpecificAtcUrl text fields,
+          // see linkExtractEngine.ts) - the extension skips re-fetching
+          // either one it's already got, by request: a redundant re-fetch
+          // here used to risk silently overwriting a good auto-fetched BOQ
+          // with whatever (often wrong/missing) this legacy text-field
+          // extraction came up with.
+          hasBoqDetailDoc: !!bid.boqDetailDoc?.fileKey,
+          hasAtc: !!bid.bidSpecificAtc?.fileKey,
         },
       },
       { headers: corsHeaders }

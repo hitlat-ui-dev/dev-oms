@@ -591,8 +591,13 @@ async function pollAndMaybeFetchBidDocuments() {
 
     // Blank on many bids - GeM's ATC download is often a JS action rather
     // than a real link embedded in the PDF (see content.js's ATC_LABEL
-    // comment), not a sign anything is broken.
-    if (bid.buyerAddedBidSpecificAtcUrl) {
+    // comment), not a sign anything is broken. Skipped entirely if one's
+    // already fetched (manually, or by autoDocLinksJob.ts) - a redundant
+    // re-fetch here used to risk silently overwriting a good one with
+    // whatever this far less reliable text-field extraction comes up with.
+    if (bid.hasAtc) {
+      // already have one - nothing to do
+    } else if (bid.buyerAddedBidSpecificAtcUrl) {
       try {
         const bytes = await fetchGemPdfBytes(bid.buyerAddedBidSpecificAtcUrl);
         await uploadFetchedBidDoc(apiBase, bid._id, "atc", bytes);
@@ -603,8 +608,10 @@ async function pollAndMaybeFetchBidDocuments() {
       errors.atc = "No buyer-added ATC link on this bid";
     }
 
-    // Also blank on many bids - not every bid has a BOQ requirement.
-    if (bid.boqDetailDocumentUrl) {
+    // Same "skip if already fetched" reasoning as ATC above.
+    if (bid.hasBoqDetailDoc) {
+      // already have one - nothing to do
+    } else if (bid.boqDetailDocumentUrl) {
       try {
         const bytes = await fetchGemXlsxBytes(bid.boqDetailDocumentUrl);
         await uploadFetchedBidDoc(apiBase, bid._id, "boq", bytes);

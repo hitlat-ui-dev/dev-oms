@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
-import { parseMarketRateXlsx, parseMarketRateBidNo } from "@/lib/documentMaker/marketRateEngine";
+import { parseMarketRateXlsx, parseMarketRateSummary } from "@/lib/documentMaker/marketRateEngine";
 
 const DB_NAME = "dev_oms_db";
 
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const bidNo = parseMarketRateBidNo(buffer);
+    const { bidNo, evaluationType } = parseMarketRateSummary(buffer);
     const rows = parseMarketRateXlsx(buffer);
     if (rows.length === 0) {
       return NextResponse.json({ error: "No usable rows found (need Item Name + a real L1 Rate on the Rates sheet)" }, { status: 422 });
@@ -34,6 +34,12 @@ export async function POST(req: Request) {
 
     if (bidNo) await collection.deleteMany({ bidNo });
 
+    // "Place" for the hover table (see /api/gem-bids/boq's GET) - resolved
+    // once here against the bid this result came from (if it's still in
+    // the OMS) and stored denormalized on every row, rather than joined on
+    // every Fill Rates page load.
+    const place = bidNo ? (await db.collection("gem_bids").findOne({ bidNo }, { projection: { address: 1 } }))?.address || "" : "";
+
     const now = new Date();
     await collection.insertMany(
       rows.map((r) => ({
@@ -43,6 +49,8 @@ export async function POST(req: Request) {
         l1Party: r.l1Party,
         diffPercent: Number.isFinite(r.diffPercent) ? r.diffPercent : null,
         bidNo: bidNo || null,
+        evaluationType: evaluationType || "",
+        place,
         importedAt: now,
       }))
     );

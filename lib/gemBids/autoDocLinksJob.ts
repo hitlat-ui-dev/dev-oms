@@ -6,6 +6,13 @@ const LAST_RUN_KEY = "lastAutoDocLinksJobDate";
 const MIN_INTERVAL_MS = 2 * 60 * 1000;
 const ENQUEUE_BATCH_SIZE = 10;
 const EXTRACT_BATCH_SIZE = 5;
+// A genuine per-bid failure (R2 hiccup, a transient fetch error reaching
+// mkp.gem.gov.in, etc.) gets a few more tries on later runs before this
+// gives up and treats it the same as "no such table in this bid" - rather
+// than either retrying forever on a truly broken file, or (the bug this
+// replaced) recording a single failure as permanent fact. See the catch
+// block below for the retryCount bookkeeping this backs.
+const MAX_RETRIES = 5;
 
 export interface AutoDocLinksJobResult {
   ran: boolean;
@@ -90,7 +97,7 @@ export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobR
         "bidLinkDoc.fileKey": { $exists: true },
         autoDocLinksCheckedAt: { $exists: false },
       },
-      { projection: { _id: 1, bidLinkDoc: 1, boqDetailDoc: 1, specificationDoc: 1 } }
+      { projection: { _id: 1, bidLinkDoc: 1, boqDetailDoc: 1, specificationDoc: 1, autoDocLinksRetryCount: 1 } }
     )
     .limit(EXTRACT_BATCH_SIZE)
     .toArray();
@@ -131,11 +138,26 @@ export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobR
       extracted++;
     } catch (err) {
       console.error("autoDocLinksJob: failed for bid", bid._id.toString(), err);
-      // Still mark checked - a bid whose Bid Document genuinely can't be
-      // parsed (corrupt fetch, etc.) shouldn't be retried every 2 minutes
-      // forever; a fresh "Fetch Documents" re-run clears bidLinkDoc's
-      // staleness the same way any other re-fetch does.
-      await bidsCollection.updateOne({ _id: bid._id }, { $set: { autoDocLinksCheckedAt: now, autoDocLinksFound: false } });
+      const retryCount = (bid.autoDocLinksRetryCount || 0) + 1;
+      if (retryCount >= MAX_RETRIES) {
+        // Given up - after this many genuine failures, treat it the same
+        // as "checked, nothing found" so it stops being retried forever.
+        // A fresh "Fetch Documents" re-run (which clears bidLinkDoc) is
+        // still what un-sticks a bid that's actually fixable.
+        await bidsCollection.updateOne(
+          { _id: bid._id },
+          { $set: { autoDocLinksCheckedAt: now, autoDocLinksFound: false, autoDocLinksRetryCount: retryCount } }
+        );
+      } else {
+        // Deliberately NOT setting autoDocLinksCheckedAt - this is what
+        // used to be the bug: a single failure (most commonly the
+        // function simply running out of time, see the route's own
+        // maxDuration comment) got recorded as "confirmed, no links in
+        // this bid" forever, indistinguishable from a bid that genuinely
+        // has no such table. Leaving it unset means the query above picks
+        // this bid up again on a later run instead.
+        await bidsCollection.updateOne({ _id: bid._id }, { $set: { autoDocLinksRetryCount: retryCount } });
+      }
     }
   }
 
