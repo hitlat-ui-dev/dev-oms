@@ -1593,7 +1593,7 @@ export default function GemBidTable({
 
       {boqBidId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-[95vw] lg:max-w-6xl max-h-[90vh] overflow-y-auto shadow-2xl">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
               <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">BOQ Rates — {boqBidNo}</h3>
               <button onClick={() => setBoqBidId(null)} className="text-slate-400 hover:text-slate-700">
@@ -1608,7 +1608,13 @@ export default function GemBidTable({
               ) : boqItems.length === 0 ? (
                 <p className="text-xs text-slate-400 text-center py-8">No items found in this BOQ.</p>
               ) : (
-                <div className="overflow-x-auto">
+                // No overflow-x-auto here (used to clip the Market L1
+                // hover table at its right edge, since an absolutely
+                // positioned popup can't escape a scroll-clipped ancestor
+                // regardless of z-index) - the modal is wide enough now
+                // that these 6 columns don't need horizontal scrolling of
+                // their own.
+                <div>
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-black">
                       <tr>

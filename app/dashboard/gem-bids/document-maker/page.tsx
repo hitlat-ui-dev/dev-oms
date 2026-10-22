@@ -15,6 +15,8 @@ import {
   FiFolder,
   FiX,
   FiPercent,
+  FiCopy,
+  FiCheck,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { guessInstituteForAddress, SellerLite } from "@/lib/gemBids/instituteMatch";
@@ -766,6 +768,31 @@ function DocumentMakerPageInner() {
     }
   };
 
+  // Signed R2 URL for a kind already fetched/uploaded for this bid (see
+  // /api/gem-bids/document-preview) - opened directly in a new tab, same
+  // "BOQ Specifications" preview link GemBidTable.tsx already has.
+  const openDocPreview = async (bidId: string, kind: "boq" | "spec") => {
+    try {
+      const res = await fetch(`/api/gem-bids/document-preview?bidId=${bidId}&kind=${kind}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Preview failed");
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      alert(err.message || "Preview failed");
+    }
+  };
+
+  const [copiedBidNo, setCopiedBidNo] = useState(false);
+  const copyBidNo = async (bidNo: string) => {
+    try {
+      await navigator.clipboard.writeText(bidNo);
+      setCopiedBidNo(true);
+      setTimeout(() => setCopiedBidNo(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy bid number", err);
+    }
+  };
+
   // Bid Results import (see lib/documentMaker/marketRateEngine.ts) - not
   // tied to the selected bid at all, unlike every other upload on this
   // panel: the Excel this reads already names its own bid number
@@ -1314,6 +1341,18 @@ function DocumentMakerPageInner() {
           {selectedBid && (
             <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[11px] bg-white border border-slate-200 rounded-xl px-3 py-2.5 shadow-sm">
               <span>
+                <span className="font-black uppercase text-slate-400 mr-1">Bid No:</span>
+                <span className="font-bold text-slate-700">{selectedBid.bidNo}</span>
+                <button
+                  type="button"
+                  onClick={() => copyBidNo(selectedBid.bidNo)}
+                  title="Copy Bid No"
+                  className="inline-flex items-center ml-1.5 text-slate-400 hover:text-blue-600 align-middle"
+                >
+                  {copiedBidNo ? <FiCheck size={12} className="text-emerald-600" /> : <FiCopy size={12} />}
+                </button>
+              </span>
+              <span>
                 <span className="font-black uppercase text-slate-400 mr-1">Item:</span>
                 <span className="font-bold text-slate-700">{selectedBid.items || "—"}</span>
               </span>
@@ -1350,6 +1389,20 @@ function DocumentMakerPageInner() {
                   <a href={selectedBid.buyerAddedBidSpecificAtcUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">
                     Link
                   </a>
+                ) : (
+                  <span className="text-slate-400 font-bold">—</span>
+                )}
+              </span>
+              <span>
+                <span className="font-black uppercase text-slate-400 mr-1">Specification:</span>
+                {hasSpecDocument ? (
+                  <button
+                    type="button"
+                    onClick={() => selectedBidId && openDocPreview(selectedBidId, "spec")}
+                    className="text-blue-600 underline font-bold"
+                  >
+                    Link
+                  </button>
                 ) : (
                   <span className="text-slate-400 font-bold">—</span>
                 )}
@@ -1418,34 +1471,38 @@ function DocumentMakerPageInner() {
                 </div>
               ) : (
                 <div className="p-5 flex flex-col gap-3">
-                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
-                    {(["boq", "regular"] as const).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setBidType(t)}
-                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
-                          bidType === t ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        {t === "boq" ? "BOQ Bid" : "Regular Bid"}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Toggle + BOQ/Regular upload + Specification upload, all
+                      in one wrapping row rather than four stacked blocks -
+                      this whole panel used to take a lot more vertical
+                      space than these few short controls actually need. */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
+                      {(["boq", "regular"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setBidType(t)}
+                          className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
+                            bidType === t ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          {t === "boq" ? "BOQ Bid" : "Regular Bid"}
+                        </button>
+                      ))}
+                    </div>
 
-                  {bidType === "regular" ? (
-                    <>
-                      <input
-                        ref={regularFileRef}
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) importRegularExcel(f);
-                          e.target.value = "";
-                        }}
-                      />
-                      <div className="flex flex-wrap items-center gap-2">
+                    {bidType === "regular" ? (
+                      <>
+                        <input
+                          ref={regularFileRef}
+                          type="file"
+                          accept=".xlsx,.xls,.csv"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) importRegularExcel(f);
+                            e.target.value = "";
+                          }}
+                        />
                         <button
                           onClick={addRegularItem}
                           className="w-fit flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
@@ -1460,26 +1517,20 @@ function DocumentMakerPageInner() {
                           <FiUploadCloud size={13} />
                           {importingRegularExcel ? "Reading..." : "Upload Excel"}
                         </button>
-                        <span className="text-[9px] text-slate-400">
-                          Same Item Number/Title/Quantity/Unit of Measure columns as a BOQ file - rows are added to
-                          the list below, still fully editable.
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <input
-                        ref={boqFileRef}
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) uploadBoqFile(f);
-                          e.target.value = "";
-                        }}
-                      />
-                      <div className="flex flex-wrap items-center gap-2">
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          ref={boqFileRef}
+                          type="file"
+                          accept=".xlsx,.xls,.csv"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) uploadBoqFile(f);
+                            e.target.value = "";
+                          }}
+                        />
                         <button
                           disabled={uploadingBoq}
                           onClick={() => boqFileRef.current?.click()}
@@ -1490,7 +1541,7 @@ function DocumentMakerPageInner() {
                         </button>
                         {hasBoqDocument && (
                           <>
-                            <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                            <span className="text-[10px] font-black uppercase text-emerald-600">✓ Loaded</span>
                             <button
                               disabled={removingDoc === "boq"}
                               onClick={() => removeDocument("boq")}
@@ -1501,33 +1552,33 @@ function DocumentMakerPageInner() {
                             </button>
                           </>
                         )}
-                      </div>
-                    </>
-                  )}
+                      </>
+                    )}
 
-                  <input
-                    ref={specFileRef}
-                    type="file"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) uploadSpecFile(f);
-                      e.target.value = "";
-                    }}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-px self-stretch bg-slate-200 mx-1" />
+
+                    <input
+                      ref={specFileRef}
+                      type="file"
+                      accept=".pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) uploadSpecFile(f);
+                        e.target.value = "";
+                      }}
+                    />
                     <button
                       disabled={uploadingSpec}
                       onClick={() => specFileRef.current?.click()}
                       className="w-fit flex items-center gap-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[10px] tracking-wide py-2.5 px-4 rounded-lg transition-colors"
                     >
                       <FiUploadCloud size={13} />
-                      {uploadingSpec ? "Uploading..." : hasSpecDocument ? "Replace Specification Document" : "Upload Specification Document"}
+                      {uploadingSpec ? "Uploading..." : hasSpecDocument ? "Replace Specification Doc" : "Upload Specification Doc"}
                     </button>
                     {hasSpecDocument && (
                       <>
-                        <span className="text-[10px] font-black uppercase text-emerald-600">✓ File loaded</span>
+                        <span className="text-[10px] font-black uppercase text-emerald-600">✓ Loaded</span>
                         <button
                           disabled={removingDoc === "spec"}
                           onClick={() => removeDocument("spec")}
@@ -1539,6 +1590,12 @@ function DocumentMakerPageInner() {
                       </>
                     )}
                   </div>
+                  {bidType === "regular" && (
+                    <p className="text-[9px] text-slate-400 -mt-2">
+                      Upload Excel: same Item Number/Title/Quantity/Unit of Measure columns as a BOQ file - rows are
+                      added to the list below, still fully editable.
+                    </p>
+                  )}
 
                   {boqItems.length > 0 && (
                     <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">

@@ -211,7 +211,10 @@ export default function FinalRatesPage() {
                             {b.raQualificationRule ? ` / ${b.raQualificationRule}` : ""}
                           </td>
                           <td className="py-2 px-2 text-slate-600 whitespace-nowrap">{b.typeOfBid || "—"}</td>
-                          <td className="py-2 px-2 text-slate-600 whitespace-nowrap">
+                          <td
+                            className="py-2 px-2 text-slate-600 max-w-[220px] truncate"
+                            title={[b.evaluationMethod, b.emdAmount].filter(Boolean).join(" / ")}
+                          >
                             {b.evaluationMethod || "—"}
                             {b.emdAmount ? ` / ${b.emdAmount}` : ""}
                           </td>
