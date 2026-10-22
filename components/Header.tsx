@@ -3,7 +3,7 @@ import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey,
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
+// DISABLED (Urgent Tasks): import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 import GemCredentialsPanel from "@/components/GemCredentialsPanel";
 import MetalCalculatorPanel from "@/components/MetalCalculatorPanel";
 import AttendanceReminder from "@/components/AttendanceReminder";
@@ -77,41 +77,42 @@ export default function Header() {
     };
   }, [router]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    if (pathname === "/dashboard/todo-chat") {
-      setHasNotification(false);
-      localStorage.setItem("workspace_last_viewed", String(Date.now()));
-      return;
-    }
-
-    const checkUpdates = async () => {
-      try {
-        const lastViewedStr = localStorage.getItem("workspace_last_viewed");
-        const lastViewed = lastViewedStr ? Number(lastViewedStr) : 0;
-
-        const todoRes = await fetch("/api/todo?status=Pending&t=" + Date.now());
-        if (todoRes.ok) {
-          const tasks = await todoRes.json();
-          setTodoTasks(tasks);
-          if (tasks.length > 0 && pathname !== "/dashboard/todo-chat") {
-            const latestTask = tasks[0];
-            const taskTime = new Date(latestTask.createdAt).getTime();
-            if (taskTime > lastViewed && latestTask.createdBy !== user?.username) {
-              setHasNotification(true);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Notification check error", err);
-      }
-    };
-
-    // Once per page visit is enough for the Workspace badge - no recurring
-    // background poll (that used to also cover Chat/DMs, both removed).
-    checkUpdates();
-  }, [pathname, user?.username]);
+// DISABLED for now (Workspace feature) - uncomment to re-enable
+//   useEffect(() => {
+//     if (typeof window === "undefined") return;
+// 
+//     if (pathname === "/dashboard/todo-chat") {
+//       setHasNotification(false);
+//       localStorage.setItem("workspace_last_viewed", String(Date.now()));
+//       return;
+//     }
+// 
+//     const checkUpdates = async () => {
+//       try {
+//         const lastViewedStr = localStorage.getItem("workspace_last_viewed");
+//         const lastViewed = lastViewedStr ? Number(lastViewedStr) : 0;
+// 
+//         const todoRes = await fetch("/api/todo?status=Pending&t=" + Date.now());
+//         if (todoRes.ok) {
+//           const tasks = await todoRes.json();
+//           setTodoTasks(tasks);
+//           if (tasks.length > 0 && pathname !== "/dashboard/todo-chat") {
+//             const latestTask = tasks[0];
+//             const taskTime = new Date(latestTask.createdAt).getTime();
+//             if (taskTime > lastViewed && latestTask.createdBy !== user?.username) {
+//               setHasNotification(true);
+//             }
+//           }
+//         }
+//       } catch (err) {
+//         console.error("Notification check error", err);
+//       }
+//     };
+// 
+//     // Once per page visit is enough for the Workspace badge - no recurring
+//     // background poll (that used to also cover Chat/DMs, both removed).
+//     checkUpdates();
+//   }, [pathname, user?.username]);
 
   const fetchTodoTasks = async () => {
     try {
@@ -283,124 +284,126 @@ export default function Header() {
 
       <div className="flex items-center gap-1.5 sm:gap-4 md:gap-8 shrink-0">
 
-        {/* Workspace Dropdown Popover */}
-        <div className="relative">
-          <button 
-            type="button"
-            onClick={() => setShowTodoDropdown(prev => !prev)}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
-            title="Workspace To-Do List"
-          >
-            <FiCheckSquare size={13} /> <span className="hidden sm:inline">Workspace</span>
-            {hasNotification && (
-              <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-              </span>
-            )}
-          </button>
-
-          {showTodoDropdown && (
-            <>
-              {/* Invisible Clickable Backdrop to close dropdown */}
-              <div 
-                className="fixed inset-0 z-40 bg-transparent"
-                onClick={() => setShowTodoDropdown(false)}
-              />
-              
-              {/* Dropdown Card - same viewport-safe positioning as the Chat card above */}
-              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-80 md:w-96 max-w-full sm:max-w-none bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
-                <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                    <FiCheckSquare className="text-blue-600" size={14} /> Team Tasks
-                    {todoTasks.filter(t => t.status === "Pending").length > 0 && (
-                      <span className="bg-orange-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
-                        {todoTasks.filter(t => t.status === "Pending").length}
-                      </span>
-                    )}
-                  </h3>
-                  <Link
-                    href="/dashboard/todo-chat"
-                    onClick={() => setShowTodoDropdown(false)}
-                    className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-700 hover:underline"
-                  >
-                    Open Workspace →
-                  </Link>
-                </div>
-
-                {/* Tasks List */}
-                <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
-                  {todoTasks.filter(t => t.status === "Pending").length === 0 ? (
-                    <div className="text-center py-6 text-emerald-600 uppercase tracking-widest text-[10px] font-black">
-                      ✓ No pending tasks!
-                    </div>
-                  ) : (
-                    todoTasks.filter(t => t.status === "Pending").map(task => (
-                      <button
-                        key={task._id}
-                        type="button"
-                        onClick={() => handleToggleTask(task._id, task.status)}
-                        className="w-full flex items-start gap-2.5 p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-200 rounded-xl transition-all text-left cursor-pointer group"
-                      >
-                        <span className="mt-0.5 text-slate-300 group-hover:text-blue-500 transition-colors flex-shrink-0">
-                          <FiSquare size={15} />
-                        </span>
-                        <span className="flex-1 min-w-0">
-                          <span className="text-slate-800 font-bold block leading-snug break-words text-xs">{task.title}</span>
-                          {task.description && (
-                            <span className="text-[10px] text-slate-500 mt-0.5 truncate block leading-relaxed">{task.description}</span>
-                          )}
-                          <span className="flex flex-wrap items-center gap-2 mt-1">
-                            {task.assignedTo && (
-                              <span className="text-[8px] font-black uppercase text-orange-700 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded capitalize">
-                                {task.assignedTo}
-                              </span>
-                            )}
-                            <span className="text-[8px] text-slate-400 font-bold">By {task.createdBy}</span>
-                          </span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-
-                {/* Inline Add Task Form */}
-                <form onSubmit={handleAddTask} className="relative mt-3.5 pt-3 border-t border-slate-100 flex items-center gap-2">
-                  {showSuggestions && (
-                    <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1 max-h-32 overflow-y-auto">
-                      {filteredSuggestions.map(u => (
-                        <button
-                          key={u._id}
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handleSelectSuggestion(u.username)}
-                          className="w-full text-left px-2.5 py-1.5 hover:bg-blue-600 hover:text-white rounded-lg text-[11px] font-bold text-slate-700 transition-colors cursor-pointer capitalize"
-                        >
-                          {u.username}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <input
-                    type="text"
-                    placeholder="Add task... Use @name to assign"
-                    value={newTodoTitle}
-                    onChange={(e) => handleTaskInputChange(e.target.value)}
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-bold"
-                  />
-                  <button
-                    type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20 flex-shrink-0 cursor-pointer disabled:opacity-40"
-                    title="Quick Add Task"
-                    disabled={!newTodoTitle.trim() || isSubmittingTask}
-                  >
-                    <FiPlus size={14} />
-                  </button>
-                </form>
-              </div>
-            </>
-          )}
-        </div>
+{  /* DISABLED for now - uncomment this block to re-enable */
+//         {/* Workspace Dropdown Popover */}
+//         <div className="relative">
+//           <button 
+//             type="button"
+//             onClick={() => setShowTodoDropdown(prev => !prev)}
+//             className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+//             title="Workspace To-Do List"
+//           >
+//             <FiCheckSquare size={13} /> <span className="hidden sm:inline">Workspace</span>
+//             {hasNotification && (
+//               <span className="absolute -top-1 -right-1 flex h-2 w-2">
+//                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+//                 <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+//               </span>
+//             )}
+//           </button>
+// 
+//           {showTodoDropdown && (
+//             <>
+//               {/* Invisible Clickable Backdrop to close dropdown */}
+//               <div 
+//                 className="fixed inset-0 z-40 bg-transparent"
+//                 onClick={() => setShowTodoDropdown(false)}
+//               />
+//               
+//               {/* Dropdown Card - same viewport-safe positioning as the Chat card above */}
+//               <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-14 sm:top-auto mt-0 sm:mt-2.5 w-auto sm:w-80 md:w-96 max-w-full sm:max-w-none bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 text-left animate-in fade-in slide-in-from-top-2 duration-150 flex flex-col">
+//                 <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-slate-100">
+//                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+//                     <FiCheckSquare className="text-blue-600" size={14} /> Team Tasks
+//                     {todoTasks.filter(t => t.status === "Pending").length > 0 && (
+//                       <span className="bg-orange-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
+//                         {todoTasks.filter(t => t.status === "Pending").length}
+//                       </span>
+//                     )}
+//                   </h3>
+//                   <Link
+//                     href="/dashboard/todo-chat"
+//                     onClick={() => setShowTodoDropdown(false)}
+//                     className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-700 hover:underline"
+//                   >
+//                     Open Workspace →
+//                   </Link>
+//                 </div>
+// 
+//                 {/* Tasks List */}
+//                 <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+//                   {todoTasks.filter(t => t.status === "Pending").length === 0 ? (
+//                     <div className="text-center py-6 text-emerald-600 uppercase tracking-widest text-[10px] font-black">
+//                       ✓ No pending tasks!
+//                     </div>
+//                   ) : (
+//                     todoTasks.filter(t => t.status === "Pending").map(task => (
+//                       <button
+//                         key={task._id}
+//                         type="button"
+//                         onClick={() => handleToggleTask(task._id, task.status)}
+//                         className="w-full flex items-start gap-2.5 p-2.5 bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-200 rounded-xl transition-all text-left cursor-pointer group"
+//                       >
+//                         <span className="mt-0.5 text-slate-300 group-hover:text-blue-500 transition-colors flex-shrink-0">
+//                           <FiSquare size={15} />
+//                         </span>
+//                         <span className="flex-1 min-w-0">
+//                           <span className="text-slate-800 font-bold block leading-snug break-words text-xs">{task.title}</span>
+//                           {task.description && (
+//                             <span className="text-[10px] text-slate-500 mt-0.5 truncate block leading-relaxed">{task.description}</span>
+//                           )}
+//                           <span className="flex flex-wrap items-center gap-2 mt-1">
+//                             {task.assignedTo && (
+//                               <span className="text-[8px] font-black uppercase text-orange-700 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded capitalize">
+//                                 {task.assignedTo}
+//                               </span>
+//                             )}
+//                             <span className="text-[8px] text-slate-400 font-bold">By {task.createdBy}</span>
+//                           </span>
+//                         </span>
+//                       </button>
+//                     ))
+//                   )}
+//                 </div>
+// 
+//                 {/* Inline Add Task Form */}
+//                 <form onSubmit={handleAddTask} className="relative mt-3.5 pt-3 border-t border-slate-100 flex items-center gap-2">
+//                   {showSuggestions && (
+//                     <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1 max-h-32 overflow-y-auto">
+//                       {filteredSuggestions.map(u => (
+//                         <button
+//                           key={u._id}
+//                           type="button"
+//                           onMouseDown={(e) => e.preventDefault()}
+//                           onClick={() => handleSelectSuggestion(u.username)}
+//                           className="w-full text-left px-2.5 py-1.5 hover:bg-blue-600 hover:text-white rounded-lg text-[11px] font-bold text-slate-700 transition-colors cursor-pointer capitalize"
+//                         >
+//                           {u.username}
+//                         </button>
+//                       ))}
+//                     </div>
+//                   )}
+//                   <input
+//                     type="text"
+//                     placeholder="Add task... Use @name to assign"
+//                     value={newTodoTitle}
+//                     onChange={(e) => handleTaskInputChange(e.target.value)}
+//                     className="flex-1 bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-bold"
+//                   />
+//                   <button
+//                     type="submit"
+//                     className="bg-blue-600 hover:bg-blue-700 p-2 rounded-xl text-white transition-all shadow-md shadow-blue-600/20 flex-shrink-0 cursor-pointer disabled:opacity-40"
+//                     title="Quick Add Task"
+//                     disabled={!newTodoTitle.trim() || isSubmittingTask}
+//                   >
+//                     <FiPlus size={14} />
+//                   </button>
+//                 </form>
+//               </div>
+//             </>
+//           )}
+//         </div>
+}
 
         {/* Tasks - assign / track / follow-up module (separate from the legacy
             Workspace to-do dropdown above, which stays as-is until Phase 5). */}
@@ -444,19 +447,21 @@ export default function Header() {
           <FiPercent size={13} /> <span className="hidden sm:inline">Metal Calc</span>
         </button>
 
-        {/* Urgent Tasks - owner-only, opens the create-form + live list as a
-            popup so it's reachable from every page without leaving whatever
-            you're currently working on. */}
-        {isOwner && (
-          <button
-            type="button"
-            onClick={() => setShowUrgentTaskModal(true)}
-            className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
-            title="Urgent Tasks"
-          >
-            <FiAlertTriangle size={13} /> <span className="hidden sm:inline">Urgent Tasks</span>
-          </button>
-        )}
+{  /* DISABLED for now - uncomment this block to re-enable */
+//         {/* Urgent Tasks - owner-only, opens the create-form + live list as a
+//             popup so it's reachable from every page without leaving whatever
+//             you're currently working on. */}
+//         {isOwner && (
+//           <button
+//             type="button"
+//             onClick={() => setShowUrgentTaskModal(true)}
+//             className="relative text-[10px] md:text-xs font-black uppercase tracking-wider bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+//             title="Urgent Tasks"
+//           >
+//             <FiAlertTriangle size={13} /> <span className="hidden sm:inline">Urgent Tasks</span>
+//           </button>
+//         )}
+}
 
         <div className="text-right border-r border-slate-700 pr-2 sm:pr-4 md:pr-8 max-w-16 sm:max-w-none">
           <h2 className="text-xs sm:text-sm md:text-lg font-bold leading-none capitalize truncate">{user.username}</h2>
@@ -473,32 +478,34 @@ export default function Header() {
       </div>
     </header>
 
-    {showUrgentTaskModal && (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-        <div className="bg-[#f3f6f9] border border-slate-200 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
-          <div className="p-5 border-b border-slate-200 bg-white flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="bg-[#dc2626] text-white p-2.5 rounded-xl">
-                <FiAlertTriangle size={18} />
-              </div>
-              <div>
-                <h3 className="text-sm font-black uppercase tracking-wider text-[#0a2540]">Urgent Tasks</h3>
-                <p className="text-[9px] text-[#ff9933] font-black uppercase tracking-widest">Assign & Track</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setShowUrgentTaskModal(false)}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-            >
-              <FiX size={18} />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-5">
-            <UrgentTaskManagerPanel />
-          </div>
-        </div>
-      </div>
-    )}
+{  /* DISABLED for now - uncomment this block to re-enable */
+//     {showUrgentTaskModal && (
+//       <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+//         <div className="bg-[#f3f6f9] border border-slate-200 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+//           <div className="p-5 border-b border-slate-200 bg-white flex items-center justify-between">
+//             <div className="flex items-center gap-3">
+//               <div className="bg-[#dc2626] text-white p-2.5 rounded-xl">
+//                 <FiAlertTriangle size={18} />
+//               </div>
+//               <div>
+//                 <h3 className="text-sm font-black uppercase tracking-wider text-[#0a2540]">Urgent Tasks</h3>
+//                 <p className="text-[9px] text-[#ff9933] font-black uppercase tracking-widest">Assign & Track</p>
+//               </div>
+//             </div>
+//             <button
+//               onClick={() => setShowUrgentTaskModal(false)}
+//               className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+//             >
+//               <FiX size={18} />
+//             </button>
+//           </div>
+//           <div className="flex-1 overflow-y-auto p-5">
+//             <UrgentTaskManagerPanel />
+//           </div>
+//         </div>
+//       </div>
+//     )}
+}
 
     {showGemLoginModal && (
       <div

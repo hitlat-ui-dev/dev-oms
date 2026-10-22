@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Header from "@/components/Header";
 import GlobalTaskCreate from "@/components/GlobalTaskCreate";
 import Footer from "@/components/Footer";
-import UrgentTaskPopup from "@/components/UrgentTaskPopup";
+// DISABLED (Urgent Tasks): import UrgentTaskPopup from "@/components/UrgentTaskPopup";
 import { getPageTitle } from "@/lib/pageTitles";
 import "./globals.css";
 
@@ -103,7 +103,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {children}
             </main>
             <Footer />
-            <UrgentTaskPopup />
+            {/* DISABLED (Urgent Tasks) - uncomment to re-enable: <UrgentTaskPopup /> */}
             <GlobalTaskCreate />
           </div>
         ) : (

@@ -140,7 +140,7 @@ export default function FetchGeMOrdersPage() {
   // first (app/api/gem-order-intake); a human bulk-transfers the real ones
   // into raw_gem_orders (same list this page already reviews) or
   // bulk-disables the rest so a re-scrape never re-imports them.
-  const [pageTab, setPageTab] = useState<"fetched" | "intake">("fetched");
+  const [pageTab, setPageTab] = useState<"fetched" | "intake" | "disabled">("fetched");
   const [intakeOrders, setIntakeOrders] = useState<RawGeMOrder[]>([]);
   const [intakeLoading, setIntakeLoading] = useState(true);
   const [intakeRefreshing, setIntakeRefreshing] = useState(false);
@@ -149,6 +149,17 @@ export default function FetchGeMOrdersPage() {
   const [intakeFirmCode, setIntakeFirmCode] = useState("");
   const [transferring, setTransferring] = useState(false);
   const [disablingIntake, setDisablingIntake] = useState(false);
+
+  // "Disabled" tab - orders bulk-disabled from Intake (so a re-scrape never
+  // re-imports them). Read-only list + the same bulk transfer action as
+  // Intake, for undoing an accidental disable without needing a DB fix.
+  const [disabledOrders, setDisabledOrders] = useState<RawGeMOrder[]>([]);
+  const [disabledLoading, setDisabledLoading] = useState(true);
+  const [disabledRefreshing, setDisabledRefreshing] = useState(false);
+  const [disabledSearchQuery, setDisabledSearchQuery] = useState("");
+  const [selectedDisabledIds, setSelectedDisabledIds] = useState<string[]>([]);
+  const [disabledFirmCode, setDisabledFirmCode] = useState("");
+  const [transferringDisabled, setTransferringDisabled] = useState(false);
 
   useEffect(() => {
     try {
@@ -168,6 +179,7 @@ export default function FetchGeMOrdersPage() {
     fetchSheetsAndBuyers();
     fetchStockItems();
     fetchIntakeOrders();
+    fetchDisabledOrders();
   }, []);
 
   // Esc closes the Item Name suggestion dropdown first (if open), otherwise
@@ -310,6 +322,22 @@ export default function FetchGeMOrdersPage() {
     } finally {
       setIntakeLoading(false);
       setIntakeRefreshing(false);
+    }
+  };
+
+  const fetchDisabledOrders = async () => {
+    try {
+      setDisabledRefreshing(true);
+      const res = await fetch(`/api/gem-order-intake/disabled?t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDisabledOrders(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error("Error fetching disabled GeM order intake:", err);
+    } finally {
+      setDisabledLoading(false);
+      setDisabledRefreshing(false);
     }
   };
 
@@ -717,6 +745,65 @@ export default function FetchGeMOrdersPage() {
     }
   };
 
+  const filteredDisabledOrders = useMemo(() => {
+    if (!disabledSearchQuery.trim()) return disabledOrders;
+    const q = disabledSearchQuery.toLowerCase().trim();
+    return disabledOrders.filter(o =>
+      (o.contractNo || "").toLowerCase().includes(q) ||
+      (o.instituteName || "").toLowerCase().includes(q) ||
+      (o.itemName || "").toLowerCase().includes(q) ||
+      (o.firmCode || "").toLowerCase().includes(q)
+    );
+  }, [disabledOrders, disabledSearchQuery]);
+
+  const toggleSelectAllDisabled = (checked: boolean) => {
+    setSelectedDisabledIds(checked ? filteredDisabledOrders.map(o => o._id) : []);
+  };
+
+  const toggleSelectDisabledOne = (id: string, checked: boolean) => {
+    setSelectedDisabledIds(prev => (checked ? [...prev, id] : prev.filter(x => x !== id)));
+  };
+
+  // Undoes an accidental "Disable" - reuses the same transfer endpoint
+  // Intake's bulk transfer uses (it doesn't filter on the `disabled` flag),
+  // so a disabled row moves straight into Fetched GeM Orders same as any
+  // other intake row would.
+  const handleBulkTransferDisabled = async () => {
+    if (selectedDisabledIds.length === 0) return;
+    const confirmMsg = disabledFirmCode
+      ? `${selectedDisabledIds.length} order(s) ko "${disabledFirmCode}" firm ke saath Fetched GeM Orders me transfer karein? (In sabki apni fetch-time-select-ki-hui firm override ho jayegi)`
+      : `${selectedDisabledIds.length} order(s) ko unki apni-apni (fetch ke time select ki hui) firm ke saath Fetched GeM Orders me transfer karein?`;
+    if (!confirm(confirmMsg)) return;
+
+    setTransferringDisabled(true);
+    try {
+      const res = await fetch(`/api/gem-order-intake/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedDisabledIds, firmCode: disabledFirmCode }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setSelectedDisabledIds([]);
+        fetchRawOrders(); // pull the newly transferred rows into the Fetched Orders tab
+        fetchDisabledOrders();
+        if (result.skipped?.length > 0) {
+          const reasons = result.skipped.map((s: { contractNo: string; reason: string }) => `${s.contractNo}: ${s.reason}`).join("\n");
+          alert(`${result.transferred} transferred.\n${result.skipped.length} skipped:\n${reasons}`);
+        } else {
+          alert(`✓ ${result.transferred} order(s) transferred to Fetched GeM Orders.`);
+        }
+      } else {
+        const err = await res.json();
+        alert(err.error || "Transfer failed");
+      }
+    } catch (err) {
+      alert("Error transferring orders");
+    } finally {
+      setTransferringDisabled(false);
+    }
+  };
+
   const sortedOrders = useMemo(() => {
     if (!sortConfig) return filteredOrders;
     const items = [...filteredOrders];
@@ -788,11 +875,11 @@ export default function FetchGeMOrdersPage() {
             </>
           )}
           <button
-            onClick={() => (pageTab === "fetched" ? fetchRawOrders() : fetchIntakeOrders())}
-            disabled={pageTab === "fetched" ? refreshing : intakeRefreshing}
+            onClick={() => (pageTab === "fetched" ? fetchRawOrders() : pageTab === "intake" ? fetchIntakeOrders() : fetchDisabledOrders())}
+            disabled={pageTab === "fetched" ? refreshing : pageTab === "intake" ? intakeRefreshing : disabledRefreshing}
             className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50"
           >
-            <FiRefreshCw className={(pageTab === "fetched" ? refreshing : intakeRefreshing) ? "animate-spin" : ""} size={14} /> Refresh
+            <FiRefreshCw className={(pageTab === "fetched" ? refreshing : pageTab === "intake" ? intakeRefreshing : disabledRefreshing) ? "animate-spin" : ""} size={14} /> Refresh
           </button>
         </div>
       </div>
@@ -810,6 +897,12 @@ export default function FetchGeMOrdersPage() {
           className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${pageTab === "intake" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"}`}
         >
           Intake ({intakeOrders.length})
+        </button>
+        <button
+          onClick={() => setPageTab("disabled")}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${pageTab === "disabled" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"}`}
+        >
+          Disabled ({disabledOrders.length})
         </button>
       </div>
 
@@ -1027,6 +1120,138 @@ export default function FetchGeMOrdersPage() {
                           className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
                           checked={selectedIntakeIds.includes(order._id)}
                           onChange={(e) => toggleSelectIntakeOne(order._id, e.target.checked)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
+                      <td className="px-3 py-3 max-w-56">
+                        <div className="font-bold text-slate-800 truncate" title={order.instituteName}>{order.instituteName}</div>
+                        {matchedBuyer ? (
+                          <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold truncate" title={matchedBuyer.name}>
+                            <FiCheck size={11} /> {matchedBuyer.name}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-amber-600 font-semibold">No match</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 max-w-72">
+                        <div className="font-bold text-slate-900 truncate">{order.itemName}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <a
+                          href={order.contractUrl || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold"
+                        >
+                          {order.contractNo}
+                          {order.contractUrl && <FiExternalLink size={11} />}
+                        </a>
+                        {order.contractDate && <div className="text-[10px] text-slate-400 font-semibold">{order.contractDate}</div>}
+                      </td>
+                      <td className="px-3 py-3 text-center font-bold text-slate-900">{order.qty} nos</td>
+                      <td className="px-3 py-3 text-right font-bold text-slate-900">₹{order.rate}</td>
+                      <td className="px-3 py-3 text-right font-black text-emerald-700">₹{order.totalAmount}</td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {pageTab === "disabled" && (
+        <>
+          {/* Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
+            <div className="relative flex-1 min-w-[260px]">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input
+                type="text"
+                value={disabledSearchQuery}
+                onChange={(e) => setDisabledSearchQuery(e.target.value)}
+                placeholder="Search contract no, buyer, item, or firm..."
+                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-medium"
+              />
+            </div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Total Disabled: <span className="text-blue-600 font-black">{filteredDisabledOrders.length}</span>
+            </div>
+          </div>
+
+          {/* Bulk Action Bar */}
+          {selectedDisabledIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6">
+              <span className="text-xs font-black text-blue-800 uppercase tracking-wider">{selectedDisabledIds.length} Selected</span>
+              <select
+                value={disabledFirmCode}
+                onChange={(e) => setDisabledFirmCode(e.target.value)}
+                title="Default: har order apni fetch-time-select-ki-hui firm ke saath hi transfer hoga. Yahan se sirf tab kuch chuno jab jaan-bujhke sabko ek hi firm me force karna ho."
+                className="p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Keep Original Firm (per order)</option>
+                {companies.map(c => (
+                  <option key={c._id} value={c.firmCode}>Force: {c.firmName} ({c.firmCode})</option>
+                ))}
+              </select>
+              <button
+                onClick={handleBulkTransferDisabled}
+                disabled={transferringDisabled}
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all disabled:opacity-50"
+              >
+                <FiCheckCircle size={13} /> {transferringDisabled ? "Transferring..." : `Transfer to Orders (${selectedDisabledIds.length})`}
+              </button>
+            </div>
+          )}
+
+          {/* Disabled List */}
+          {disabledLoading ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-3" size={28} />
+              <p className="text-slate-500 font-bold text-sm">Loading disabled orders...</p>
+            </div>
+          ) : filteredDisabledOrders.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <FiAlertCircle className="text-slate-400 mx-auto mb-3" size={36} />
+              <h3 className="text-lg font-black text-slate-700 uppercase">No Disabled Orders</h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Orders disabled from the Intake tab show up here - select some and Transfer to undo.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 font-black uppercase tracking-wider border-b border-slate-200">
+                    <th className="px-3 py-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                        checked={filteredDisabledOrders.length > 0 && filteredDisabledOrders.every(o => selectedDisabledIds.includes(o._id))}
+                        onChange={(e) => toggleSelectAllDisabled(e.target.checked)}
+                      />
+                    </th>
+                    <th className="px-3 py-3">Firm</th>
+                    <th className="px-3 py-3">Buyer</th>
+                    <th className="px-3 py-3">Item Details</th>
+                    <th className="px-3 py-3">Contract</th>
+                    <th className="px-3 py-3 text-center">O-Qty</th>
+                    <th className="px-3 py-3 text-right">Rate</th>
+                    <th className="px-3 py-3 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredDisabledOrders.map((order) => {
+                    const matchedBuyer = guessBuyerForOrder(order);
+                    return (
+                    <tr key={order._id} className={`hover:bg-slate-50 transition-colors ${selectedDisabledIds.includes(order._id) ? "bg-blue-50/50" : ""}`}>
+                      <td className="px-3 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                          checked={selectedDisabledIds.includes(order._id)}
+                          onChange={(e) => toggleSelectDisabledOne(order._id, e.target.checked)}
                         />
                       </td>
                       <td className="px-3 py-3 font-black text-slate-700">{order.firmCode || "—"}</td>
