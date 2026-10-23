@@ -35,6 +35,9 @@ const initialState = {
         generateBill: false,
         deliveryChallan: false,
         taskManager: false,
+        pricelist: false,
+        pricelistManage: false,
+        pricelistReceived: false,
     },
 };
 
@@ -65,6 +68,14 @@ const MODULE_GROUPS = [
             { key: "purchaseReq", label: "Create Purchase Request" },
             { key: "addVendor", label: "Register Purchase Vendor" },
             { key: "receivePurchaseRate", label: "Hide Rate on Receive Purchase" }
+        ]
+    },
+    {
+        title: "🏷️ Supplier Pricelist",
+        permissions: [
+            { key: "pricelist", label: "Pricelist: search, view & tag items" },
+            { key: "pricelistManage", label: "Pricelist Admin: upload / add items, delete & merge tags" },
+            { key: "pricelistReceived", label: "Pricelist: Received Purchase tab (view & tag)" }
         ]
     },
     {
@@ -216,6 +227,9 @@ export default function ManageUsers() {
                 generateBill: user.permissions?.generateBill || false,
                 deliveryChallan: user.permissions?.deliveryChallan || false,
                 taskManager: user.permissions?.taskManager || false,
+                pricelist: user.permissions?.pricelist || false,
+                pricelistManage: user.permissions?.pricelistManage || false,
+                pricelistReceived: user.permissions?.pricelistReceived || false,
             },
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -237,6 +251,16 @@ export default function ManageUsers() {
             }
         >
             <div suppressHydrationWarning className="p-4 md:p-8 max-w-7xl mx-auto min-h-screen bg-slate-50/50 space-y-8">
+                {/* PRICELIST MODULE ENTRY - access per user is set in the "Supplier Pricelist" permission group below */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                        <div className="text-sm font-black text-slate-800 uppercase tracking-wider">🏷️ Supplier Pricelist</div>
+                        <div className="text-xs text-slate-500">Upload supplier catalogues, search &amp; tag items, Received Purchase tags</div>
+                    </div>
+                    <Link href="/dashboard/purchase/pricelist" className="px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-black uppercase tracking-wider">
+                        Open Pricelist
+                    </Link>
+                </div>
                 {/* FORM SECTION */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-xl p-6">
                     <h2 className="text-2xl font-bold mb-6">

@@ -1,9 +1,17 @@
 "use client";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FiPlusCircle,  FiUserPlus, FiShoppingCart, FiRotateCcw, FiBox, FiFileText, FiSend, FiArrowLeft } from "react-icons/fi";
 
 export default function PurchasePage() {
   const router = useRouter();
+  const [perms, setPerms] = useState<any>({});
+  useEffect(() => {
+    try {
+      setPerms(JSON.parse(localStorage.getItem("oms_user") || "{}").permissions || {});
+    } catch {}
+  }, []);
+  const canPricelist = !!perms.boss || !!perms.pricelist || !!perms.pricelistManage || !!perms.pricelistReceived;
 
   // Menu items - No popup logic here, just standard routing
   const purchaseMenu = [
@@ -36,7 +44,7 @@ export default function PurchasePage() {
 
         {/* Grid Menu */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {purchaseMenu.map((item) => (
+          {purchaseMenu.filter((item) => item.name !== "Pricelist" || canPricelist).map((item) => (
             <button
               key={item.name}
               onClick={() => router.push(item.path)} // Fixed: Simplified to only use router.push

@@ -4,20 +4,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FiArrowLeft } from "react-icons/fi";
 
+// perm: which permission opens the tab (boss always can). Keys are set on the Settings > user access page.
 const TABS = [
-  { key: "search", label: "Search & Tag", href: "/dashboard/purchase/pricelist" },
-  { key: "upload", label: "Upload", href: "/dashboard/purchase/pricelist/upload" },
-  { key: "tags", label: "Tag Manager", href: "/dashboard/purchase/pricelist/tags" },
-  { key: "received", label: "Received Purchase", href: "/dashboard/purchase/pricelist/received" },
+  { key: "search", label: "Search & Tag", href: "/dashboard/purchase/pricelist", perm: ["pricelist", "pricelistManage"] },
+  { key: "upload", label: "Upload", href: "/dashboard/purchase/pricelist/upload", perm: ["pricelistManage"] },
+  { key: "tags", label: "Tag Manager", href: "/dashboard/purchase/pricelist/tags", perm: ["pricelist", "pricelistManage"] },
+  { key: "received", label: "Received Purchase", href: "/dashboard/purchase/pricelist/received", perm: ["pricelistReceived"] },
 ];
+const canOpen = (p: any, perm: string[]) => !!p.boss || perm.some((k) => p[k]);
 
 export interface PricelistUser {
   username: string;
   isAdmin: boolean;
 }
 
-// Shared header + sub-tabs for the Purchase > Pricelist module. Gated on the `purchase`
-// permission (or boss); `isAdmin` (permissions.boss) unlocks upload / tag delete / merge.
+// Shared header + sub-tabs for the Pricelist module (opened from Settings). Each tab is gated by the
+// pricelist* permissions (or boss); `isAdmin` (boss or pricelistManage) unlocks upload / manual add / tag delete & merge.
 export default function PricelistShell({
   active,
   children,
@@ -28,6 +30,7 @@ export default function PricelistShell({
   const router = useRouter();
   const [user, setUser] = useState<PricelistUser | null>(null);
   const [denied, setDenied] = useState(false);
+  const [perms, setPerms] = useState<any>({});
 
   useEffect(() => {
     const raw = localStorage.getItem("oms_user");
@@ -37,28 +40,31 @@ export default function PricelistShell({
     }
     const u = JSON.parse(raw);
     const p = u.permissions || {};
-    if (!p.purchase && !p.boss) {
+    const current = TABS.find((t) => t.key === active);
+    setPerms(p);
+    if (!current || !canOpen(p, current.perm)) {
       setDenied(true);
       return;
     }
-    setUser({ username: u.username, isAdmin: !!p.boss });
-  }, [router]);
+    // isAdmin unlocks upload / manual add / tag delete & merge
+    setUser({ username: u.username, isAdmin: !!p.boss || !!p.pricelistManage });
+  }, [router, active]);
 
   return (
     <div className="p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         <button
-          onClick={() => router.push("/dashboard/purchase")}
+          onClick={() => router.back()}
           className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition-colors mb-4 font-bold text-xs uppercase tracking-[0.2em]"
         >
-          <FiArrowLeft /> Back to Purchase
+          <FiArrowLeft /> Back
         </button>
         <div className="mb-4 ml-1">
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Pricelist</h1>
           <p className="text-slate-500 text-[10px] font-bold tracking-[0.2em] uppercase">Supplier catalogue &amp; item-name tags</p>
         </div>
         <div className="flex gap-1 border-b border-slate-200 mb-5 overflow-x-auto">
-          {TABS.map((t) => (
+          {TABS.filter((t) => canOpen(perms, t.perm)).map((t) => (
             <Link
               key={t.key}
               href={t.href}
@@ -71,7 +77,7 @@ export default function PricelistShell({
           ))}
         </div>
         {denied ? (
-          <div className="p-8 text-center text-sm font-bold text-rose-600">You do not have access to Purchase.</div>
+          <div className="p-8 text-center text-sm font-bold text-rose-600">You do not have access to this Pricelist section. Ask an admin to enable it in Settings.</div>
         ) : user ? (
           children(user)
         ) : null}

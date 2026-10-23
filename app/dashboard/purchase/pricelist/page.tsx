@@ -45,8 +45,9 @@ function TagDialog({ skus, user, onClose, onDone }: { skus: string[]; user: Pric
     });
 
   const save = async () => {
+    // The text box is a search/filter for the list below. It is only used as the tag name when nothing is ticked.
     const names = new Set(checked);
-    if (value.trim()) names.add(value.trim());
+    if (names.size === 0 && value.trim()) names.add(value.trim());
     if (names.size === 0) return;
     setSaving(true);
     setErr("");
