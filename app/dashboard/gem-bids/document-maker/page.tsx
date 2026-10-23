@@ -23,6 +23,7 @@ import { guessInstituteForAddress, SellerLite } from "@/lib/gemBids/instituteMat
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
 import { normalizeName } from "@/lib/pricelist/normalize";
 import PricelistRateChip, { PricelistRate } from "@/components/purchase/pricelist/PricelistRateChip";
+import ReceivedRateChip, { ReceivedRate } from "@/components/purchase/pricelist/ReceivedRateChip";
 
 interface Company {
   _id: string;
@@ -286,6 +287,8 @@ function DocumentMakerPageInner() {
   // Supplier pricelist rates (Purchase > Pricelist) keyed by normalized item name - one batched
   // call per set of item titles, refetched only when the titles themselves change.
   const [pricelistRates, setPricelistRates] = useState<Record<string, PricelistRate[]>>({});
+  // Same call also returns what we actually paid (Received Purchase items tagged with this bid item name) - shown green.
+  const [receivedRates, setReceivedRates] = useState<Record<string, ReceivedRate[]>>({});
   const pricelistTitlesKey = useMemo(
     () => Array.from(new Set(boqItems.map((it) => normalizeName(it.itemTitle)).filter(Boolean))).sort().join("\n"),
     [boqItems]
@@ -293,6 +296,7 @@ function DocumentMakerPageInner() {
   useEffect(() => {
     if (!pricelistTitlesKey) {
       setPricelistRates({});
+      setReceivedRates({});
       return;
     }
     const t = setTimeout(() => {
@@ -302,8 +306,14 @@ function DocumentMakerPageInner() {
         body: JSON.stringify({ names: pricelistTitlesKey.split("\n") }),
       })
         .then((r) => r.json())
-        .then((d) => setPricelistRates(d.rates || {}))
-        .catch(() => setPricelistRates({}));
+        .then((d) => {
+          setPricelistRates(d.rates || {});
+          setReceivedRates(d.received || {});
+        })
+        .catch(() => {
+          setPricelistRates({});
+          setReceivedRates({});
+        });
     }, 400);
     return () => clearTimeout(t);
   }, [pricelistTitlesKey]);
@@ -961,29 +971,17 @@ function DocumentMakerPageInner() {
     );
   };
 
-  // What we actually paid for this item last time, per Received Purchase -
-  // a cost reference for Base Rate specifically (unlike the two Rate
-  // suggestions above), so it fills baseRate (not rate) when clicked.
-  const renderPurchaseRateSuggestion = (it: BoqItem) => {
-    if (!it.purchaseRate) return null;
-    const dateLabel = it.purchaseDate ? new Date(it.purchaseDate).toLocaleDateString("en-IN") : "";
-    return (
-      <button
-        type="button"
-        onClick={() => updateBoqBaseRate(it.itemNumber, it.purchaseRate!)}
-        className="text-[9px] text-emerald-700 underline mt-0.5 block"
-        title={[it.purchaseVendor, dateLabel].filter(Boolean).join(" — ") || undefined}
-      >
-        Purchased: {it.purchaseRate}
-      </button>
-    );
-  };
-
   const renderPricelistRate = (it: BoqItem) => (
-    <PricelistRateChip
-      rates={pricelistRates[normalizeName(it.itemTitle)]}
-      onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
-    />
+    <>
+      <PricelistRateChip
+        rates={pricelistRates[normalizeName(it.itemTitle)]}
+        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
+      />
+      <ReceivedRateChip
+        rates={receivedRates[normalizeName(it.itemTitle)]}
+        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
+      />
+    </>
   );
 
   const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
@@ -1699,7 +1697,6 @@ function DocumentMakerPageInner() {
                                         className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                       />
                                       {renderPricelistRate(it)}
-                                    {renderPurchaseRateSuggestion(it)}
                                     </td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1773,7 +1770,6 @@ function DocumentMakerPageInner() {
                                       className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                     />
                                     {renderPricelistRate(it)}
-                                    {renderPurchaseRateSuggestion(it)}
                                   </td>
                                   <td className="py-2 px-2">
                                     <input

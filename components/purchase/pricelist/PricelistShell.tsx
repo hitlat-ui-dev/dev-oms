@@ -8,6 +8,7 @@ const TABS = [
   { key: "search", label: "Search & Tag", href: "/dashboard/purchase/pricelist" },
   { key: "upload", label: "Upload", href: "/dashboard/purchase/pricelist/upload" },
   { key: "tags", label: "Tag Manager", href: "/dashboard/purchase/pricelist/tags" },
+  { key: "received", label: "Received Purchase", href: "/dashboard/purchase/pricelist/received" },
 ];
 
 export interface PricelistUser {
@@ -21,7 +22,7 @@ export default function PricelistShell({
   active,
   children,
 }: {
-  active: "search" | "upload" | "tags";
+  active: "search" | "upload" | "tags" | "received";
   children: (user: PricelistUser) => React.ReactNode;
 }) {
   const router = useRouter();

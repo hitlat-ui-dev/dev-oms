@@ -8,13 +8,16 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // GET ?q=: autocomplete = existing tag names + distinct item names used in GeM bids' BOQ.
 export async function GET(req: Request) {
   try {
-    const q = (new URL(req.url).searchParams.get("q") || "").trim();
+    const sp = new URL(req.url).searchParams;
+    const q = (sp.get("q") || "").trim();
+    // scope=received suggests from the Received Purchase tags instead of the pricelist tags
+    const tagCollection = sp.get("scope") === "received" ? "received_purchase_tags" : "pricelist_tags";
     if (q.length < 2) return NextResponse.json({ suggestions: [] });
     const { db } = await getPricelistDb();
     const rx = q.split(/\s+/).map((w) => `(?=.*${escapeRegex(w)})`).join("") + ".*";
 
     const [tagNames, bidNames] = await Promise.all([
-      db.collection("pricelist_tags").aggregate([
+      db.collection(tagCollection).aggregate([
         { $match: { tag_name: { $regex: rx, $options: "i" } } },
         { $group: { _id: "$tag_key", name: { $first: "$tag_name" } } },
         { $limit: 8 },
