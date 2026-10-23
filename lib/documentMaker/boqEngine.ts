@@ -84,16 +84,23 @@ export function normalizeItemKey(title: string): string {
 
 /** Rebuilds the BOQ as a downloadable .xlsx with the user's filled Rate column appended - same column set as the source file, plus Rate. */
 export function buildFilledBoqXlsx(items: (BoqItem & { rate?: string })[]): Buffer {
-  const rows = items.map((it) => ({
-    "Item Number": it.itemNumber,
-    "Item Title": it.itemTitle,
-    "Item Description": it.itemDescription,
-    "Item Quantity": it.quantity,
-    "Unit of Measure": it.unit,
-    "Consignee ID": it.consigneeId,
-    "Delivery Period (In number of days)": it.deliveryPeriod,
-    Rate: it.rate || "",
-  }));
+  const rows = items.map((it) => {
+    const qty = parseFloat(it.quantity) || 0;
+    const rate = parseFloat(it.rate || "") || 0;
+    return {
+      "Item Number": it.itemNumber,
+      "Item Title": it.itemTitle,
+      "Item Description": it.itemDescription,
+      "Item Quantity": it.quantity,
+      "Unit of Measure": it.unit,
+      "Consignee ID": it.consigneeId,
+      "Delivery Period (In number of days)": it.deliveryPeriod,
+      Rate: it.rate || "",
+      // Qty * Rate - same column the on-screen BOQ Rates table shows,
+      // added here too so the downloaded file matches it exactly.
+      Total: qty && rate ? Math.round(qty * rate * 100) / 100 : "",
+    };
+  });
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "BOQ");

@@ -646,6 +646,15 @@ async function pollAndMaybeFetchBidDocuments() {
 // again once every claimed bid this round is done.
 let statusRefreshInFlight = false;
 const ALL_BIDS_URL = "https://bidplus.gem.gov.in/all-bids";
+// GET /api/gem-bids/refresh-status only ever hands out up to 20 bids per
+// call (see that route's own comment), so a 30-bid queue takes two of
+// these poll ticks (a minute apart) to fully drain - this flag is what
+// lets the empty-queue tick AFTER a non-empty one be recognized as "the
+// run just finished" instead of "nothing to do, as usual", stored rather
+// than a plain variable so it survives this service worker being killed
+// and restarted between ticks the way everything else long-running here
+// already has to.
+const STATUS_REFRESH_ACTIVE_KEY = "gemStatusRefreshActive";
 
 async function pollAndMaybeRefreshBidStatuses() {
   if (statusRefreshInFlight) return;
@@ -657,7 +666,22 @@ async function pollAndMaybeRefreshBidStatuses() {
     if (!res.ok) return;
     const data = await res.json();
     const pendingBids = Array.isArray(data.bids) ? data.bids : [];
-    if (pendingBids.length === 0) return;
+    if (pendingBids.length === 0) {
+      const activeData = await chrome.storage.local.get(STATUS_REFRESH_ACTIVE_KEY);
+      if (activeData[STATUS_REFRESH_ACTIVE_KEY]) {
+        await chrome.storage.local.set({ [STATUS_REFRESH_ACTIVE_KEY]: false });
+        chrome.notifications.create({
+          type: "basic",
+          iconUrl: "icons/icon128.png",
+          title: "GeM Bid Status Refresh complete",
+          message: "Every queued Submitted Bid has been checked - see Bid Status in the OMS for the results.",
+          priority: 2,
+          requireInteraction: true,
+        });
+      }
+      return;
+    }
+    await chrome.storage.local.set({ [STATUS_REFRESH_ACTIVE_KEY]: true });
 
     const created = await chrome.tabs.create({ url: ALL_BIDS_URL, active: false });
     tabId = created.id;

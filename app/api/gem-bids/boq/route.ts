@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 import { getFileFromR2 } from "@/lib/cloudflareR2";
-import { parseBoqXlsx, normalizeItemKey } from "@/lib/documentMaker/boqEngine";
+import { parseBoqXlsx } from "@/lib/documentMaker/boqEngine";
 import { parseSpecificationPdf } from "@/lib/documentMaker/specEngine";
 import { tokenizeMatchText, scoreTokenSimilarity } from "@/lib/gemSync/catalogueMatch";
+import { getAlternateNameMap, resolveItemKey } from "@/lib/gemBids/itemMaster";
 
 const DB_NAME = "dev_oms_db";
 
@@ -37,10 +38,17 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Bid not found" }, { status: 404 });
     }
 
+    // Alternate/similar names registered on gem_bid_item_master (see
+    // /api/gem-bids/item-master and the Central Bid Item Rates page) -
+    // every suggestion lookup below resolves through this first, so an
+    // item typed under a registered alias still finds the same canonical
+    // item's history/market rate as its usual spelling would.
+    const aliasMap = await getAlternateNameMap(db);
+
     let items: any[];
 
     if (bid.bidType === "regular") {
-      const itemKeys = (bid.boqRates || []).map((r: any) => normalizeItemKey(r.itemTitle));
+      const itemKeys = (bid.boqRates || []).map((r: any) => resolveItemKey(r.itemTitle, aliasMap));
       const historyDocs =
         itemKeys.length > 0
           ? await db.collection("gem_bid_item_rate_history").find({ itemKey: { $in: itemKeys } }).toArray()
@@ -48,7 +56,7 @@ export async function GET(req: Request) {
       const historyByKey = new Map(historyDocs.map((h: any) => [h.itemKey, h]));
 
       items = (bid.boqRates || []).map((r: any) => {
-        const history = historyByKey.get(normalizeItemKey(r.itemTitle));
+        const history = historyByKey.get(resolveItemKey(r.itemTitle, aliasMap));
         return {
           itemNumber: r.itemNumber,
           itemTitle: r.itemTitle || "",
@@ -102,7 +110,7 @@ export async function GET(req: Request) {
         if (r.marginPercent) savedMarginPercents[r.itemNumber] = r.marginPercent;
       }
 
-      const itemKeys = parsedItems.map((it) => normalizeItemKey(it.itemTitle || it.itemDescription));
+      const itemKeys = parsedItems.map((it) => resolveItemKey(it.itemTitle || it.itemDescription, aliasMap));
       const historyDocs =
         itemKeys.length > 0
           ? await db.collection("gem_bid_item_rate_history").find({ itemKey: { $in: itemKeys } }).toArray()
@@ -110,7 +118,7 @@ export async function GET(req: Request) {
       const historyByKey = new Map(historyDocs.map((h: any) => [h.itemKey, h]));
 
       items = parsedItems.map((it) => {
-        const key = normalizeItemKey(it.itemTitle || it.itemDescription);
+        const key = resolveItemKey(it.itemTitle || it.itemDescription, aliasMap);
         const history = historyByKey.get(key);
         const spec = specByItemNumber.get(it.itemNumber);
         return {
@@ -142,7 +150,7 @@ export async function GET(req: Request) {
     // trend view is for. Up to 5 most recent samples (full breakdown:
     // rate/date/place/evaluation type/L1 party) ride along for the
     // frontend's hover table, newest first.
-    const marketItemKeys = items.map((it) => normalizeItemKey(it.itemTitle)).filter(Boolean);
+    const marketItemKeys = items.map((it) => resolveItemKey(it.itemTitle, aliasMap)).filter(Boolean);
     if (marketItemKeys.length > 0) {
       const marketDocs = await db
         .collection("gem_bid_item_market_rate_history")
@@ -156,7 +164,7 @@ export async function GET(req: Request) {
         marketByKey.set(d.itemKey, list);
       }
       items = items.map((it) => {
-        const samples = marketByKey.get(normalizeItemKey(it.itemTitle));
+        const samples = marketByKey.get(resolveItemKey(it.itemTitle, aliasMap));
         if (!samples || samples.length === 0) return it;
         const latest = samples[0];
         return {

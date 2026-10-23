@@ -412,6 +412,11 @@ export default function GemBidTable({
     setBoqItems((prev) => prev.map((it) => (it.itemNumber === itemNumber ? { ...it, rate } : it)));
   };
 
+  const boqGrandTotal = useMemo(
+    () => boqItems.reduce((sum, it) => sum + (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0), 0),
+    [boqItems]
+  );
+
   // Same real-GeM-result-data suggestion as document-maker/page.tsx's own
   // copy of this (see marketRateEngine.ts) - duplicated rather than
   // shared, consistent with this file already keeping its own BoqItem
@@ -805,19 +810,84 @@ export default function GemBidTable({
     }
   };
 
-  const [refreshingStatuses, setRefreshingStatuses] = useState(false);
+  const [refreshingStatuses, setRefreshingStatuses] = useState(false); // true only while the queue POST itself is in flight
+  const [refreshBatchId, setRefreshBatchId] = useState<string | null>(null);
+  const [refreshProgress, setRefreshProgress] = useState<{
+    total: number;
+    done: number;
+    failed: number;
+    complete: boolean;
+  } | null>(null);
+  // Set once progress genuinely stops moving for a while, rather than
+  // recomputed from a single snapshot - "stuck" only means something once
+  // several polls in a row show no change, not just that this particular
+  // poll happened to land between two extension ticks.
+  const [refreshStuck, setRefreshStuck] = useState(false);
+  const lastProgressSeenRef = useRef<{ key: string; at: number } | null>(null);
+
+  // Live "X/Y done" while a refresh batch is active - polled rather than
+  // pushed, since the actual work happens in the extension's background
+  // worker (not this page), same reasoning Start Sync's own progress bar
+  // already works off a poll. Stops on its own once ../progress reports
+  // complete:true (every queued bid reached done/failed) or the user
+  // navigates away (cleanup clears the interval).
+  useEffect(() => {
+    if (!refreshBatchId) return;
+    let cancelled = false;
+    const STUCK_AFTER_MS = 3 * 60 * 1000; // no progress in 3 minutes
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/gem-bids/refresh-status/progress?batchId=${refreshBatchId}`);
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        setRefreshProgress(data);
+
+        const progressKey = `${data.done}-${data.failed}`;
+        const prev = lastProgressSeenRef.current;
+        if (!prev || prev.key !== progressKey) {
+          lastProgressSeenRef.current = { key: progressKey, at: Date.now() };
+          setRefreshStuck(false);
+        } else if (!data.complete && Date.now() - prev.at > STUCK_AFTER_MS) {
+          setRefreshStuck(true);
+        }
+
+        if (data.complete) {
+          setRefreshBatchId(null); // stops this effect's own interval below
+        }
+      } catch {
+        /* a single failed poll isn't worth surfacing - the next tick retries */
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [refreshBatchId]);
 
   // Queues every Submitted Bids bid for a GeM Bid Exporter re-check (same
   // background-worker-polls-the-OMS pattern as Start Sync and Fetch Bid
-  // Documents) - the button just queues it, it doesn't wait for the
-  // extension to actually finish (that can take a while across many bids).
+  // Documents) - a batchId tags this run so the progress poll above can
+  // tell it apart from any earlier one. The extension itself fires a
+  // desktop notification when it finishes (see background.js) - this is
+  // just the in-page "X/Y done" view of the same run.
   const refreshBidStatuses = async () => {
     setRefreshingStatuses(true);
+    setRefreshProgress(null);
+    setRefreshStuck(false);
+    lastProgressSeenRef.current = null;
     try {
       const res = await fetch("/api/gem-bids/refresh-status", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to queue status refresh");
-      alert(`Queued ${data.queuedCount ?? 0} bid(s) for a status refresh. The extension checks about once a minute.`);
+      if ((data.queuedCount ?? 0) === 0) {
+        alert("No bids in Submitted Bids to refresh.");
+      } else {
+        setRefreshBatchId(data.batchId);
+      }
     } catch (err: any) {
       alert(err.message || "Failed to queue status refresh");
     } finally {
@@ -1213,14 +1283,34 @@ export default function GemBidTable({
                     Bid Status
                     <button
                       type="button"
-                      disabled={refreshingStatuses}
+                      disabled={refreshingStatuses || !!refreshBatchId}
                       onClick={refreshBidStatuses}
-                      title="Fetch current status from GeM for every bid in this section"
-                      className="flex items-center gap-1 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white font-black uppercase text-[8px] tracking-wide py-1 px-2 rounded normal-case"
+                      title={
+                        refreshStuck
+                          ? "No progress in a while - the extension may not be running, or Chrome may be closed"
+                          : "Fetch current status from GeM for every bid in this section"
+                      }
+                      className={`flex items-center gap-1 disabled:opacity-60 text-white font-black uppercase text-[8px] tracking-wide py-1 px-2 rounded normal-case ${
+                        refreshStuck ? "bg-rose-600 hover:bg-rose-700" : "bg-slate-700 hover:bg-slate-800"
+                      }`}
                     >
-                      <FiRefreshCw size={9} className={refreshingStatuses ? "animate-spin" : ""} />
-                      {refreshingStatuses ? "Refreshing..." : "Refresh"}
+                      <FiRefreshCw size={9} className={refreshingStatuses || (refreshBatchId && !refreshStuck) ? "animate-spin" : ""} />
+                      {refreshingStatuses
+                        ? "Queuing..."
+                        : refreshBatchId && refreshProgress
+                        ? refreshStuck
+                          ? `Stuck at ${refreshProgress.done + refreshProgress.failed}/${refreshProgress.total}`
+                          : `${refreshProgress.done + refreshProgress.failed}/${refreshProgress.total}`
+                        : refreshBatchId
+                        ? "Starting..."
+                        : "Refresh"}
                     </button>
+                    {!refreshBatchId && refreshProgress?.complete && (
+                      <span className="text-emerald-600 normal-case font-bold">
+                        ✓ Done ({refreshProgress.done}/{refreshProgress.total}
+                        {refreshProgress.failed ? `, ${refreshProgress.failed} failed` : ""})
+                      </span>
+                    )}
                   </div>
                 </th>
               )}
@@ -1624,46 +1714,65 @@ export default function GemBidTable({
                         <th className="py-2 px-2 text-left">Unit</th>
                         <th className="py-2 px-2 text-left">Delivery</th>
                         <th className="py-2 px-2 text-left w-36">Rate</th>
+                        <th className="py-2 px-2 text-right">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {boqItems.map((it) => (
-                        <tr key={it.itemNumber}>
-                          <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
-                          <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px]" title={it.itemDescription}>
-                            {it.itemTitle}
-                          </td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.quantity}</td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
-                          <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
-                          <td className="py-2 px-2">
-                            {/* Blue = the actual decision - everything
-                                above/below it (green Purchased, orange
-                                Use, purple Market L1) is reference context
-                                you weigh before typing the number that
-                                actually counts. */}
-                            <input
-                              value={it.rate}
-                              onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
-                              placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Final Rate"}
-                              className="w-full border-2 border-blue-300 bg-blue-50/40 rounded px-2 py-1 text-[11px] font-bold text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                            {renderPurchaseRateSuggestion(it)}
-                            {it.suggestedRate && (
-                              <button
-                                type="button"
-                                onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
-                                className="text-[9px] text-amber-700 underline mt-0.5 block"
-                                title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
-                              >
-                                Use {it.suggestedRate}
-                              </button>
-                            )}
-                            {renderMarketRateSuggestion(it)}
-                          </td>
-                        </tr>
-                      ))}
+                      {boqItems.map((it) => {
+                        const qty = parseFloat(it.quantity) || 0;
+                        const rate = parseFloat(it.rate) || 0;
+                        const total = qty * rate;
+                        return (
+                          <tr key={it.itemNumber}>
+                            <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
+                            <td className="py-2 px-2 font-bold text-slate-700 max-w-[260px]" title={it.itemDescription}>
+                              {it.itemTitle}
+                            </td>
+                            <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.quantity}</td>
+                            <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.unit}</td>
+                            <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{it.deliveryPeriod}d</td>
+                            <td className="py-2 px-2">
+                              {/* Blue = the actual decision - everything
+                                  above/below it (green Purchased, orange
+                                  Use, purple Market L1) is reference context
+                                  you weigh before typing the number that
+                                  actually counts. */}
+                              <input
+                                value={it.rate}
+                                onChange={(e) => updateBoqRate(it.itemNumber, e.target.value)}
+                                placeholder={it.suggestedRate ? `Suggested: ${it.suggestedRate}` : "Final Rate"}
+                                className="w-full border-2 border-blue-300 bg-blue-50/40 rounded px-2 py-1 text-[11px] font-bold text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              />
+                              {renderPurchaseRateSuggestion(it)}
+                              {it.suggestedRate && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateBoqRate(it.itemNumber, it.suggestedRate)}
+                                  className="text-[9px] text-amber-700 underline mt-0.5 block"
+                                  title={it.suggestedFromBidNo ? `From ${it.suggestedFromBidNo}` : undefined}
+                                >
+                                  Use {it.suggestedRate}
+                                </button>
+                              )}
+                              {renderMarketRateSuggestion(it)}
+                            </td>
+                            <td className="py-2 px-2 text-right font-bold text-slate-700 whitespace-nowrap">
+                              {total ? total.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-800">
+                        <td colSpan={6} className="py-2 px-2 text-right font-black uppercase text-[10px] text-slate-700">
+                          Grand Total
+                        </td>
+                        <td className="py-2 px-2 text-right font-black text-slate-900 whitespace-nowrap">
+                          {boqGrandTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}

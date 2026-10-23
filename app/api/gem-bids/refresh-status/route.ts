@@ -16,9 +16,12 @@ export async function OPTIONS() {
 // POST — queues every bid currently in Submitted Bids for a GeM status
 // re-check (statusRefresh.status: "pending"), picked up by the extension's
 // background worker the same way Start Sync/Fetch Bid Documents are -
-// polled via GET below. The actual GeM-side lookup (where/how "current
-// status" is read for a submitted bid) isn't wired into the extension yet;
-// this queues cleanly either way so it's ready the moment that part lands.
+// polled via GET below. batchId (this call's own timestamp) tags every bid
+// queued in this one request, so .../progress below can report "how far
+// through THIS run" rather than being confused by leftover done/failed
+// bids from an earlier refresh that happened to still match a looser
+// query - GemBidTable polls that endpoint with this id to show live
+// progress instead of the fire-and-forget "queued" alert this used to be.
 export async function POST() {
   try {
     const client = await clientPromise;
@@ -26,12 +29,13 @@ export async function POST() {
     const bidsCollection = db.collection("gem_bids");
 
     const now = new Date();
+    const batchId = now.getTime().toString();
     const result = await bidsCollection.updateMany(
       { currentSection: "submitted_bids" },
-      { $set: { statusRefresh: { status: "pending", requestedAt: now, finishedAt: null, error: null } } }
+      { $set: { statusRefresh: { status: "pending", requestedAt: now, finishedAt: null, error: null, batchId } } }
     );
 
-    return NextResponse.json({ queuedCount: result.modifiedCount || 0 }, { headers: corsHeaders });
+    return NextResponse.json({ queuedCount: result.modifiedCount || 0, batchId }, { headers: corsHeaders });
   } catch (error: any) {
     console.error("GeM bid refresh-status POST error:", error);
     return NextResponse.json({ error: error.message || "Failed to queue status refresh" }, { status: 500, headers: corsHeaders });

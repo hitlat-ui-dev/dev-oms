@@ -33,8 +33,14 @@ export async function POST(req: Request) {
     const db = client.db(DB_NAME);
     const now = new Date();
 
+    // Targeted field updates, not a whole-object overwrite - this used to
+    // replace statusRefresh entirely, silently wiping batchId (see POST's
+    // own comment) every time a bid finished, which broke .../progress's
+    // ability to tell this run's bids apart from an earlier one.
     const set: Record<string, any> = {
-      statusRefresh: { status: error ? "failed" : "done", finishedAt: now, error: error || null },
+      "statusRefresh.status": error ? "failed" : "done",
+      "statusRefresh.finishedAt": now,
+      "statusRefresh.error": error || null,
     };
     if (typeof status === "string" && status.trim()) {
       set.bidStatus = status.trim();
