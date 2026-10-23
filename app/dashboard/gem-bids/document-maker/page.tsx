@@ -24,6 +24,7 @@ import { parseGemDate } from "@/lib/gemBids/expirySweep";
 import { normalizeName } from "@/lib/pricelist/normalize";
 import PricelistRateChip, { PricelistRate } from "@/components/purchase/pricelist/PricelistRateChip";
 import ReceivedRateChip, { ReceivedRate } from "@/components/purchase/pricelist/ReceivedRateChip";
+import RateSuggestions, { RateSuggestion } from "@/components/purchase/pricelist/RateSuggestions";
 
 interface Company {
   _id: string;
@@ -289,6 +290,8 @@ function DocumentMakerPageInner() {
   const [pricelistRates, setPricelistRates] = useState<Record<string, PricelistRate[]>>({});
   // Same call also returns what we actually paid (Received Purchase items tagged with this bid item name) - shown green.
   const [receivedRates, setReceivedRates] = useState<Record<string, ReceivedRate[]>>({});
+  // Near-miss tag names (similarity hints, never auto-linked) for items without an exact tag match.
+  const [rateSuggestions, setRateSuggestions] = useState<Record<string, RateSuggestion[]>>({});
   const pricelistTitlesKey = useMemo(
     () => Array.from(new Set(boqItems.map((it) => normalizeName(it.itemTitle)).filter(Boolean))).sort().join("\n"),
     [boqItems]
@@ -297,6 +300,7 @@ function DocumentMakerPageInner() {
     if (!pricelistTitlesKey) {
       setPricelistRates({});
       setReceivedRates({});
+      setRateSuggestions({});
       return;
     }
     const t = setTimeout(() => {
@@ -309,10 +313,12 @@ function DocumentMakerPageInner() {
         .then((d) => {
           setPricelistRates(d.rates || {});
           setReceivedRates(d.received || {});
+          setRateSuggestions(d.suggestions || {});
         })
         .catch(() => {
           setPricelistRates({});
           setReceivedRates({});
+          setRateSuggestions({});
         });
     }, 400);
     return () => clearTimeout(t);
@@ -979,6 +985,10 @@ function DocumentMakerPageInner() {
       />
       <ReceivedRateChip
         rates={receivedRates[normalizeName(it.itemTitle)]}
+        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
+      />
+      <RateSuggestions
+        items={rateSuggestions[normalizeName(it.itemTitle)]}
         onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
       />
     </>
