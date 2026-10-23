@@ -14,6 +14,8 @@ import {
   FiLayers,
   FiFileText,
   FiSearch,
+  FiArrowUp,
+  FiArrowDown,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { buildClusters, OrderCluster } from "@/lib/reconciliation/clusterEngine";
@@ -382,6 +384,16 @@ export default function ReconciliationPage() {
   // of rows) that finding one specific transaction by scrolling wasn't
   // practical.
   const [unresolvedSearch, setUnresolvedSearch] = useState("");
+
+  // Not A Bill tab: per-column search (description, tag, credited amount)
+  // and click-to-sort column headers - same pattern as the Stock page.
+  const [excludedDescSearch, setExcludedDescSearch] = useState("");
+  const [excludedTagSearch, setExcludedTagSearch] = useState("");
+  const [excludedAmountSearch, setExcludedAmountSearch] = useState("");
+  const [excludedSort, setExcludedSort] = useState<{ key: string | null; direction: "asc" | "desc" }>({
+    key: null,
+    direction: "asc",
+  });
 
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
@@ -1076,6 +1088,65 @@ export default function ReconciliationPage() {
       const manualInstitute = manualState[m._id]?.sellerId ? sellerById[manualState[m._id].sellerId]?.instituteName : "";
       if ((manualInstitute || "").toLowerCase().includes(q)) return true;
       return (m.ambiguousCandidates || []).some((c) => c.instituteName.toLowerCase().includes(q));
+    });
+  })();
+
+  const handleExcludedSort = (key: string) => {
+    setExcludedSort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const getExcludedSortIcon = (col: string) => {
+    if (excludedSort.key !== col)
+      return <FiArrowDown size={9} className="inline ml-1 opacity-25 group-hover:opacity-60 transition-opacity" />;
+    return excludedSort.direction === "asc" ? (
+      <FiArrowUp size={9} className="inline ml-1 text-blue-500" />
+    ) : (
+      <FiArrowDown size={9} className="inline ml-1 text-blue-500" />
+    );
+  };
+
+  // Not A Bill tab: filtered then sorted on top of `matches` (already
+  // server-scoped to the active tab).
+  const filteredExcludedMatches = (() => {
+    const descQ = excludedDescSearch.trim().toLowerCase();
+    const tagQ = excludedTagSearch.trim().toLowerCase();
+    const amountQ = excludedAmountSearch.trim().toLowerCase();
+    return matches.filter((m) => {
+      if (descQ && !(m.transactionDescription || "").toLowerCase().includes(descQ)) return false;
+      if (tagQ && !tagLabel(m.tag).toLowerCase().includes(tagQ)) return false;
+      if (amountQ && !formatMoney(m.creditedAmount).toLowerCase().includes(amountQ)) return false;
+      return true;
+    });
+  })();
+
+  const sortedExcludedMatches = (() => {
+    if (!excludedSort.key) return filteredExcludedMatches;
+    const key = excludedSort.key;
+    return [...filteredExcludedMatches].sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+      if (key === "credited") {
+        aVal = a.creditedAmount || 0;
+        bVal = b.creditedAmount || 0;
+      } else if (key === "date") {
+        aVal = parseDateToSortable(a.transactionDate) || 0;
+        bVal = parseDateToSortable(b.transactionDate) || 0;
+      } else if (key === "tag") {
+        aVal = tagLabel(a.tag).toLowerCase();
+        bVal = tagLabel(b.tag).toLowerCase();
+      } else {
+        aVal = (a.transactionDescription || "").toLowerCase();
+        bVal = (b.transactionDescription || "").toLowerCase();
+      }
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        return excludedSort.direction === "asc" ? aVal - bVal : bVal - aVal;
+      }
+      if (aVal < bVal) return excludedSort.direction === "asc" ? -1 : 1;
+      if (aVal > bVal) return excludedSort.direction === "asc" ? 1 : -1;
+      return 0;
     });
   })();
 
@@ -1797,7 +1868,10 @@ export default function ReconciliationPage() {
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 capitalize">
                   {tab === "excluded" ? "Not A Bill" : `${tab} Matches`}
                   <span className="ml-2 bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
-                    {matches.length}
+                    {tab === "excluded" ? sortedExcludedMatches.length : matches.length}
+                    {tab === "excluded" &&
+                      (excludedDescSearch.trim() || excludedTagSearch.trim() || excludedAmountSearch.trim()) &&
+                      ` / ${matches.length}`}
                   </span>
                   {tab === "confirmed" && matches.some((m) => m.highConfidence) && (
                     <span className="ml-2 bg-purple-50 border border-purple-200 text-purple-700 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
@@ -1805,19 +1879,70 @@ export default function ReconciliationPage() {
                     </span>
                   )}
                 </h3>
+                {tab === "excluded" && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <div className="relative flex-1 min-w-[160px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={excludedDescSearch}
+                        onChange={(e) => setExcludedDescSearch(e.target.value)}
+                        placeholder="Search description..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[160px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={excludedTagSearch}
+                        onChange={(e) => setExcludedTagSearch(e.target.value)}
+                        placeholder="Search tag..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[160px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={excludedAmountSearch}
+                        onChange={(e) => setExcludedAmountSearch(e.target.value)}
+                        placeholder="Search credited amount..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               {matches.length === 0 ? (
                 <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">No records</div>
+              ) : tab === "excluded" && sortedExcludedMatches.length === 0 ? (
+                <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">No matches for this search</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
-                        <th className="py-2.5 px-3">Date</th>
+                        <th
+                          className={`py-2.5 px-3 ${tab === "excluded" ? "cursor-pointer select-none hover:bg-slate-100 group" : ""}`}
+                          onClick={tab === "excluded" ? () => handleExcludedSort("date") : undefined}
+                        >
+                          Date {tab === "excluded" && getExcludedSortIcon("date")}
+                        </th>
                         {tab === "excluded" ? (
                           <>
-                            <th className="py-2.5 px-3">Description</th>
-                            <th className="py-2.5 px-3">Tag</th>
+                            <th
+                              className="py-2.5 px-3 cursor-pointer select-none hover:bg-slate-100 group"
+                              onClick={() => handleExcludedSort("description")}
+                            >
+                              Description {getExcludedSortIcon("description")}
+                            </th>
+                            <th
+                              className="py-2.5 px-3 cursor-pointer select-none hover:bg-slate-100 group"
+                              onClick={() => handleExcludedSort("tag")}
+                            >
+                              Tag {getExcludedSortIcon("tag")}
+                            </th>
                           </>
                         ) : (
                           <>
@@ -1825,7 +1950,12 @@ export default function ReconciliationPage() {
                             <th className="py-2.5 px-3">Institute</th>
                           </>
                         )}
-                        <th className="py-2.5 px-3 text-right">Credited</th>
+                        <th
+                          className={`py-2.5 px-3 text-right ${tab === "excluded" ? "cursor-pointer select-none hover:bg-slate-100 group" : ""}`}
+                          onClick={tab === "excluded" ? () => handleExcludedSort("credited") : undefined}
+                        >
+                          Credited {tab === "excluded" && getExcludedSortIcon("credited")}
+                        </th>
                         {tab !== "excluded" && <th className="py-2.5 px-3 text-right">Deduction</th>}
                         {tab !== "excluded" && <th className="py-2.5 px-3">Type</th>}
                         {tab === "confirmed" && <th className="py-2.5 px-3 text-center">Fast-track</th>}
@@ -1833,7 +1963,7 @@ export default function ReconciliationPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {matches.map((m) => (
+                      {(tab === "excluded" ? sortedExcludedMatches : matches).map((m) => (
                         <tr key={m._id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-600">{m.transactionDate}</td>
                           {tab === "excluded" ? (

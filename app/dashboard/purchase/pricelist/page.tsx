@@ -9,6 +9,7 @@ const itemLabel = (i: any) => [i.category, i.sub_type, i.model_no, i.size_spec, 
 function TagDialog({ skus, user, onClose, onDone }: { skus: string[]; user: PricelistUser; onClose: () => void; onDone: () => void }) {
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<{ name: string; source: string }[]>([]);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -29,18 +30,36 @@ function TagDialog({ skus, user, onClose, onDone }: { skus: string[]; user: Pric
     return () => clearTimeout(t);
   }, [value]);
 
-  const save = async (name: string) => {
-    if (!name.trim()) return;
+  const toggleChecked = (name: string) =>
+    setChecked((prev) => {
+      const n = new Set(prev);
+      n.has(name) ? n.delete(name) : n.add(name);
+      return n;
+    });
+  const allChecked = suggestions.length > 0 && suggestions.every((s) => checked.has(s.name));
+  const toggleAll = () =>
+    setChecked((prev) => {
+      const n = new Set(prev);
+      suggestions.forEach((s) => (allChecked ? n.delete(s.name) : n.add(s.name)));
+      return n;
+    });
+
+  const save = async () => {
+    const names = new Set(checked);
+    if (value.trim()) names.add(value.trim());
+    if (names.size === 0) return;
     setSaving(true);
     setErr("");
     try {
-      const res = await fetch("/api/purchase/pricelist/tags", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tag_name: name, sku_keys: skus, userName: user.username }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      for (const name of names) {
+        const res = await fetch("/api/purchase/pricelist/tags", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag_name: name, sku_keys: skus, userName: user.username }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Failed to add "${name}"`);
+      }
       onDone();
     } catch (e: any) {
       setErr(e.message);
@@ -59,27 +78,35 @@ function TagDialog({ skus, user, onClose, onDone }: { skus: string[]; user: Pric
           autoFocus
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save(value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
           placeholder="Item name, e.g. Ball Pein Hammer 500 gm"
           className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
         />
         {suggestions.length > 0 && (
           <div className="mt-2 border border-slate-200 rounded-lg max-h-56 overflow-auto">
+            <label className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-100 cursor-pointer sticky top-0">
+              <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+              All ({suggestions.length})
+            </label>
             {suggestions.map((s) => (
-              <button key={s.source + s.name} onClick={() => setValue(s.name)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-orange-50 flex justify-between gap-2">
-                <span>{s.name}</span>
+              <label key={s.source + s.name} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-orange-50 cursor-pointer">
+                <input type="checkbox" checked={checked.has(s.name)} onChange={() => toggleChecked(s.name)} />
+                <span className="flex-1">{s.name}</span>
                 <span className="text-[9px] uppercase font-bold text-slate-400">{s.source === "tag" ? "tag" : "bid item"}</span>
-              </button>
+              </label>
             ))}
           </div>
         )}
+        {checked.size > 0 && (
+          <div className="mt-2 text-[10px] font-bold text-orange-700">{checked.size} tag{checked.size > 1 ? "s" : ""} selected</div>
+        )}
         {err && <div className="text-xs text-rose-600 mt-2">{err}</div>}
         <button
-          disabled={saving || !value.trim()}
-          onClick={() => save(value)}
+          disabled={saving || (checked.size === 0 && !value.trim())}
+          onClick={save}
           className="mt-4 w-full py-2 rounded-lg bg-orange-500 text-white text-xs font-black uppercase tracking-wider disabled:opacity-40"
         >
-          Add tag
+          Add tag{checked.size > 1 ? "s" : ""}
         </button>
       </div>
     </div>
