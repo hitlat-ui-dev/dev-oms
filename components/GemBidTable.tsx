@@ -11,6 +11,9 @@ import {
   FiX,
   FiRefreshCw,
   FiUploadCloud,
+  FiCopy,
+  FiExternalLink,
+  FiCheck,
 } from "react-icons/fi";
 import { BID_COLUMNS, EDITABLE_FIELD_KEYS, CELL_DISPLAY_FORMATTERS, SECTIONS, SectionKey, AUTO_ONLY_SECTIONS, RAW_DATA_SECTIONS } from "@/lib/gemBids/columns";
 import { parseGemDate } from "@/lib/gemBids/expirySweep";
@@ -252,6 +255,16 @@ export default function GemBidTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [displayLimit, setDisplayLimit] = useState(50);
   const [busy, setBusy] = useState(false);
+  const [copiedBidNo, setCopiedBidNo] = useState<string | null>(null);
+  const copyBidNo = async (bidNo: string) => {
+    try {
+      await navigator.clipboard.writeText(bidNo);
+      setCopiedBidNo(bidNo);
+      setTimeout(() => setCopiedBidNo((cur) => (cur === bidNo ? null : cur)), 1500);
+    } catch (err) {
+      console.error("Failed to copy bid number", err);
+    }
+  };
   // Bid To RA/RA/Type of Bid/Evaluation aren't searched often enough to earn
   // permanent space - collapsed by default, a button reveals them.
   const [showMoreFilters, setShowMoreFilters] = useState(false);
@@ -1370,7 +1383,26 @@ export default function GemBidTable({
                     </button>
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-slate-700">
-                    <div className="whitespace-nowrap">{b.bidNo}</div>
+                    <div className="whitespace-nowrap flex items-center gap-1">
+                      {b.bidNo}
+                      <button
+                        type="button"
+                        onClick={() => copyBidNo(b.bidNo)}
+                        title="Copy Bid No"
+                        className="text-slate-400 hover:text-blue-600"
+                      >
+                        {copiedBidNo === b.bidNo ? <FiCheck size={11} className="text-emerald-600" /> : <FiCopy size={11} />}
+                      </button>
+                      <a
+                        href={`/dashboard/gem-bids/document-maker?bidId=${b._id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open In Bid Rate"
+                        className="text-slate-400 hover:text-blue-600"
+                      >
+                        <FiExternalLink size={11} />
+                      </a>
+                    </div>
                     {b.bidEndDateTime && (
                       <div className={`text-[10px] font-sans font-normal whitespace-nowrap ${isExpiringSoon ? "text-rose-600 font-bold" : "text-slate-400"}`}>
                         {b.bidEndDateTime}
