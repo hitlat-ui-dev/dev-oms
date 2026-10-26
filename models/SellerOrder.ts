@@ -73,6 +73,13 @@ const SellerOrderSchema = new Schema({
   isAdvance: { type: Boolean, default: false },
   merged: { type: Boolean, default: false },
   mergedFromOrderId: { type: Schema.Types.ObjectId, ref: "SellerOrder", default: null },
+  // Multi-item Seller Order Entry: one contract entered with several
+  // different items at once (see app/api/seller-orders/bulk) still saves as
+  // one SellerOrder doc per item - schema stays 1 order = 1 item, this is
+  // purely a shared tag across those docs so the UI can show "entered
+  // together" later. Never set on single-item orders. Not used by billing
+  // (which already groups by contractNo, not by this) or Advance merge.
+  orderGroupId: { type: String, default: null },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 SellerOrderSchema.index({ firmCode: 1, createdAt: -1 });
@@ -84,5 +91,6 @@ SellerOrderSchema.index({ contractNo: 1, firmCode: 1 });
 SellerOrderSchema.index({ billId: 1 });
 SellerOrderSchema.index({ firmCode: 1, billExempt: 1 });
 SellerOrderSchema.index({ isAdvance: 1, merged: 1, instituteName: 1 });
+SellerOrderSchema.index({ orderGroupId: 1 });
 
 export default models.SellerOrder || model("SellerOrder", SellerOrderSchema);

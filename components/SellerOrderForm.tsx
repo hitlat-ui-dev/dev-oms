@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { FiSave, FiArrowLeft, FiX } from "react-icons/fi";
+import { FiSave, FiArrowLeft, FiX, FiTrash2, FiPlus } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import BlockGuard from "./BlockGuard";
 import Link from "next/link";
@@ -15,11 +15,26 @@ interface SellerOrderFormProps {
   initialData?: any;
 }
 
+// One item line in the multi-item section - a single contract/entry can now
+// bundle several different items at once ("Add Another Item"), each saved as
+// its own SellerOrder document (see saveOrder below / app/api/seller-orders/bulk).
+interface ItemRow {
+  key: string;
+  itemId: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  sku: string;
+  qty: number | "";
+  rate: number | "";
+}
+
 export default function SellerOrderForm({ onClose, initialData, isModal = false }: SellerOrderFormProps) {
   const router = useRouter();
   // Editing an existing order is always a single record - variant selection
   // there just re-points it at a different SKU (unchanged behavior). Only a
-  // brand-new order can be split across several variant quantities at once.
+  // brand-new order can be split across several variant quantities, or now,
+  // several entirely different items.
   const isEditing = !!initialData?._id;
   const [loading, setLoading] = useState(false);
   const [sellers, setSellers] = useState<any[]>([]);
@@ -61,22 +76,16 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isModal, onClose]);
 
+  // Common fields - shared across every item row in one save. Item-specific
+  // fields (name/qty/rate/etc.) live in itemRows instead.
   const blankFormData = {
     firmCode: "",
     subParty: "",
     sellerId: "",
     instituteName: "",
-    itemId: "",
-    itemName: "",
-    category: "",
-    unit: "",
-    sku: "",
     contractDate: "",
     contractNo: "",
     contractUrl: "",
-    orderQty: "" as any,
-    reQty: 0,
-    rate: "" as any,
     remark: "",
     // Advance Order Merge System: material shipped before the buyer's
     // official GeM order exists. deliveryDate doubles as "Material Sent
@@ -85,16 +94,35 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     deliveryDate: ""
   };
   const [formData, setFormData] = useState(blankFormData);
-  // Populated when the picked item belongs to a variant group (e.g. "White
-  // Board Marker" Green/Red/Blue/Black) - each sibling is its own SKU with
-  // its own stock, this just lets the user pick the right one by label
-  // instead of having to know/type the exact per-color/size item name.
+
+  const itemRowKeyRef = useRef(0);
+  const makeEmptyItemRow = (): ItemRow => ({
+    key: `row-${++itemRowKeyRef.current}`,
+    itemId: "", itemName: "", category: "", unit: "", sku: "",
+    qty: "" as any, rate: "" as any,
+  });
+  const [itemRows, setItemRows] = useState<ItemRow[]>([makeEmptyItemRow()]);
+  // Row keys that failed validation on the last save attempt - only used in
+  // multi-row mode, to red-border the offending rows.
+  const [rowErrors, setRowErrors] = useState<Set<string>>(new Set());
+  const itemRowInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [pendingFocusKey, setPendingFocusKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingFocusKey) {
+      itemRowInputRefs.current[pendingFocusKey]?.focus();
+      setPendingFocusKey(null);
+    }
+  }, [itemRows, pendingFocusKey]);
+
+  // Populated when the picked item (single-row mode only) belongs to a
+  // variant group (e.g. "White Board Marker" Green/Red/Blue/Black) - each
+  // sibling is its own SKU with its own stock, this just lets the user split
+  // one contract across several colors/sizes by quantity instead of adding
+  // each as its own generic item row.
   const [variantSiblings, setVariantSiblings] = useState<any[]>([]);
   // Create-mode only: per-variant _id -> qty (keyed by _id, not sku - some
-  // real variant groups share one sku across all their color/size siblings),
-  // so one contract can be split across several colors/sizes (e.g. 10 Red +
-  // 10 Blue + 5 Black + 5 Green) and saved as one seller-order line per
-  // variant with qty > 0.
+  // real variant groups share one sku across all their color/size siblings).
   const [variantQtyMap, setVariantQtyMap] = useState<Record<string, number>>({});
   // "Save & Add Another" clears the form to enter the next order back-to-back
   // - the button itself keeps focus after being clicked, so re-focusing Firm
@@ -135,21 +163,23 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       subParty: initialData.subParty || "",
       sellerId: initialData.sellerId || "",
       instituteName: seller?.instituteName || initialData.instituteName || "",
+      contractDate: initialData.contractDate || "",
+      contractNo: initialData.contractNo || "",
+      contractUrl: initialData.contractUrl || "",
+      remark: initialData.remark || "",
+      isAdvance: !!initialData.isAdvance,
+      deliveryDate: initialData.deliveryDate || ""
+    });
+    setItemRows([{
+      key: `row-${++itemRowKeyRef.current}`,
       itemId: initialData.itemId || "",
       itemName: item?.itemName || initialData.itemName || "",
       category: initialData.category || "",
       unit: initialData.unit || "",
       sku: initialData.sku || "",
-      contractDate: initialData.contractDate || "",
-      contractNo: initialData.contractNo || "",
-      contractUrl: initialData.contractUrl || "",
-      orderQty: initialData.orderQty || "",
-      reQty: initialData.reQty || 0,
-      rate: initialData.rate || "",
-      remark: initialData.remark || "",
-      isAdvance: !!initialData.isAdvance,
-      deliveryDate: initialData.deliveryDate || ""
-    });
+      qty: initialData.orderQty ?? initialData.reQty ?? "",
+      rate: initialData.rate ?? "",
+    }]);
     loadedRecordRef.current = recordKey;
   }, [initialData, sellers, stocks]);
 
@@ -180,22 +210,82 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     loadData();
   }, []);
 
-  // Create-mode + a variant group with >1 sibling means this order is a
-  // per-variant quantity split, not a single-item order.
-  const isSplitMode = !isEditing && variantSiblings.length > 1;
+  // Create-mode, exactly one item row, and that item belongs to a variant
+  // group with >1 sibling means this order is a per-variant quantity split,
+  // not a single-item order. Only available in single-row mode - once a
+  // second (independent) item row is added, variant-split's own grid isn't
+  // shown any more (each variant can still be added as its own row by name).
+  const isSplitMode = !isEditing && itemRows.length === 1 && variantSiblings.length > 1;
   const variantQtySum = useMemo(
     () => Object.values(variantQtyMap).reduce((sum: number, q: any) => sum + (Number(q) || 0), 0),
     [variantQtyMap]
   );
 
-  // const totalAmount = useMemo(() => formData.orderQty * formData.rate, [formData.orderQty, formData.rate]);
-  const totalAmount = useMemo(() => {
-    // Use reQty if available, otherwise orderQty, fallback to 0
-    const qty = isSplitMode ? variantQtySum : (formData.reQty ?? formData.orderQty ?? 0);
-    const rate = formData.rate ?? 0;
+  const grandTotal = useMemo(() => {
+    if (isSplitMode) return variantQtySum * (Number(itemRows[0]?.rate) || 0);
+    return itemRows.reduce((sum, r) => sum + (Number(r.qty) || 0) * (Number(r.rate) || 0), 0);
+  }, [isSplitMode, variantQtySum, itemRows]);
 
-    return qty * rate;
-  }, [isSplitMode, variantQtySum, formData.reQty, formData.orderQty, formData.rate]);
+  // How many item rows actually have something in them - used for the
+  // "X Items" label and to know whether this save is single- or multi-item.
+  const filledRowCount = useMemo(
+    () => itemRows.filter((r) => r.itemId || Number(r.qty) > 0).length,
+    [itemRows]
+  );
+
+  const updateItemRow = (index: number, patch: Partial<ItemRow>) => {
+    setItemRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  };
+
+  const addItemRow = () => {
+    const row = makeEmptyItemRow();
+    setItemRows((prev) => [...prev, row]);
+    setPendingFocusKey(row.key);
+  };
+
+  const removeItemRow = (index: number) => {
+    setItemRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  };
+
+  // Shared item-search handler for both the single-row field and each
+  // multi-row row - matches by exact name (excluding hidden items, a
+  // retired duplicate often shares the exact same name as its active
+  // replacement) same as the original single-item logic did.
+  const handleItemSelectForRow = (index: number, val: string) => {
+    updateItemRow(index, { itemName: val, itemId: "", category: "", unit: "", sku: "" });
+
+    const selectedItem = stocks.find((x: any) => x.itemName === val && x.hidden !== true);
+    if (selectedItem) {
+      updateItemRow(index, {
+        itemId: selectedItem._id,
+        itemName: selectedItem.itemName,
+        category: selectedItem.category,
+        unit: selectedItem.unit,
+        sku: selectedItem.sku,
+      });
+      if (index === 0 && itemRows.length === 1 && !isEditing) {
+        setVariantSiblings(
+          selectedItem.variantGroup
+            ? stocks.filter((x: any) => x.variantGroup === selectedItem.variantGroup && x.hidden !== true)
+            : []
+        );
+        setVariantQtyMap({});
+      }
+    } else if (index === 0 && itemRows.length === 1 && !isEditing) {
+      setVariantSiblings([]);
+      setVariantQtyMap({});
+    }
+  };
+
+  // Non-blocking "this item is already in another row" warning (point 4 of
+  // the spec) - flags every row sharing an itemId with an earlier row,
+  // naming that earlier row's number.
+  const getDuplicateRowMessage = (row: ItemRow, index: number): string | null => {
+    if (!row.itemId) return null;
+    const firstIndex = itemRows.findIndex((r) => r.itemId === row.itemId);
+    if (firstIndex === -1 || firstIndex === index) return null;
+    return `Yeh item pehle se Row ${firstIndex + 1} me hai`;
+  };
 
   const handleAddParty = async () => {
     const name = newPartyName.trim().toLowerCase();
@@ -260,38 +350,10 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     setFormData({ ...formData, contractNo: dedupeRepeatedString(plainText) });
   };
 
-  // const handleSubmit = async (e: React.FormEvent) => {
-  //   e.preventDefault();
-  //   setLoading(true);
-  //   try {
-  //     const res = await fetch("/api/seller-orders", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ ...formData, totalAmount })
-  //     });
-
-  //     if (res.ok) {
-  //         alert("Order Saved Successfully!");
-  //         window.location.reload();
-  //       if (isModal && onClose) {
-  //           onClose();
-  //       } else {
-  //           window.location.reload();
-  //       }
-  //     } else {
-  //       const err = await res.json();
-  //       alert(`Error: ${err.error || "Failed to save"}`);
-  //     }
-  //   } catch (error) {
-  //     alert("Check your server connection.");
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-
   // Shared validate+save core. Returns true on success so the two submit
   // buttons (Save & Close vs Save & Add Another) can each decide what to do
-  // afterwards without duplicating the validation/POST logic.
+  // afterwards without duplicating the validation/save logic. Branches into
+  // four save paths depending on mode - see the comment above each one.
   const saveOrder = async (): Promise<boolean> => {
     if (!dataLoaded) {
       alert("Still loading firm/institute/item lists — please wait a second and press Save again.");
@@ -306,25 +368,9 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       return false; // Block database submit action pipeline completely
     }
 
-    // Build the list of {item, qty} lines to save. Normally there's just one
-    // (the single selected item), but a variant-group item with per-variant
-    // quantities filled in (e.g. one GeM contract split 10 Red / 10 Blue / 5
-    // Black / 5 Green) saves one seller-order line per non-zero variant, all
-    // sharing this same contractNo/contractDate/firmCode/rate/remark.
-    let lines: { item: any; qty: number }[] = [];
-    if (isSplitMode) {
-      lines = variantSiblings
-        .map((v: any) => ({ item: v, qty: Number(variantQtyMap[v._id]) || 0 }))
-        .filter((l) => l.qty > 0);
-      if (lines.length === 0) {
-        alert("Please enter a quantity for at least one variant.");
-        return false;
-      }
-    } else {
-      // Matched by itemId (not name) so an edit re-opened on an order that
-      // already references a hidden item gets caught too, not just the
-      // itemName datalist's own hidden-item selection.
-      const matchedStockItem = stocks.find((x: any) => x._id === formData.itemId);
+    // --- EDIT: always a single record, unchanged from before. ---
+    if (isEditing) {
+      const matchedStockItem = stocks.find((x: any) => x._id === itemRows[0]?.itemId);
       if (!matchedStockItem) {
         alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
         return false;
@@ -333,62 +379,221 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
         alert(`❌ Error: "${matchedStockItem.itemName}" (SKU ${matchedStockItem.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
         return false;
       }
-      if (!formData.reQty || formData.reQty <= 0) {
+      const qty = Number(itemRows[0]?.qty) || 0;
+      if (qty <= 0) {
         alert("Please enter a quantity more than 0");
-        return false; // STOP the function here
+        return false;
       }
-      lines = [{ item: matchedStockItem, qty: formData.reQty }];
-    }
 
-    setLoading(true);
-    try {
-      const method = isEditing ? "PATCH" : "POST";
-      const url = isEditing ? `/api/seller-orders/${initialData._id}` : "/api/seller-orders";
-
-      // Saved sequentially (not in parallel) since seller-orders generate
-      // their orderNo by reading the current highest one - concurrent POSTs
-      // could race and collide on the same orderNo.
-      for (const { item, qty } of lines) {
-        // sellerId is an ObjectId field server-side - "" (no institute match
-        // found, e.g. a GeM-verify order matched by name only) must not be
-        // sent as-is, or the update throws a Mongoose cast error. Omit the
-        // key entirely rather than nulling it: on an edit, that leaves
-        // whatever sellerId already exists on the order untouched instead of
-        // silently wiping out a valid link just because this save's
-        // institute-name match happened not to resolve.
+      setLoading(true);
+      try {
         const payload: any = {
           ...formData,
-          itemId: item._id,
-          itemName: item.itemName,
-          category: item.category,
-          unit: item.unit,
-          sku: item.sku,
+          itemId: matchedStockItem._id,
+          itemName: matchedStockItem.itemName,
+          category: matchedStockItem.category,
+          unit: matchedStockItem.unit,
+          sku: matchedStockItem.sku,
           reQty: qty,
           orderQty: qty,
-          totalAmount: qty * (formData.rate || 0),
-          ...(isEditing ? {} : { createdBy: currentUsername }),
+          rate: Number(itemRows[0]?.rate) || 0,
+          totalAmount: qty * (Number(itemRows[0]?.rate) || 0),
         };
         if (!payload.sellerId) delete payload.sellerId;
 
-        const res = await fetch(url, {
-          method: method,
+        const res = await fetch(`/api/seller-orders/${initialData._id}`, {
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
 
         if (res.ok) {
           const result = await res.json();
-          if (result?.mergeWarning) {
-            alert(`⚠ ${result.mergeWarning}`);
-          }
+          if (result?.mergeWarning) alert(`⚠ ${result.mergeWarning}`);
           if (result?._id) savedOrdersRef.current.push(result);
+          return true;
         } else {
           const err = await res.json();
-          alert(`Error saving ${item.variantLabel || item.itemName}: ${err.error || "Failed to save"}`);
-          return false; // lines already saved before this one stay saved
+          alert(`Error updating order: ${err.error || "Failed to save"}`);
+          return false;
         }
+      } catch (error) {
+        alert("Check your server connection.");
+        return false;
+      } finally {
+        setLoading(false);
       }
-      return true;
+    }
+
+    // --- CREATE, single row, variant split: unchanged from before - each
+    // filled-in variant saves as its own line via the existing single-order
+    // endpoint, sequentially (orderNo is generated by reading the current
+    // highest one, so concurrent POSTs could race and collide). ---
+    if (isSplitMode) {
+      const lines = variantSiblings
+        .map((v: any) => ({ item: v, qty: Number(variantQtyMap[v._id]) || 0 }))
+        .filter((l) => l.qty > 0);
+      if (lines.length === 0) {
+        alert("Please enter a quantity for at least one variant.");
+        return false;
+      }
+
+      setLoading(true);
+      try {
+        for (const { item, qty } of lines) {
+          const payload: any = {
+            ...formData,
+            itemId: item._id,
+            itemName: item.itemName,
+            category: item.category,
+            unit: item.unit,
+            sku: item.sku,
+            reQty: qty,
+            orderQty: qty,
+            rate: Number(itemRows[0]?.rate) || 0,
+            totalAmount: qty * (Number(itemRows[0]?.rate) || 0),
+            createdBy: currentUsername,
+          };
+          if (!payload.sellerId) delete payload.sellerId;
+
+          const res = await fetch("/api/seller-orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          if (res.ok) {
+            const result = await res.json();
+            if (result?.mergeWarning) alert(`⚠ ${result.mergeWarning}`);
+            if (result?._id) savedOrdersRef.current.push(result);
+          } else {
+            const err = await res.json();
+            alert(`Error saving ${item.variantLabel || item.itemName}: ${err.error || "Failed to save"}`);
+            return false; // lines already saved before this one stay saved
+          }
+        }
+        return true;
+      } catch (error) {
+        alert("Check your server connection.");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // --- CREATE, generic rows (one or many): a completely empty row (no
+    // item, no qty) is silently dropped rather than blocking save; any
+    // remaining row missing either is blocked and highlighted. ---
+    const nonEmptyRows = itemRows.filter((r) => r.itemId || Number(r.qty) > 0);
+    if (nonEmptyRows.length === 0) {
+      alert("Please add at least one item.");
+      return false;
+    }
+    const badRowKeys = new Set<string>();
+    for (const r of nonEmptyRows) {
+      if (!r.itemId || !Number(r.qty) || Number(r.qty) <= 0) badRowKeys.add(r.key);
+    }
+    if (badRowKeys.size > 0) {
+      setRowErrors(badRowKeys);
+      alert("Har item row me ek valid item aur quantity (> 0) zaroori hai.");
+      return false;
+    }
+    setRowErrors(new Set());
+
+    for (const r of nonEmptyRows) {
+      const matchedStockItem = stocks.find((x: any) => x._id === r.itemId);
+      if (!matchedStockItem) {
+        alert("❌ Error: Invalid Product! Please select a valid item from the search suggestion dropdown list.");
+        return false;
+      }
+      if (matchedStockItem.hidden === true) {
+        alert(`❌ Error: "${matchedStockItem.itemName}" (SKU ${matchedStockItem.sku}) is hidden/retired — it can't be used. Please select its active replacement from the search list.`);
+        return false;
+      }
+    }
+
+    // Exactly one real row: unchanged existing single-order endpoint, so the
+    // common "just add one order" case behaves exactly as it always has.
+    if (nonEmptyRows.length === 1) {
+      const matchedStockItem = stocks.find((x: any) => x._id === nonEmptyRows[0].itemId);
+      setLoading(true);
+      try {
+        const payload: any = {
+          ...formData,
+          itemId: matchedStockItem._id,
+          itemName: matchedStockItem.itemName,
+          category: matchedStockItem.category,
+          unit: matchedStockItem.unit,
+          sku: matchedStockItem.sku,
+          reQty: Number(nonEmptyRows[0].qty),
+          orderQty: Number(nonEmptyRows[0].qty),
+          rate: Number(nonEmptyRows[0].rate) || 0,
+          totalAmount: Number(nonEmptyRows[0].qty) * (Number(nonEmptyRows[0].rate) || 0),
+          createdBy: currentUsername,
+        };
+        if (!payload.sellerId) delete payload.sellerId;
+
+        const res = await fetch("/api/seller-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          if (result?.mergeWarning) alert(`⚠ ${result.mergeWarning}`);
+          if (result?._id) savedOrdersRef.current.push(result);
+          return true;
+        } else {
+          const err = await res.json();
+          alert(`Error saving order: ${err.error || "Failed to save"}`);
+          return false;
+        }
+      } catch (error) {
+        alert("Check your server connection.");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Two or more real rows: one request to the transactional bulk endpoint
+    // - all-or-nothing, so a failure on any item saves none of them.
+    setLoading(true);
+    try {
+      const payload: any = {
+        ...formData,
+        createdBy: currentUsername,
+        items: nonEmptyRows.map((r) => {
+          const matchedStockItem = stocks.find((x: any) => x._id === r.itemId);
+          return {
+            itemId: r.itemId,
+            itemName: matchedStockItem?.itemName || r.itemName,
+            category: matchedStockItem?.category || r.category,
+            unit: matchedStockItem?.unit || r.unit,
+            sku: matchedStockItem?.sku || r.sku,
+            qty: Number(r.qty),
+            rate: Number(r.rate) || 0,
+          };
+        }),
+      };
+      if (!payload.sellerId) delete payload.sellerId;
+
+      const res = await fetch("/api/seller-orders/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        if (Array.isArray(result?.orders)) savedOrdersRef.current.push(...result.orders);
+        return true;
+      } else {
+        const err = await res.json();
+        alert(`Error saving items: ${err.error || "Failed to save"}`);
+        return false;
+      }
     } catch (error) {
       alert("Check your server connection.");
       return false;
@@ -399,10 +604,12 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const before = savedOrdersRef.current.length;
     const ok = await saveOrder();
     if (!ok) return;
+    const added = savedOrdersRef.current.length - before;
 
-    alert(initialData?._id ? "Order Updated Successfully!" : "Order Saved Successfully!");
+    alert(initialData?._id ? "Order Updated Successfully!" : added > 1 ? `✓ ${added} items saved` : "Order Saved Successfully!");
     if (isModal && onClose) {
       onClose(savedOrdersRef.current); // parent merges these locally - no refetch/reload
     } else {
@@ -410,20 +617,29 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     }
   };
 
-  // Saves the current order but keeps the modal open with a blank form for
-  // the next one - firms/institutes/stock are already loaded, so there's no
-  // refetch, and there's no reopen-"Add Order" round trip between entries.
+  // Saves the current order(s) but keeps the modal open with a blank form
+  // for the next one - firms/institutes/stock are already loaded, so there's
+  // no refetch, and there's no reopen-"Add Order" round trip between
+  // entries. Firm/Party/Institute/Contract Date/Contract No stay filled in
+  // (useful for entering several contracts for the same institute back to
+  // back); only the item rows and Remark reset.
   const handleSaveAndAddAnother = async () => {
+    const before = savedOrdersRef.current.length;
     const ok = await saveOrder();
     if (!ok) return;
+    const added = savedOrdersRef.current.length - before;
 
-    setFormData(blankFormData);
+    setFormData((prev) => ({ ...prev, remark: "" }));
+    setItemRows([makeEmptyItemRow()]);
     setVariantSiblings([]);
     setVariantQtyMap({});
-    setSavedFlash("✓ Order saved — add the next one");
+    setRowErrors(new Set());
+    setSavedFlash(added > 1 ? `✓ ${added} items saved — add the next one` : "✓ Order saved — add the next one");
     setTimeout(() => setSavedFlash(""), 2500);
     advanceCheckboxRef.current?.focus();
   };
+
+  const isMultiRowMode = !isEditing && itemRows.length > 1;
 
   return (
     <BlockGuard
@@ -486,13 +702,6 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               </span>
             </label>
 
-            {/* <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
-              <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.firmCode} onChange={(e) => setFormData({ ...formData, firmCode: e.target.value })}>
-                <option value="">Select Firm</option>
-                {firms.map((f: any) => <option key={f._id} value={f.firmCode}>{f.firmCode} - {f.firmName}</option>)}
-              </select>
-            </div> */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Firm Code *</label>
               <input
@@ -586,18 +795,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               )}
             </div>
 
-            {/* <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
-              <select required className="w-full p-4 bg-slate-50 border rounded-xl  text-sm outline-none" value={formData.sellerId} onChange={(e) => {
-                const s: any = sellers.find((x: any) => x._id === e.target.value);
-                setFormData({ ...formData, sellerId: e.target.value, instituteName: s?.instituteName || "" });
-              }}>
-                <option value="">Select Institute</option>
-                {sellers.map((s: any) => <option key={s._id} value={s._id}>{s.instituteName}</option>)}
-              </select>
-            </div> */}
-
-            <div className="space-y-2">
+            <div className={isMultiRowMode ? "md:col-span-2 space-y-2" : "space-y-2"}>
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Institute Name *</label>
               <input
                 list="institute-options"
@@ -622,52 +820,31 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               </datalist>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Item Name *</label>
-              <input
-                list="stock-items"
-                required
-                placeholder="Type to search..."
-                className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
-                // ADD THIS LINE:
-                value={formData.itemName}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  // First, update the text so the user can actually type
-                  setFormData(prev => ({ ...prev, itemName: val }));
-
-                  // Second, check if the typed text matches an item in your list -
-                  // excluding hidden items, since a hidden item is often a retired
-                  // duplicate sharing the exact same name as its active replacement
-                  // (see app/api/items/route.ts's duplicate-name check), and a plain
-                  // name match here would otherwise silently pick whichever one
-                  // happens to come first in the array.
-                  const selectedItem = stocks.find((x: any) => x.itemName === val && x.hidden !== true);
-                  if (selectedItem) {
-                    setFormData(prev => ({
-                      ...prev,
-                      itemId: selectedItem._id,
-                      itemName: selectedItem.itemName,
-                      category: selectedItem.category,
-                      unit: selectedItem.unit,
-                      sku: selectedItem.sku
-                    }));
-                    // If this item has color/size siblings, offer them below -
-                    // matched on variantGroup (a real shared field), never on
-                    // name, for the same reason hidden-duplicate matching was
-                    // banned elsewhere in this file.
-                    setVariantSiblings(
-                      selectedItem.variantGroup
-                        ? stocks.filter((x: any) => x.variantGroup === selectedItem.variantGroup && x.hidden !== true)
-                        : []
-                    );
-                    setVariantQtyMap({});
-                  } else {
-                    setVariantSiblings([]);
-                    setVariantQtyMap({});
-                  }
-                }}
-              />
+            {/* Single-item mode: the original one-field item search, exactly
+                as before. Disappears once a second row is added - Institute
+                above takes its place (md:col-span-2) and every item lives in
+                the multi-row block below instead. */}
+            {!isMultiRowMode && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Search Item Name *</label>
+                <input
+                  list="stock-items"
+                  required
+                  placeholder="Type to search..."
+                  className="w-full p-4 bg-slate-50 border rounded-xl text-sm outline-none"
+                  value={itemRows[0]?.itemName || ""}
+                  onChange={(e) => handleItemSelectForRow(0, e.target.value)}
+                />
+                <datalist id="stock-items">
+                  {stocks.filter((i: any) => i.hidden !== true).map((i: any) => (
+                    <option key={i._id} value={i.itemName}>
+                      {i.sku} — {i.category} ({i.unit})
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+            )}
+            {isMultiRowMode && (
               <datalist id="stock-items">
                 {stocks.filter((i: any) => i.hidden !== true).map((i: any) => (
                   <option key={i._id} value={i.itemName}>
@@ -675,7 +852,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                   </option>
                 ))}
               </datalist>
-            </div>
+            )}
 
             {/* Full-width (md:col-span-3) so this block always occupies its
                 own row - appearing/disappearing only pushes the fields below
@@ -688,18 +865,17 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                   <select
                     required
                     className="w-full md:w-1/3 p-4 bg-slate-50 border rounded-xl text-sm outline-none"
-                    value={formData.itemId}
+                    value={itemRows[0]?.itemId || ""}
                     onChange={(e) => {
                       const chosen = variantSiblings.find((v: any) => v._id === e.target.value);
                       if (!chosen) return;
-                      setFormData(prev => ({
-                        ...prev,
+                      updateItemRow(0, {
                         itemId: chosen._id,
                         itemName: chosen.itemName,
                         category: chosen.category,
                         unit: chosen.unit,
                         sku: chosen.sku
-                      }));
+                      });
                     }}
                   >
                     {variantSiblings.map((v: any) => (
@@ -762,39 +938,146 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               {formData.contractUrl && <p className="text-[9px] text-blue-600 font-bold px-2 italic truncate">URL: {formData.contractUrl}</p>}
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
-              {isSplitMode ? (
-                <div className="w-full p-4 bg-slate-100 border rounded-xl text-sm text-slate-600 font-black">
-                  {variantQtySum} <span className="font-medium text-slate-400 normal-case">(sum of variants above)</span>
+            {!isMultiRowMode ? (
+              <>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Qty *</label>
+                  {isSplitMode ? (
+                    <div className="w-full p-4 bg-slate-100 border rounded-xl text-sm text-slate-600 font-black">
+                      {variantQtySum} <span className="font-medium text-slate-400 normal-case">(sum of variants above)</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      required
+                      className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
+                      placeholder="Enter quantity"
+                      value={itemRows[0]?.qty ?? ""}
+                      onChange={(e) => updateItemRow(0, { qty: e.target.value === "" ? "" : Number(e.target.value) })}
+                    />
+                  )}
                 </div>
-              ) : (
-                <input
-                  type="number"
-                  required
-                  className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
-                  placeholder="Enter quantity"
-                  value={formData.reQty ?? formData.orderQty ?? ""}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setFormData({
-                      ...formData,
-                      reQty: val,   // Always update reQty so the UI stays in sync
-                      orderQty: val // Keep orderQty updated for new records
-                    });
-                  }}
-                />
-              )}
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
-              <input type="number" step="0.01" className="w-full p-4 bg-slate-50 border rounded-xl text-sm" placeholder="Enter Rate" value={formData.rate} onChange={(e) => setFormData({ ...formData, rate: Number(e.target.value) })} />
-            </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-4 bg-slate-50 border rounded-xl text-sm"
+                    placeholder="Enter Rate"
+                    value={itemRows[0]?.rate ?? ""}
+                    onChange={(e) => updateItemRow(0, { rate: e.target.value === "" ? "" : Number(e.target.value) })}
+                  />
+                </div>
 
-            <div className="px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white">
-              <span className="font-black uppercase tracking-widest text-xs">Total</span>
-              <span className="text-2xl font-black">₹ {totalAmount.toLocaleString()}</span>
+                {!isEditing && !isSplitMode && (
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={addItemRow}
+                      className="w-full flex items-center justify-center gap-1.5 py-4 border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 rounded-xl font-bold uppercase text-[10px] tracking-wider transition-colors"
+                    >
+                      <FiPlus size={13} /> Add Another Item
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="md:col-span-3 space-y-3">
+                <div className="flex items-center gap-2 px-0.5">
+                  <span className="w-6 shrink-0" />
+                  <div className="flex-1 text-slate-500 font-bold uppercase tracking-wider text-[10px]">Item Name</div>
+                  <div className="w-20 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Qty</div>
+                  <div className="w-24 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Rate ₹</div>
+                  <div className="w-28 shrink-0 text-slate-500 font-bold uppercase tracking-wider text-[10px] text-center">Line Total</div>
+                  <span className="w-5 shrink-0" />
+                </div>
+
+                <div className="max-h-[36vh] overflow-y-auto space-y-2 pr-1">
+                  {itemRows.map((row, index) => {
+                    const dupMessage = getDuplicateRowMessage(row, index);
+                    const hasError = rowErrors.has(row.key);
+                    return (
+                      <div
+                        key={row.key}
+                        className={`flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl border ${hasError ? "border-red-400 bg-red-50/50" : "border-slate-200 bg-slate-50/50"}`}
+                      >
+                        <span className="hidden sm:flex w-6 h-11 shrink-0 items-center justify-center text-xs font-black text-slate-400">
+                          {index + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <input
+                            ref={(el) => { itemRowInputRefs.current[row.key] = el; }}
+                            list="stock-items"
+                            placeholder={`Item #${index + 1} — search...`}
+                            className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                            value={row.itemName}
+                            onChange={(e) => handleItemSelectForRow(index, e.target.value)}
+                          />
+                          {dupMessage && (
+                            <p className="text-[10px] text-amber-600 font-bold mt-1">⚠ {dupMessage}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="w-20 shrink-0">
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="Qty"
+                              className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
+                              value={row.qty}
+                              onChange={(e) => updateItemRow(index, { qty: e.target.value === "" ? "" : Number(e.target.value) })}
+                            />
+                          </div>
+                          <div className="w-24 shrink-0">
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Rate"
+                              className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
+                              value={row.rate}
+                              onChange={(e) => updateItemRow(index, { rate: e.target.value === "" ? "" : Number(e.target.value) })}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && index === itemRows.length - 1) {
+                                  e.preventDefault();
+                                  addItemRow();
+                                }
+                              }}
+                            />
+                          </div>
+                          <div className="w-28 shrink-0 p-3 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm text-center">
+                            ₹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString("en-IN")}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeItemRow(index)}
+                            disabled={itemRows.length === 1}
+                            title="Remove this item"
+                            className="shrink-0 w-5 flex items-center justify-center text-red-400 hover:text-red-600 disabled:opacity-20 disabled:pointer-events-none transition-colors mt-3"
+                          >
+                            <FiTrash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addItemRow}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 rounded-lg font-bold uppercase text-[10px] tracking-wider transition-colors"
+                >
+                  <FiPlus size={13} /> Add Another Item
+                </button>
+              </div>
+            )}
+
+            <div className={`px-6 pt-1 bg-slate-900 mt-5 rounded-xl flex justify-between items-center text-white ${isMultiRowMode ? "md:col-span-3" : ""}`}>
+              <span className="font-black uppercase tracking-widest text-xs">
+                {isMultiRowMode ? `Grand Total — ${filledRowCount} Item${filledRowCount === 1 ? "" : "s"}` : "Total"}
+              </span>
+              <span className="text-2xl font-black">₹ {grandTotal.toLocaleString("en-IN")}</span>
             </div>
 
             <div className="md:col-span-2 space-y-2">
