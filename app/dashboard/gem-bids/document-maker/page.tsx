@@ -185,11 +185,8 @@ interface RateVariantRow {
 // from the same brackets, so the grand total strictly increases L1 < L2 <
 // L3 by construction - the whole point being that L1 always wins.
 const BOQ_VARIANT_COLORS = ["00B050", "92D050", "00B0F0"]; // L1, L2, L3 - matches the user's own reference file exactly
-function positiveVariantDelta(rate: number): number {
-  const b = bracketForRate(rate);
-  const mag = b.min === b.max ? b.min : b.min + Math.random() * (b.max - b.min);
-  return Math.round(mag * 100) / 100;
-}
+const DEFAULT_BOQ_VARIANT_L2_PERCENT = "0.5";
+const DEFAULT_BOQ_VARIANT_L3_PERCENT = "0.7";
 // GeM's own gem-offer-price-items export title-cases each item and
 // appends "∗ :" (confirmed against a real sample file) - replicated
 // exactly so the generated file matches what GeM itself would produce.
@@ -343,12 +340,17 @@ function DocumentMakerPageInner() {
   const [rateVariants, setRateVariants] = useState<RateVariantRow[] | null>(null);
 
   // BOQ Rate Variants - see BoqVariantRow/toGemOfferItemLabel above.
-  // boqVariantParties is purely for the user's own reference (which real
-  // GeM seller account to upload each variant's file under) - it isn't
-  // part of any computed value or file name, which per spec are always
-  // literally "L1"/"L2"/"L3".
+  // boqVariantParties holds each variant's selected company _id (not just a
+  // display name) because its firmCode now feeds straight into the
+  // generated gem-offer-price-items file name below, by request - no longer
+  // "reference only".
   const [boqVariantCount, setBoqVariantCount] = useState<2 | 3>(2);
   const [boqVariantParties, setBoqVariantParties] = useState<Record<number, string>>({});
+  // L1 is always exactly the filled Rate column; L2/L3 are each computed
+  // straight off L1 (not chained off each other) as "item rate + this many
+  // percent", independently configurable per request.
+  const [boqVariantL2Percent, setBoqVariantL2Percent] = useState(DEFAULT_BOQ_VARIANT_L2_PERCENT);
+  const [boqVariantL3Percent, setBoqVariantL3Percent] = useState(DEFAULT_BOQ_VARIANT_L3_PERCENT);
   const [boqRateVariants, setBoqRateVariants] = useState<BoqVariantRow[] | null>(null);
   const [downloadingBoqVariants, setDownloadingBoqVariants] = useState(false);
 
@@ -1066,14 +1068,15 @@ function DocumentMakerPageInner() {
   };
 
   const generateBoqRateVariants = () => {
+    const percents = [parseFloat(boqVariantL2Percent) || 0, parseFloat(boqVariantL3Percent) || 0];
     const rows: BoqVariantRow[] = boqItems.map((it) => {
       const qty = parseFloat(it.quantity) || 0;
       const baseRate = parseFloat(it.rate) || 0;
       const variants: { rate: number; total: number }[] = [{ rate: baseRate, total: Math.round(qty * baseRate * 100) / 100 }];
-      let cumulativeRate = baseRate;
       for (let v = 2; v <= boqVariantCount; v++) {
-        cumulativeRate = baseRate ? Math.round((cumulativeRate + positiveVariantDelta(baseRate)) * 100) / 100 : 0;
-        variants.push({ rate: cumulativeRate, total: Math.round(qty * cumulativeRate * 100) / 100 });
+        const pct = percents[v - 2] || 0;
+        const rate = baseRate ? Math.round(baseRate * (1 + pct / 100) * 100) / 100 : 0;
+        variants.push({ rate, total: Math.round(qty * rate * 100) / 100 });
       }
       return {
         itemNumber: it.itemNumber,
@@ -1170,7 +1173,8 @@ function DocumentMakerPageInner() {
         const offerWb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(offerWb, offerWs, "Offer Price");
         const offerBuf = XLSX.write(offerWb, { type: "array", bookType: "xlsx" });
-        zip.file(`gem-offer-price-items - L${v + 1}.xlsx`, offerBuf);
+        const partyShortName = companies.find((c) => c._id === boqVariantParties[v + 1])?.firmCode || "";
+        zip.file(`gem-offer-price-items-${safeBidNo}-L${v + 1}${partyShortName ? `-${partyShortName}` : ""}.xlsx`, offerBuf);
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
@@ -1982,8 +1986,9 @@ function DocumentMakerPageInner() {
                   <p className="text-[10px] text-slate-400 mt-1">
                     Builds a GeM-ready BOQ-Filled file (VARIANT 1/2/3 columns, color-coded exactly like GeM&apos;s own
                     L1/L2/L3) plus one gem-offer-price-items upload file per variant, ready to download together.
-                    Variant 1 (L1) is always exactly your filled Rate column; each variant after it is bumped up only,
-                    so the grand total always comes out L1 &lt; L2{boqVariantCount === 3 ? " < L3" : ""} - L1 wins, every time.
+                    Variant 1 (L1) is always exactly your filled Rate column; L2/L3 are each L1&apos;s own rate plus
+                    the percent set below, so the grand total always comes out L1 &lt; L2
+                    {boqVariantCount === 3 ? " < L3" : ""} - L1 wins, every time.
                   </p>
                 </div>
                 <div className="p-5 flex flex-col gap-3">
@@ -2001,11 +2006,45 @@ function DocumentMakerPageInner() {
                         </button>
                       ))}
                     </div>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded text-white"
+                        style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[1]}` }}
+                      >
+                        L2 = L1 +
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={boqVariantL2Percent}
+                        onChange={(e) => setBoqVariantL2Percent(e.target.value)}
+                        className="w-16 border border-slate-200 rounded px-2 py-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-purple-400"
+                      />
+                      <span className="text-[10px] text-slate-400">%</span>
+                    </div>
+                    {boqVariantCount === 3 && (
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded text-white"
+                          style={{ backgroundColor: `#${BOQ_VARIANT_COLORS[2]}` }}
+                        >
+                          L3 = L1 +
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={boqVariantL3Percent}
+                          onChange={(e) => setBoqVariantL3Percent(e.target.value)}
+                          className="w-16 border border-slate-200 rounded px-2 py-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-purple-400"
+                        />
+                        <span className="text-[10px] text-slate-400">%</span>
+                      </div>
+                    )}
                     <button
                       onClick={generateBoqRateVariants}
                       className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[10px] tracking-wide py-2 px-4 rounded-lg transition-colors"
                     >
-                      <FiPercent size={12} /> {boqRateVariants ? "Re-roll" : "Generate BOQ Rate Variants"}
+                      <FiPercent size={12} /> {boqRateVariants ? "Regenerate" : "Generate BOQ Rate Variants"}
                     </button>
                   </div>
 
@@ -2025,15 +2064,16 @@ function DocumentMakerPageInner() {
                         >
                           <option value="">Select party...</option>
                           {companies.map((c) => (
-                            <option key={c._id} value={c.firmName}>
-                              {c.firmName}
+                            <option key={c._id} value={c._id}>
+                              {c.firmCode ? `${c.firmCode} - ${c.firmName}` : c.firmName}
                             </option>
                           ))}
                         </select>
                       </div>
                     ))}
                     <span className="text-[9px] text-slate-400">
-                      Reference only - which real GeM seller account to upload each file under.
+                      Which real GeM seller account to upload each variant under - its short name (firm code) also
+                      goes into that variant&apos;s gem-offer-price-items file name.
                     </span>
                   </div>
 

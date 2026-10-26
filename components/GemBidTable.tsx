@@ -118,6 +118,15 @@ interface BoqItem {
   purchaseDate?: string | null;
 }
 
+// GeM's own gem-offer-price-items export title-cases each item and appends
+// "∗ :" (confirmed against a real sample file) - same helper as document-
+// maker/page.tsx's BOQ Rate Variants download, duplicated rather than
+// shared since the two live in otherwise-unrelated files.
+function toGemOfferItemLabel(title: string): string {
+  const titleCased = (title || "").replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  return `${titleCased}∗ :`;
+}
+
 // Matching algorithm itself now lives in lib/gemBids/instituteMatch.ts
 // (shared with the Bid Rate page, which needs the exact same guess for the
 // exact same bid) - Seller here is a structural match for that module's
@@ -325,10 +334,17 @@ export default function GemBidTable({
   // deciding/working the bid, not a document-generation step.
   const [boqBidId, setBoqBidId] = useState<string | null>(null);
   const [boqBidNo, setBoqBidNo] = useState<string>("");
+  // Set only when the bid has exactly one party selected (see Party column,
+  // PartySelect below) - matches the spec's "PARTY SHORTNAME jab bid me ek
+  // single party select hogi uska shortname yaha pe aayega" exactly: more
+  // than one party and there's no single firm to name the file after, so it
+  // stays blank and the gem-offer-price-items file name just drops that part.
+  const [boqPartyShortName, setBoqPartyShortName] = useState<string>("");
   const [boqItems, setBoqItems] = useState<BoqItem[]>([]);
   const [loadingBoq, setLoadingBoq] = useState(false);
   const [savingBoq, setSavingBoq] = useState(false);
   const [boqExportUrl, setBoqExportUrl] = useState<string | null>(null);
+  const [downloadingOfferItems, setDownloadingOfferItems] = useState(false);
 
   // Same Bid Results import as document-maker/page.tsx's Fill Rates panel
   // (see lib/documentMaker/marketRateEngine.ts) - also reachable right
@@ -383,7 +399,7 @@ export default function GemBidTable({
         {hasBoqRates && (
           <button
             type="button"
-            onClick={() => openBoqRates(b._id, b.bidNo)}
+            onClick={() => openBoqRates(b)}
             className="text-[9px] text-amber-700 underline font-bold"
           >
             BOQ Rates
@@ -403,13 +419,16 @@ export default function GemBidTable({
     );
   };
 
-  const openBoqRates = async (bidId: string, bidNo: string) => {
-    setBoqBidId(bidId);
-    setBoqBidNo(bidNo);
+  const openBoqRates = async (b: GemBid) => {
+    setBoqBidId(b._id);
+    setBoqBidNo(b.bidNo);
+    const partyIds = b.selectedPartyIds || (b.selectedPartyId ? [b.selectedPartyId] : []);
+    const soleParty = partyIds.length === 1 ? companies.find((c) => c._id === partyIds[0]) : null;
+    setBoqPartyShortName(soleParty?.firmCode || "");
     setBoqExportUrl(null);
     setLoadingBoq(true);
     try {
-      const res = await fetch(`/api/gem-bids/boq?bidId=${bidId}`);
+      const res = await fetch(`/api/gem-bids/boq?bidId=${b._id}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to load BOQ");
       setBoqItems(data.items || []);
@@ -535,6 +554,42 @@ export default function GemBidTable({
       window.open(data.url, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       alert(err.message || "Failed to export BOQ");
+    }
+  };
+
+  // The GeM-ready "gem-offer-price-items" upload file, built straight from
+  // the already-filled Rate column, for the ordinary single-party case -
+  // BOQ Rate Variants (document-maker's own tab) builds one of these per
+  // L1/L2/L3 variant instead, this is the plain single-file version for a
+  // bid filled under one party.
+  const downloadOfferPriceItems = async () => {
+    if (boqItems.length === 0) return;
+    setDownloadingOfferItems(true);
+    try {
+      const XLSX = (await import("xlsx-js-style")).default;
+      const safeBidNo = String(boqBidNo || boqBidId || "BOQ").replace(/[\\/:*?"<>|]/g, "-");
+      const aoa: (string | number)[][] = [["Item", "Quantity Required", "Unit Price Inclusive of all Taxes"]];
+      boqItems.forEach((it) => {
+        aoa.push([toGemOfferItemLabel(it.itemTitle), it.quantity, parseFloat(it.rate) || ""]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Offer Price");
+      const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const fileName = `gem-offer-price-items-${safeBidNo}${boqPartyShortName ? `-${boqPartyShortName}` : ""}.xlsx`;
+      const blob = new Blob([buf], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || "Failed to build the download");
+    } finally {
+      setDownloadingOfferItems(false);
     }
   };
 
@@ -1821,6 +1876,14 @@ export default function GemBidTable({
                 className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
               >
                 Download Filled BOQ
+              </button>
+              <button
+                onClick={downloadOfferPriceItems}
+                disabled={boqItems.length === 0 || downloadingOfferItems}
+                title="GeM's own 3-column upload format (Item / Quantity Required / Unit Price), ready to paste straight into the real GeM rate-filling page"
+                className="px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 transition-colors"
+              >
+                {downloadingOfferItems ? "Building..." : "Download Filled BOQ Rate Sheet"}
               </button>
               <button
                 onClick={saveBoqRates}
