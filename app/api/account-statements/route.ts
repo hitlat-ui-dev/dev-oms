@@ -10,6 +10,9 @@ export interface Transaction {
   credit: number;
   chequeNo: string;
   balance: number;
+  miracleEntered?: boolean;
+  miracleEnteredBy?: string;
+  miracleEnteredAt?: string;
 }
 
 interface Gap {
@@ -190,6 +193,47 @@ export async function POST(req: Request) {
     return NextResponse.json({ statement: finalDoc, addedCount: newOnes.length, duplicateCount, gaps });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Failed to save statement" }, { status: 500 });
+  }
+}
+
+// PATCH: toggle one transaction's "entered in Miracle" tick - the accountant
+// uses this to track which bank entries have already been keyed into the
+// Miracle accounting software, and who did it. Only that one transaction's
+// flag changes; everything else (balances/gaps) is untouched since ticking
+// never adds/removes a row.
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const { id, txnKey: txnKeyParam, miracleEntered, userName } = body;
+    if (!id || !ObjectId.isValid(id) || !txnKeyParam) {
+      return NextResponse.json({ error: "id and txnKey are required" }, { status: 400 });
+    }
+
+    const client = await clientPromise;
+    const db = client.db();
+    const collection = db.collection("account_statements");
+
+    const existing = await collection.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return NextResponse.json({ error: "Statement not found" }, { status: 404 });
+    }
+
+    let found = false;
+    const transactions = (existing.transactions as Transaction[]).map((t) => {
+      if (txnKey(t) !== txnKeyParam) return t;
+      found = true;
+      return miracleEntered
+        ? { ...t, miracleEntered: true, miracleEnteredBy: userName || "", miracleEnteredAt: new Date().toISOString() }
+        : { ...t, miracleEntered: false, miracleEnteredBy: "", miracleEnteredAt: "" };
+    });
+    if (!found) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+
+    await collection.updateOne({ _id: new ObjectId(id) }, { $set: { transactions, updatedAt: new Date() } });
+    return NextResponse.json({ statement: { ...existing, transactions, updatedAt: new Date() } });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to update entry" }, { status: 500 });
   }
 }
 

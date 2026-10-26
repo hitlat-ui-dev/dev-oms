@@ -24,6 +24,9 @@ interface Transaction {
   credit: number;
   chequeNo: string;
   balance: number;
+  miracleEntered?: boolean;
+  miracleEnteredBy?: string;
+  miracleEnteredAt?: string;
 }
 
 interface ParsedStatement {
@@ -451,6 +454,32 @@ export default function StatementPage() {
     } catch (err: any) {
       console.error(err);
       alert(err.message || "Failed to delete entry");
+    }
+  };
+
+  // Ticks/unticks "entered in Miracle" on one transaction and records who did
+  // it - accountants use this tick to track which bank entries have already
+  // been keyed into the Miracle accounting software.
+  const handleToggleMiracle = async (txn: Transaction) => {
+    if (!viewingStatement) return;
+    try {
+      const res = await fetch("/api/account-statements", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: viewingStatement._id,
+          txnKey: txnKey(txn),
+          miracleEntered: !txn.miracleEntered,
+          userName: currentUsername,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update entry");
+      setViewingStatement(data.statement);
+      setStatements((prev) => prev.map((s) => (s._id === data.statement._id ? data.statement : s)));
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Failed to update entry");
     }
   };
 
@@ -960,13 +989,14 @@ export default function StatementPage() {
                     <th className="py-2.5 px-3 text-right">Credit</th>
                     <th className="py-2.5 px-3">Cheque No</th>
                     <th className="py-2.5 px-3 text-right">Balance</th>
+                    <th className="py-2.5 px-3 text-center">Miracle</th>
                     <th className="py-2.5 px-3 text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredTransactions.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                      <td colSpan={10} className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
                         No matching transactions
                       </td>
                     </tr>
@@ -980,7 +1010,7 @@ export default function StatementPage() {
                         <Fragment key={idx}>
                           {gapBefore && (
                             <tr>
-                              <td colSpan={9} className="py-2 px-3 bg-red-50 border-y border-red-200 text-red-700 text-[10px] font-black uppercase tracking-wide">
+                              <td colSpan={10} className="py-2 px-3 bg-red-50 border-y border-red-200 text-red-700 text-[10px] font-black uppercase tracking-wide">
                                 <FiAlertTriangle className="inline mr-1.5" size={11} />
                                 Gap — expected ₹{formatMoney(gapBefore.expectedBalance)} here, entries missing
                               </td>
@@ -1008,6 +1038,24 @@ export default function StatementPage() {
                             <td className="py-2.5 px-3 text-right font-mono text-orange-600">{t.credit ? formatMoney(t.credit) : "—"}</td>
                             <td className="py-2.5 px-3 font-mono text-slate-500">{t.chequeNo || "—"}</td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">{formatMoney(t.balance)}</td>
+                            <td className="py-2.5 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={!!t.miracleEntered}
+                                onChange={() => handleToggleMiracle(t)}
+                                title={
+                                  t.miracleEntered
+                                    ? `Entered in Miracle by ${t.miracleEnteredBy || "—"}${t.miracleEnteredAt ? ` on ${new Date(t.miracleEnteredAt).toLocaleString("en-IN")}` : ""}`
+                                    : "Mark as entered in Miracle"
+                                }
+                                className="w-4 h-4 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                              />
+                              {t.miracleEntered && (
+                                <div className="text-[9px] font-bold text-emerald-600 mt-0.5 whitespace-nowrap">
+                                  ✓ {t.miracleEnteredBy || "—"}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2.5 px-3 text-center">
                               <button
                                 onClick={() => handleDeleteTransaction(t)}
