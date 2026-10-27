@@ -1746,6 +1746,14 @@ const shippingLock = useRef(false);
                   {order.subParty && (
                     <div className="text-[9px] font-bold text-slate-400 lowercase truncate leading-tight">{order.subParty}</div>
                   )}
+                  {order.createdBy && (
+                    <div
+                      className="text-[9px] font-bold text-blue-500 truncate leading-tight"
+                      title={`Added by ${order.createdBy}${order.createdAt ? ` on ${new Date(order.createdAt).toLocaleString('en-GB')}` : ""}`}
+                    >
+                      by {order.createdBy}
+                    </div>
+                  )}
                   {order.isAdvance && !order.merged && (
                     <div className="text-[8px] font-black text-amber-600 uppercase tracking-wide leading-tight">Advance</div>
                   )}

@@ -27,6 +27,7 @@ interface ItemRow {
   sku: string;
   qty: number | "";
   rate: number | "";
+  remark: string;
 }
 
 export default function SellerOrderForm({ onClose, initialData, isModal = false }: SellerOrderFormProps) {
@@ -77,7 +78,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   }, [isModal, onClose]);
 
   // Common fields - shared across every item row in one save. Item-specific
-  // fields (name/qty/rate/etc.) live in itemRows instead.
+  // fields (name/qty/rate/remark/etc.) live in itemRows instead - Remark used
+  // to be one shared field for the whole entry, now each row carries its own.
   const blankFormData = {
     firmCode: "",
     subParty: "",
@@ -86,7 +88,6 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     contractDate: "",
     contractNo: "",
     contractUrl: "",
-    remark: "",
     // Advance Order Merge System: material shipped before the buyer's
     // official GeM order exists. deliveryDate doubles as "Material Sent
     // Date" here - same schema field the ship flow already uses elsewhere.
@@ -99,7 +100,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
   const makeEmptyItemRow = (): ItemRow => ({
     key: `row-${++itemRowKeyRef.current}`,
     itemId: "", itemName: "", category: "", unit: "", sku: "",
-    qty: "" as any, rate: "" as any,
+    qty: "" as any, rate: "" as any, remark: "",
   });
   const [itemRows, setItemRows] = useState<ItemRow[]>([makeEmptyItemRow()]);
   // Row keys that failed validation on the last save attempt - only used in
@@ -166,7 +167,6 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       contractDate: initialData.contractDate || "",
       contractNo: initialData.contractNo || "",
       contractUrl: initialData.contractUrl || "",
-      remark: initialData.remark || "",
       isAdvance: !!initialData.isAdvance,
       deliveryDate: initialData.deliveryDate || ""
     });
@@ -179,6 +179,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
       sku: initialData.sku || "",
       qty: initialData.orderQty ?? initialData.reQty ?? "",
       rate: initialData.rate ?? "",
+      remark: initialData.remark || "",
     }]);
     loadedRecordRef.current = recordKey;
   }, [initialData, sellers, stocks]);
@@ -398,6 +399,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
           orderQty: qty,
           rate: Number(itemRows[0]?.rate) || 0,
           totalAmount: qty * (Number(itemRows[0]?.rate) || 0),
+          remark: itemRows[0]?.remark || "",
         };
         if (!payload.sellerId) delete payload.sellerId;
 
@@ -452,6 +454,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
             orderQty: qty,
             rate: Number(itemRows[0]?.rate) || 0,
             totalAmount: qty * (Number(itemRows[0]?.rate) || 0),
+            remark: itemRows[0]?.remark || "",
             createdBy: currentUsername,
           };
           if (!payload.sellerId) delete payload.sellerId;
@@ -529,6 +532,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
           orderQty: Number(nonEmptyRows[0].qty),
           rate: Number(nonEmptyRows[0].rate) || 0,
           totalAmount: Number(nonEmptyRows[0].qty) * (Number(nonEmptyRows[0].rate) || 0),
+          remark: nonEmptyRows[0].remark || "",
           createdBy: currentUsername,
         };
         if (!payload.sellerId) delete payload.sellerId;
@@ -574,6 +578,7 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
             sku: matchedStockItem?.sku || r.sku,
             qty: Number(r.qty),
             rate: Number(r.rate) || 0,
+            remark: r.remark || "",
           };
         }),
       };
@@ -629,7 +634,8 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
     if (!ok) return;
     const added = savedOrdersRef.current.length - before;
 
-    setFormData((prev) => ({ ...prev, remark: "" }));
+    // Item rows (each carrying its own remark) reset to one blank row -
+    // Firm/Party/Institute/Contract Date/Contract No stay as-is on formData.
     setItemRows([makeEmptyItemRow()]);
     setVariantSiblings([]);
     setVariantQtyMap({});
@@ -1000,63 +1006,74 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
                     return (
                       <div
                         key={row.key}
-                        className={`flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl border ${hasError ? "border-red-400 bg-red-50/50" : "border-slate-200 bg-slate-50/50"}`}
+                        className={`space-y-2 p-2.5 rounded-xl border ${hasError ? "border-red-400 bg-red-50/50" : "border-slate-200 bg-slate-50/50"}`}
                       >
-                        <span className="hidden sm:flex w-6 h-11 shrink-0 items-center justify-center text-xs font-black text-slate-400">
-                          {index + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <input
-                            ref={(el) => { itemRowInputRefs.current[row.key] = el; }}
-                            list="stock-items"
-                            placeholder={`Item #${index + 1} — search...`}
-                            className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
-                            value={row.itemName}
-                            onChange={(e) => handleItemSelectForRow(index, e.target.value)}
-                          />
-                          {dupMessage && (
-                            <p className="text-[10px] text-amber-600 font-bold mt-1">⚠ {dupMessage}</p>
-                          )}
+                        <div className="flex flex-col sm:flex-row sm:items-start gap-2">
+                          <span className="hidden sm:flex w-6 h-11 shrink-0 items-center justify-center text-xs font-black text-slate-400">
+                            {index + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <input
+                              ref={(el) => { itemRowInputRefs.current[row.key] = el; }}
+                              list="stock-items"
+                              placeholder={`Item #${index + 1} — search...`}
+                              className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                              value={row.itemName}
+                              onChange={(e) => handleItemSelectForRow(index, e.target.value)}
+                            />
+                            {dupMessage && (
+                              <p className="text-[10px] text-amber-600 font-bold mt-1">⚠ {dupMessage}</p>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <div className="w-20 shrink-0">
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="Qty"
+                                className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
+                                value={row.qty}
+                                onChange={(e) => updateItemRow(index, { qty: e.target.value === "" ? "" : Number(e.target.value) })}
+                              />
+                            </div>
+                            <div className="w-24 shrink-0">
+                              <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Rate"
+                                className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
+                                value={row.rate}
+                                onChange={(e) => updateItemRow(index, { rate: e.target.value === "" ? "" : Number(e.target.value) })}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && index === itemRows.length - 1) {
+                                    e.preventDefault();
+                                    addItemRow();
+                                  }
+                                }}
+                              />
+                            </div>
+                            <div className="w-28 shrink-0 p-3 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm text-center">
+                              ₹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString("en-IN")}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeItemRow(index)}
+                              disabled={itemRows.length === 1}
+                              title="Remove this item"
+                              className="shrink-0 w-5 flex items-center justify-center text-red-400 hover:text-red-600 disabled:opacity-20 disabled:pointer-events-none transition-colors mt-3"
+                            >
+                              <FiTrash2 size={14} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <div className="w-20 shrink-0">
-                            <input
-                              type="number"
-                              min={1}
-                              placeholder="Qty"
-                              className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
-                              value={row.qty}
-                              onChange={(e) => updateItemRow(index, { qty: e.target.value === "" ? "" : Number(e.target.value) })}
-                            />
-                          </div>
-                          <div className="w-24 shrink-0">
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Rate"
-                              className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm text-center outline-none focus:ring-2 focus:ring-blue-400"
-                              value={row.rate}
-                              onChange={(e) => updateItemRow(index, { rate: e.target.value === "" ? "" : Number(e.target.value) })}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" && index === itemRows.length - 1) {
-                                  e.preventDefault();
-                                  addItemRow();
-                                }
-                              }}
-                            />
-                          </div>
-                          <div className="w-28 shrink-0 p-3 bg-emerald-50 text-emerald-800 font-black rounded-lg text-sm text-center">
-                            ₹{((Number(row.qty) || 0) * (Number(row.rate) || 0)).toLocaleString("en-IN")}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeItemRow(index)}
-                            disabled={itemRows.length === 1}
-                            title="Remove this item"
-                            className="shrink-0 w-5 flex items-center justify-center text-red-400 hover:text-red-600 disabled:opacity-20 disabled:pointer-events-none transition-colors mt-3"
-                          >
-                            <FiTrash2 size={14} />
-                          </button>
+                        <div className="sm:pl-8">
+                          <input
+                            type="text"
+                            placeholder="Remark for this item..."
+                            className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400"
+                            value={row.remark}
+                            onChange={(e) => updateItemRow(index, { remark: e.target.value })}
+                          />
                         </div>
                       </div>
                     );
@@ -1080,10 +1097,17 @@ export default function SellerOrderForm({ onClose, initialData, isModal = false 
               <span className="text-2xl font-black">₹ {grandTotal.toLocaleString("en-IN")}</span>
             </div>
 
-            <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
-              <textarea className="w-full p-4 bg-slate-50 border rounded-xl  text-sm" placeholder="Optional notes..." value={formData.remark} onChange={(e) => setFormData({ ...formData, remark: e.target.value })} />
-            </div>
+            {!isMultiRowMode && (
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remark</label>
+                <textarea
+                  className="w-full p-4 bg-slate-50 border rounded-xl  text-sm"
+                  placeholder="Optional notes..."
+                  value={itemRows[0]?.remark || ""}
+                  onChange={(e) => updateItemRow(0, { remark: e.target.value })}
+                />
+              </div>
+            )}
 
             <div className="md:col-span-3 flex flex-col sm:flex-row gap-3 items-center">
               <button type="submit" disabled={loading} className="flex-1 w-full bg-blue-600 text-white font-black py-5 rounded-xl shadow-xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">

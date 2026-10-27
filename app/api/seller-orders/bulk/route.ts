@@ -128,7 +128,7 @@ export async function POST(req: Request) {
             reQty: orderQty,
             rate,
             totalAmount,
-            remark: body.remark || "",
+            remark: item.remark || "",
             status: "TO CHECK",
             isPaid: false,
             transportName: "",
