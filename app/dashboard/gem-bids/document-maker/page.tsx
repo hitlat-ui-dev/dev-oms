@@ -331,6 +331,11 @@ function DocumentMakerPageInner() {
   // stays individually editable afterward (this is a bulk-fill, not a
   // locked global setting).
   const [globalMarginPercent, setGlobalMarginPercent] = useState("");
+  // Fill Rates table filter - "pending" hides a row the moment its Rate
+  // column has anything in it, so it's purpose-built for working through a
+  // long BOQ without re-scanning rows already done; doesn't touch Grand
+  // Total, which always sums every item regardless of what's shown.
+  const [boqFillFilter, setBoqFillFilter] = useState<"all" | "pending" | "filled">("all");
 
   // Rate Variants - generated from whatever's currently filled in the Rate
   // column above (see RATE_VARIANT_BRACKETS), same idea as the standalone
@@ -686,6 +691,7 @@ function DocumentMakerPageInner() {
     setBoqItems([]);
     setBoqExportUrl(null);
     setRateVariants(null);
+    setBoqFillFilter("all");
     fetchDocStatus();
   }, [selectedBidId, fetchDocStatus]);
 
@@ -1025,6 +1031,19 @@ function DocumentMakerPageInner() {
     () => boqItems.reduce((sum, it) => sum + (parseFloat(it.quantity) || 0) * (parseFloat(it.rate) || 0), 0),
     [boqItems]
   );
+
+  // Original index travels with each item (not recomputed per filtered
+  // position) so the "#" column keeps matching the item's real place in the
+  // uploaded BOQ even with rows hidden by the filter above it.
+  const boqFilledCount = useMemo(() => boqItems.filter((it) => (parseFloat(it.rate) || 0) > 0).length, [boqItems]);
+  const filteredBoqItems = useMemo(() => {
+    const indexed = boqItems.map((it, idx) => ({ it, idx }));
+    if (boqFillFilter === "all") return indexed;
+    return indexed.filter(({ it }) => {
+      const hasRate = (parseFloat(it.rate) || 0) > 0;
+      return boqFillFilter === "filled" ? hasRate : !hasRate;
+    });
+  }, [boqItems, boqFillFilter]);
 
   const generateRateVariants = () => {
     const rows: RateVariantRow[] = boqItems.map((it) => {
@@ -1632,6 +1651,26 @@ function DocumentMakerPageInner() {
                     </div>
                   )}
 
+                  {boqItems.length > 0 && (
+                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
+                      {([
+                        ["all", `All (${boqItems.length})`],
+                        ["pending", `Pending (${boqItems.length - boqFilledCount})`],
+                        ["filled", `Filled (${boqFilledCount})`],
+                      ] as const).map(([val, label]) => (
+                        <button
+                          key={val}
+                          onClick={() => setBoqFillFilter(val)}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
+                            boqFillFilter === val ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {loadingBoq ? (
                     <div className="flex justify-center items-center py-10">
                       <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-amber-500"></div>
@@ -1643,6 +1682,10 @@ function DocumentMakerPageInner() {
                         : hasBoqDocument
                         ? "No items found in this BOQ."
                         : "Upload a BOQ file for this bid to fill rates."}
+                    </p>
+                  ) : filteredBoqItems.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">
+                      {boqFillFilter === "filled" ? "No items filled yet." : "Every item is already filled."}
                     </p>
                   ) : (
                     <>
@@ -1663,7 +1706,7 @@ function DocumentMakerPageInner() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {boqItems.map((it, idx) => {
+                            {filteredBoqItems.map(({ it, idx }) => {
                               const qty = parseFloat(it.quantity) || 0;
                               const rate = parseFloat(it.rate) || 0;
                               const total = qty * rate;

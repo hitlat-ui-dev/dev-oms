@@ -1,10 +1,101 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FiPlus, FiX, FiSearch } from "react-icons/fi";
+import { FiPlus, FiX, FiSearch, FiEdit2 } from "react-icons/fi";
 import PricelistShell, { PricelistUser } from "@/components/purchase/pricelist/PricelistShell";
 
 const inr = (n: number | null | undefined) => (typeof n === "number" ? n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—");
 const itemLabel = (i: any) => [i.category, i.sub_type, i.model_no, i.size_spec, i.variant].filter(Boolean).join(" · ");
+const editInp = "w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400";
+
+// Targeted single-item rate edit (PATCH /api/purchase/pricelist/items) - the
+// partial-update path: revise just this one item's price/terms without
+// re-uploading (and thereby auto-deactivating the rest of) the whole
+// supplier catalog the way a full xlsx upload does.
+function EditRateDialog({ item, userName, onClose, onDone }: { item: any; userName: string; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({
+    price: item.price ?? "", price_qty: item.price_qty ?? 1, discount_pct: item.discount_pct ?? 0,
+    gst_pct: item.gst_pct ?? "", gst_included: item.gst_included || "NO", price_status: item.price_status || "PRICED",
+    valid_from: item.valid_from || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const onRequest = f.price_status === "ON_REQUEST";
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
+
+  const save = async () => {
+    setSaving(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/purchase/pricelist/items", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...f, sku_key: item.sku_key, userName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save");
+      onDone();
+    } catch (e: any) {
+      setErr(e.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-24 px-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-1">
+          <div className="text-sm font-black text-slate-800">Edit Rate — {item.sku_key}</div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><FiX /></button>
+        </div>
+        <div className="text-[11px] text-slate-500 mb-3">{itemLabel(item)}</div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Price status
+            <select className={editInp} value={f.price_status} onChange={set("price_status")}>
+              <option value="PRICED">PRICED</option>
+              <option value="ON_REQUEST">ON_REQUEST</option>
+            </select>
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Valid from
+            <input className={editInp} type="date" value={f.valid_from} onChange={set("valid_from")} />
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            {`Price${onRequest ? "" : " *"}`}
+            <input className={editInp} type="number" step="0.01" min="0" value={f.price} onChange={set("price")} disabled={onRequest} />
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Price qty
+            <input className={editInp} type="number" step="any" min="0" value={f.price_qty} onChange={set("price_qty")} />
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Discount %
+            <input className={editInp} type="number" step="0.01" min="0" max="100" value={f.discount_pct} onChange={set("discount_pct")} />
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            {`GST %${onRequest ? "" : " *"}`}
+            <input className={editInp} type="number" step="any" min="0" value={f.gst_pct} onChange={set("gst_pct")} />
+          </label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 col-span-2">
+            GST included in price
+            <select className={editInp} value={f.gst_included} onChange={set("gst_included")}>
+              <option value="NO">NO</option>
+              <option value="YES">YES</option>
+            </select>
+          </label>
+        </div>
+        {err && <div className="text-xs text-rose-600 mt-2">{err}</div>}
+        <button
+          disabled={saving}
+          onClick={save}
+          className="mt-4 w-full py-2 rounded-lg bg-orange-500 text-white text-xs font-black uppercase tracking-wider disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function TagDialog({ skus, user, onClose, onDone }: { skus: string[]; user: PricelistUser; onClose: () => void; onDone: () => void }) {
   const [value, setValue] = useState("");
@@ -129,6 +220,7 @@ function SearchBody({ user }: { user: PricelistUser }) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagTarget, setTagTarget] = useState<string[] | null>(null);
+  const [editTarget, setEditTarget] = useState<any | null>(null);
   const reqId = useRef(0);
 
   useEffect(() => {
@@ -254,7 +346,12 @@ function SearchBody({ user }: { user: PricelistUser }) {
                 <td className="p-2 text-[10px] text-slate-400 whitespace-nowrap">{i.sku_key}{!i.is_active && <div className="text-rose-500 font-bold">inactive</div>}</td>
                 <td className="p-2 font-medium text-slate-800">{itemLabel(i)}</td>
                 <td className="p-2 text-center">{i.unit}</td>
-                <td className="p-2 text-right whitespace-nowrap">{i.price_status === "ON_REQUEST" ? "On request" : inr(i.price)}</td>
+                <td className="p-2 text-right whitespace-nowrap">
+                  {i.price_status === "ON_REQUEST" ? "On request" : inr(i.price)}
+                  <button onClick={() => setEditTarget(i)} title="Edit rate" className="ml-1.5 text-slate-400 hover:text-blue-600 align-middle">
+                    <FiEdit2 size={10} />
+                  </button>
+                </td>
                 <td className="p-2 text-right">{i.price_qty}</td>
                 <td className="p-2 text-right">{i.discount_pct || 0}</td>
                 <td className="p-2 text-right">{i.gst_pct ?? "—"}</td>
@@ -280,7 +377,12 @@ function SearchBody({ user }: { user: PricelistUser }) {
             <div className="flex justify-between items-center text-xs">
               <span className="px-2 py-0.5 rounded bg-slate-100 text-[10px] font-bold">{i.brand || "—"}</span>
               <span>{i.unit} · GST {i.gst_pct ?? "—"}%</span>
-              <span className="font-black text-base">{inr(i.unit_price_incl_gst)}</span>
+              <span className="font-black text-base flex items-center gap-1">
+                {inr(i.unit_price_incl_gst)}
+                <button onClick={() => setEditTarget(i)} title="Edit rate" className="text-slate-400 hover:text-blue-600">
+                  <FiEdit2 size={11} />
+                </button>
+              </span>
             </div>
             <div className="mt-2">{chips(i)}</div>
           </div>
@@ -295,6 +397,14 @@ function SearchBody({ user }: { user: PricelistUser }) {
 
       {tagTarget && (
         <TagDialog skus={tagTarget} user={user} onClose={() => setTagTarget(null)} onDone={() => { setTagTarget(null); setSelected(new Set()); load(); }} />
+      )}
+      {editTarget && (
+        <EditRateDialog
+          item={editTarget}
+          userName={user.username}
+          onClose={() => setEditTarget(null)}
+          onDone={() => { setEditTarget(null); load(); }}
+        />
       )}
     </div>
   );

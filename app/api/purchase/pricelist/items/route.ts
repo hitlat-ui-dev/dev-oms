@@ -161,3 +161,67 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message || "Failed to add item" }, { status: 500 });
   }
 }
+
+// PATCH: edit one existing item's rate/terms in place - a targeted partial
+// update, by request, so revising a handful of items' prices doesn't mean
+// re-uploading (and thereby auto-deactivating the rest of) the whole
+// supplier catalog the way a full xlsx upload does. Identity fields
+// (category/sku/supplier etc.) aren't editable here - a change to those is
+// a different item, not a rate revision. Same recalculation rules as POST.
+export async function PATCH(req: Request) {
+  try {
+    const b = await req.json();
+    const sku = s(b.sku_key);
+    if (!sku) return NextResponse.json({ error: "sku_key is required" }, { status: 400 });
+
+    const { db } = await getPricelistDb();
+    const existing: any = await db.collection("pricelist_items").findOne({ sku_key: sku });
+    if (!existing) return NextResponse.json({ error: `SKU ${sku} not found` }, { status: 404 });
+
+    const errors: string[] = [];
+    const priceStatus = s(b.price_status ?? existing.price_status ?? "PRICED").toUpperCase();
+    if (!["PRICED", "ON_REQUEST"].includes(priceStatus)) errors.push("Invalid price status");
+    const onRequest = priceStatus === "ON_REQUEST";
+    const gstIncluded = s(b.gst_included ?? existing.gst_included ?? "NO").toUpperCase();
+    if (!["YES", "NO"].includes(gstIncluded)) errors.push("GST included must be YES or NO");
+    const validFrom = s(b.valid_from) || existing.valid_from;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom) || isNaN(new Date(validFrom).getTime())) errors.push("Valid from must be YYYY-MM-DD");
+
+    const price = b.price === undefined || b.price === "" ? existing.price : n(b.price);
+    if (!onRequest && (price === null || Number.isNaN(price as number) || (price as number) < 0)) errors.push("Price must be a number >= 0");
+    let priceQty = b.price_qty === undefined || b.price_qty === "" ? existing.price_qty : n(b.price_qty);
+    if (priceQty === null) priceQty = 1;
+    if (Number.isNaN(priceQty) || (priceQty as number) <= 0) errors.push("Price qty must be > 0");
+    let disc = b.discount_pct === undefined || b.discount_pct === "" ? existing.discount_pct : n(b.discount_pct);
+    if (disc === null) disc = 0;
+    if (Number.isNaN(disc) || (disc as number) < 0 || (disc as number) > 100) errors.push("Discount must be 0-100");
+    const gst = b.gst_pct === undefined || b.gst_pct === "" ? existing.gst_pct : n(b.gst_pct);
+    if (!onRequest && (gst === null || Number.isNaN(gst as number) || (gst as number) < 0)) errors.push("GST % is required");
+    if (errors.length) return NextResponse.json({ error: errors.join("; ") }, { status: 400 });
+
+    let unitPrice: number | null = null, net: number | null = null, incl: number | null = null, finalPrice: number | null = null;
+    if (!onRequest && price !== null) {
+      finalPrice = price as number;
+      unitPrice = round2(finalPrice / (priceQty as number));
+      net = round2(unitPrice * (1 - (disc as number) / 100));
+      incl = gstIncluded === "YES" ? net : round2(net * (1 + ((gst as number) || 0) / 100));
+    }
+
+    const now = new Date();
+    const update: any = {
+      $set: {
+        price: finalPrice, price_qty: priceQty, unit_price: unitPrice, discount_pct: disc,
+        net_unit_price: net, gst_pct: gst, unit_price_incl_gst: incl, gst_included: gstIncluded,
+        price_status: priceStatus, valid_from: validFrom, updated_by: s(b.userName), updated_at: now,
+      },
+    };
+    if (incl !== existing.unit_price_incl_gst) {
+      update.$push = { price_history: { pricelist_id: existing.pricelist_id ?? null, valid_from: validFrom, unit_price_incl_gst: incl } };
+    }
+    await db.collection("pricelist_items").updateOne({ sku_key: sku }, update);
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("Pricelist item edit error:", error);
+    return NextResponse.json({ error: error.message || "Failed to update item" }, { status: 500 });
+  }
+}
