@@ -91,6 +91,47 @@ export default function ReceivedPurchaseTable({
     }));
   };
 
+  const editedCount = Object.keys(editState).length;
+
+  // Save every edited row (qty/rate) in one go: same PATCH per row as the single save, run one after another.
+  const handleUpdateAll = async () => {
+    const ids = Object.keys(editState);
+    if (ids.length === 0) return;
+    setIsUpdating("ALL");
+    const session = localStorage.getItem("oms_user");
+    const userData = session ? JSON.parse(session) : null;
+    const Login_user = userData?.username || "Unknown User";
+    let saved = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      const item = data.find((d) => d._id === id);
+      if (!item) continue;
+      const updates = editState[id];
+      const newQty = updates.receivedQty ?? item.receivedQty;
+      const newRate = updates.rate ?? item.rate;
+      try {
+        const res = await fetch("/api/received-purchase", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, receivedQty: newQty, rate: newRate, userName: Login_user }),
+        });
+        if (!res.ok) throw new Error("failed");
+        saved++;
+        setEditState((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        if (onItemUpdated) onItemUpdated(id, { receivedQty: Number(newQty), rate: Number(newRate) });
+      } catch {
+        failed.push(item.itemName || id);
+      }
+    }
+    setIsUpdating(null);
+    if (!onItemUpdated && saved > 0) onRefresh();
+    alert(failed.length ? "✅ " + saved + " saved, ❌ failed: " + failed.join(", ") : "✅ " + saved + " updates saved!");
+  };
+
   const handleUpdate = async (item: any) => {
     const updates = editState[item._id];
     setIsUpdating(item._id);
@@ -190,7 +231,20 @@ export default function ReceivedPurchaseTable({
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rec. Qty</th>
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-center">Rate</th>
                 <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400">Total</th>
-                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-right">Action</th>
+                <th className="py-4 px-6 text-[10px] font-black uppercase text-slate-400 text-right">
+                  {editedCount > 1 ? (
+                    <button
+                      type="button"
+                      onClick={handleUpdateAll}
+                      disabled={isUpdating !== null}
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md active:scale-95 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {isUpdating === "ALL" ? "Saving..." : "Save All (" + editedCount + ")"}
+                    </button>
+                  ) : (
+                    "Action"
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
