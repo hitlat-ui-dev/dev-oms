@@ -8,6 +8,7 @@ interface TagRow {
   count: number;
   brands: string[];
   lowest: number | null;
+  offers: { supplier: string; brand: string; rate: number; source?: string }[];
 }
 
 const inr = (n: number | null) => (typeof n === "number" ? n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—");
@@ -20,7 +21,7 @@ export default function PricelistLookupPanel() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/purchase/pricelist/tags/summary")
+    fetch("/api/purchase/pricelist/tags/summary?include=received")
       .then((r) => r.json())
       .then((d) => setTags(Array.isArray(d.tags) ? d.tags : []))
       .catch(() => setError("Could not load tagged items"));
@@ -33,7 +34,7 @@ export default function PricelistLookupPanel() {
     return tags
       .filter((t) => {
         const hay = `${t.tag_name} ${t.brands.join(" ")}`.toLowerCase();
-        return words.every((w) => hay.includes(w));
+        return words.every((w) => hay.includes(w) || t.offers.some((o) => o.supplier.toLowerCase().includes(w)));
       })
       .slice(0, 100);
   }, [tags, q]);
@@ -58,21 +59,22 @@ export default function PricelistLookupPanel() {
       {tags !== null && q.trim() && results.length === 0 && <div className="text-xs text-slate-400 text-center py-6">No tagged item found</div>}
 
       {results.length > 0 && (
-        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-          <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-2 bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
-            <span>Tagged item</span>
-            <span className="w-28">Brand</span>
-            <span className="w-24 text-right">Lowest incl. GST</span>
-          </div>
-          <div className="max-h-[50vh] overflow-y-auto divide-y divide-slate-100">
-            {results.map((t) => (
-              <div key={t.tag_key} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-2 text-xs items-center">
-                <span className="font-bold text-slate-800">{t.tag_name}</span>
-                <span className="w-28 text-slate-600">{t.brands.join(", ") || "—"}</span>
-                <span className="w-24 text-right font-black text-orange-600">{inr(t.lowest)}</span>
+        <div className="max-h-[55vh] overflow-y-auto flex flex-col gap-2">
+          {results.map((t) => (
+            <div key={t.tag_key} className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+              <div className="px-3 py-2 bg-slate-50 text-xs font-black text-slate-800">{t.tag_name}</div>
+              {t.offers.length === 0 && <div className="px-3 py-2 text-[11px] text-slate-400">No active rate</div>}
+              <div className="divide-y divide-slate-100">
+                {t.offers.map((o, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 text-xs items-center">
+                    <span className="font-bold text-slate-700">{o.supplier || "—"}</span>
+                    <span className="w-28 text-slate-500">{o.source === "received" ? <span className="text-green-600 font-bold">Received</span> : o.brand || "—"}</span>
+                    <span className={"w-24 text-right font-black " + (o.source === "received" ? "text-green-600" : i === t.offers.findIndex((x) => x.source !== "received") ? "text-orange-600" : "text-slate-700")}>₹{inr(o.rate)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
