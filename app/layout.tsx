@@ -2,6 +2,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import GlobalAddItem from "@/components/GlobalAddItem";
 import GlobalTaskCreate from "@/components/GlobalTaskCreate";
 import Footer from "@/components/Footer";
 // DISABLED (Urgent Tasks): import UrgentTaskPopup from "@/components/UrgentTaskPopup";
@@ -105,6 +106,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Footer />
             {/* DISABLED (Urgent Tasks) - uncomment to re-enable: <UrgentTaskPopup /> */}
             <GlobalTaskCreate />
+            <GlobalAddItem />
           </div>
         ) : (
           <main className="h-full">{children}</main>

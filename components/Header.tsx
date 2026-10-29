@@ -1,11 +1,12 @@
 ﻿"use client";
-import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey, FiPercent } from "react-icons/fi";
+import { FiLogOut, FiCheckSquare, FiPlus, FiSquare, FiAlertTriangle, FiX, FiKey, FiPercent, FiTag } from "react-icons/fi";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 // DISABLED (Urgent Tasks): import UrgentTaskManagerPanel from "@/components/UrgentTaskManagerPanel";
 import GemCredentialsPanel from "@/components/GemCredentialsPanel";
 import MetalCalculatorPanel from "@/components/MetalCalculatorPanel";
+import PricelistLookupPanel from "@/components/purchase/pricelist/PricelistLookupPanel";
 import AttendanceReminder from "@/components/AttendanceReminder";
 import { usePendingTaskCount } from "@/lib/tasks/usePendingTaskCount";
 
@@ -27,6 +28,7 @@ export default function Header() {
   const [showUrgentTaskModal, setShowUrgentTaskModal] = useState(false);
   const [showGemLoginModal, setShowGemLoginModal] = useState(false);
   const [showMetalCalcModal, setShowMetalCalcModal] = useState(false);
+  const [showPricelistModal, setShowPricelistModal] = useState(false);
   const { count: pendingTasks, pulse: pendingPulse } = usePendingTaskCount(user?.username ?? null);
 
   useEffect(() => {
@@ -261,10 +263,29 @@ export default function Header() {
     router.push("/login");
   };
 
+  // Alt+P opens / closes the Pricelist lookup popup from any page; Esc closes it. Same permission as the button.
+  useEffect(() => {
+    const p = (user as any)?.permissions || {};
+    const owner = ["chintan", "hitesh"].includes((user?.username || "").trim().toLowerCase()) || p.boss === true;
+    if (!user || !(owner || p.pricelist || p.pricelistManage)) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyP") {
+        e.preventDefault();
+        setShowPricelistModal((v) => !v);
+      } else if (e.key === "Escape") {
+        setShowPricelistModal((v) => (v ? false : v));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [user]);
+
   if (!user) return null;
 
   const usernameLower = user.username?.trim().toLowerCase();
   const isOwner = ["chintan", "hitesh"].includes(usernameLower) || (user as any)?.permissions?.boss === true;
+  const userPerms = (user as any)?.permissions || {};
+  const canPricelist = isOwner || !!userPerms.pricelist || !!userPerms.pricelistManage;
 
   return (
     <>
@@ -422,6 +443,18 @@ export default function Header() {
           )}
         </Link>
 
+        {/* Pricelist - quick lookup popup (search tagged items with brand + lowest rate). */}
+        {canPricelist && (
+          <button
+            type="button"
+            onClick={() => setShowPricelistModal(true)}
+            className="text-[10px] md:text-xs font-black uppercase tracking-wider bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 px-2 sm:px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
+            title="Pricelist (Alt+P)"
+          >
+            <FiTag size={13} /> <span className="hidden sm:inline">Pricelist</span>
+          </button>
+        )}
+
         {/* GeM Login Setup - opens the same firm-wise credentials manager as
             /dashboard/orders/gem-credentials, but as a popup right next to
             Workspace so it's reachable from every page without navigating
@@ -528,6 +561,39 @@ export default function Header() {
           </div>
           <div className="overflow-y-auto">
             <GemCredentialsPanel />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showPricelistModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-start justify-center p-4 pt-20 bg-black/60 backdrop-blur-sm"
+        onClick={() => setShowPricelistModal(false)}
+      >
+        <div
+          className="bg-[#f3f6f9] border border-slate-200 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden shadow-2xl flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-5 border-b border-slate-200 bg-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="bg-orange-500 text-white p-2.5 rounded-xl">
+                <FiTag size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-[#0a2540]">Pricelist</h3>
+                <p className="text-[9px] text-orange-500 font-black uppercase tracking-widest">Tagged items · brand · lowest rate</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowPricelistModal(false)}
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <FiX size={18} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-5">
+            <PricelistLookupPanel />
           </div>
         </div>
       </div>

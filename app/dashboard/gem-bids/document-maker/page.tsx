@@ -336,6 +336,10 @@ function DocumentMakerPageInner() {
   // long BOQ without re-scanning rows already done; doesn't touch Grand
   // Total, which always sums every item regardless of what's shown.
   const [boqFillFilter, setBoqFillFilter] = useState<"all" | "pending" | "filled">("all");
+  // The row the cursor is currently in stays in whichever list it was in until focus leaves that row -
+  // otherwise typing the first digit of a Rate would flip it Pending -> Filled and drop it (and the
+  // cursor) mid-typing. It moves to its real list as soon as you go to another row / outside.
+  const [pinnedBoqItem, setPinnedBoqItem] = useState<string | null>(null);
 
   // Rate Variants - generated from whatever's currently filled in the Rate
   // column above (see RATE_VARIANT_BRACKETS), same idea as the standalone
@@ -1040,10 +1044,11 @@ function DocumentMakerPageInner() {
     const indexed = boqItems.map((it, idx) => ({ it, idx }));
     if (boqFillFilter === "all") return indexed;
     return indexed.filter(({ it }) => {
+      if (it.itemNumber === pinnedBoqItem) return true;
       const hasRate = (parseFloat(it.rate) || 0) > 0;
       return boqFillFilter === "filled" ? hasRate : !hasRate;
     });
-  }, [boqItems, boqFillFilter]);
+  }, [boqItems, boqFillFilter, pinnedBoqItem]);
 
   const generateRateVariants = () => {
     const rows: RateVariantRow[] = boqItems.map((it) => {
@@ -1660,7 +1665,10 @@ function DocumentMakerPageInner() {
                       ] as const).map(([val, label]) => (
                         <button
                           key={val}
-                          onClick={() => setBoqFillFilter(val)}
+                          onClick={() => {
+                            setPinnedBoqItem(null);
+                            setBoqFillFilter(val);
+                          }}
                           className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide transition-colors ${
                             boqFillFilter === val ? "bg-amber-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
                           }`}
@@ -1712,7 +1720,13 @@ function DocumentMakerPageInner() {
                               const total = qty * rate;
                               if (bidType === "regular") {
                                 return (
-                                  <tr key={it.itemNumber}>
+                                  <tr
+                                  key={it.itemNumber}
+                                  onFocus={() => setPinnedBoqItem(it.itemNumber)}
+                                  onBlur={(e) => {
+                                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPinnedBoqItem(null);
+                                  }}
+                                >
                                     <td className="py-2 px-2 text-slate-500">{idx + 1}</td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1805,7 +1819,13 @@ function DocumentMakerPageInner() {
                                 );
                               }
                               return (
-                                <tr key={it.itemNumber}>
+                                <tr
+                                  key={it.itemNumber}
+                                  onFocus={() => setPinnedBoqItem(it.itemNumber)}
+                                  onBlur={(e) => {
+                                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPinnedBoqItem(null);
+                                  }}
+                                >
                                   <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
                                   <td className="py-2 px-2 max-w-[260px]" title={it.itemDescription}>
                                     <div className="font-bold text-slate-700">{it.itemTitle}</div>

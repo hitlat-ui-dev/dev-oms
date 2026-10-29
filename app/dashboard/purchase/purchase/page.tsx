@@ -159,12 +159,6 @@ export default function PurchaseLogisticsPage() {
       return; // Block database submit pipeline completely
     }
 
-    const selectedVendor = updates.vendor || "";
-    if (!selectedVendor) {
-      alert("⚠️ Please select a vendor before saving.");
-      return;
-    }
-
     const payload = {
       originalId: req._id,
       itemName: req.itemName,
@@ -176,7 +170,7 @@ export default function PurchaseLogisticsPage() {
       category: req.category || "General",
       location: req.location || "---",
       rate: updates.rate || 0,
-      vendor: selectedVendor,
+      vendor: currentVendor,
     };
 
     try {
