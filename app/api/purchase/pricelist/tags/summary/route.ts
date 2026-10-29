@@ -49,30 +49,37 @@ export async function GET(req: Request) {
         g.lowest = g.lowest === null ? it.unit_price_incl_gst : Math.min(g.lowest, it.unit_price_incl_gst);
       }
     }
-    // popup lookup: also include Received Purchase tags (latest paid rate per sku, vendor as supplier)
+    // popup lookup: also include Received Purchase items (latest paid rate per sku, vendor as supplier).
+    // Tagged skus join their tag group; untagged ones show up under their own item name.
     if (new URL(req.url).searchParams.get("include") === "received") {
       const recLinks = await db.collection("received_purchase_tags").find({}).toArray();
-      if (recLinks.length) {
-        const client = await clientPromise;
-        const latest = await client
-          .db()
-          .collection("Received purchase")
-          .aggregate([
-            { $match: { sku: { $in: Array.from(new Set(recLinks.map((l: any) => l.sku))) }, rate: { $gt: 0 } } },
-            { $sort: { receivedAt: -1 } },
-            { $group: { _id: "$sku", rate: { $first: "$rate" }, vendor: { $first: "$vendor" } } },
-          ])
-          .toArray();
-        const rBySku = new Map(latest.map((r: any) => [r._id, r]));
-        for (const l of recLinks as any[]) {
-          const r: any = rBySku.get(l.sku);
-          if (!r) continue;
-          let g = groups.get(l.tag_key);
+      const tagsBySku = new Map<string, any[]>();
+      for (const l of recLinks as any[]) tagsBySku.set(l.sku, [...(tagsBySku.get(l.sku) || []), l]);
+      const client = await clientPromise;
+      const latest = await client
+        .db()
+        .collection("Received purchase")
+        .aggregate([
+          { $match: { rate: { $gt: 0 } } },
+          { $sort: { receivedAt: -1 } },
+          { $group: { _id: "$sku", rate: { $first: "$rate" }, vendor: { $first: "$vendor" }, itemName: { $first: "$itemName" } } },
+        ])
+        .toArray();
+      for (const r of latest as any[]) {
+        const offer = { supplier: r.vendor || "", brand: "", rate: r.rate, source: "received" };
+        const links = tagsBySku.get(r._id) || [];
+        const targets = links.length
+          ? links.map((l: any) => ({ key: l.tag_key, name: l.tag_name }))
+          : r.itemName
+            ? [{ key: "rec:" + r._id, name: r.itemName }]
+            : [];
+        for (const t of targets) {
+          let g = groups.get(t.key);
           if (!g) {
-            g = { tag_key: l.tag_key, tag_name: l.tag_name, count: 0, brands: new Set(), lowest: null, offers: [] };
-            groups.set(l.tag_key, g);
+            g = { tag_key: t.key, tag_name: t.name, count: 0, brands: new Set(), lowest: null, offers: [] };
+            groups.set(t.key, g);
           }
-          g.offers.push({ supplier: r.vendor || "", brand: "", rate: r.rate, source: "received" });
+          g.offers.push(offer);
         }
       }
     }
