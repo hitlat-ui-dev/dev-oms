@@ -395,6 +395,13 @@ export default function ReconciliationPage() {
     direction: "asc",
   });
 
+  // Confirmed tab: per-column search (date, bill no, institute, firm, credited amount)
+  const [confirmedDateSearch, setConfirmedDateSearch] = useState("");
+  const [confirmedBillSearch, setConfirmedBillSearch] = useState("");
+  const [confirmedInstituteSearch, setConfirmedInstituteSearch] = useState("");
+  const [confirmedFirmSearch, setConfirmedFirmSearch] = useState("");
+  const [confirmedAmountSearch, setConfirmedAmountSearch] = useState("");
+
   const [editState, setEditState] = useState<
     Record<string, { correctedType: string; deductionAmount: string; deductionReason: string }>
   >({});
@@ -582,6 +589,14 @@ export default function ReconciliationPage() {
     sellers.forEach((s) => (map[s._id] = s));
     return map;
   }, [sellers]);
+
+  const firmNameByCode = useMemo(() => {
+    const map: Record<string, string> = {};
+    companies.forEach((c) => {
+      if (c.firmCode) map[c.firmCode] = c.firmName || c.firmCode;
+    });
+    return map;
+  }, [companies]);
 
   // Which bill is already claimed by which OTHER pending transaction -
   // either already saved on that match's own billIds (an earlier Run
@@ -1147,6 +1162,26 @@ export default function ReconciliationPage() {
       if (aVal < bVal) return excludedSort.direction === "asc" ? -1 : 1;
       if (aVal > bVal) return excludedSort.direction === "asc" ? 1 : -1;
       return 0;
+    });
+  })();
+
+  // Confirmed tab: filtered on top of `matches` (already server-scoped to confirmed).
+  const filteredConfirmedMatches = (() => {
+    const dateQ = confirmedDateSearch.trim().toLowerCase();
+    const billQ = confirmedBillSearch.trim().toLowerCase();
+    const instituteQ = confirmedInstituteSearch.trim().toLowerCase();
+    const firmQ = confirmedFirmSearch.trim().toLowerCase();
+    const amountQ = confirmedAmountSearch.trim().toLowerCase();
+    return matches.filter((m) => {
+      if (dateQ && !(m.transactionDate || "").toLowerCase().includes(dateQ)) return false;
+      if (billQ && !(m.billNos || []).join(", ").toLowerCase().includes(billQ)) return false;
+      if (instituteQ && !(m.instituteName || "").toLowerCase().includes(instituteQ)) return false;
+      if (firmQ) {
+        const firmName = (firmNameByCode[m.firmCode] || m.firmCode || "").toLowerCase();
+        if (!firmName.includes(firmQ) && !(m.firmCode || "").toLowerCase().includes(firmQ)) return false;
+      }
+      if (amountQ && !formatMoney(m.creditedAmount).toLowerCase().includes(amountQ)) return false;
+      return true;
     });
   })();
 
@@ -1868,9 +1903,12 @@ export default function ReconciliationPage() {
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 capitalize">
                   {tab === "excluded" ? "Not A Bill" : `${tab} Matches`}
                   <span className="ml-2 bg-slate-100 text-slate-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">
-                    {tab === "excluded" ? sortedExcludedMatches.length : matches.length}
+                    {tab === "excluded" ? sortedExcludedMatches.length : tab === "confirmed" ? filteredConfirmedMatches.length : matches.length}
                     {tab === "excluded" &&
                       (excludedDescSearch.trim() || excludedTagSearch.trim() || excludedAmountSearch.trim()) &&
+                      ` / ${matches.length}`}
+                    {tab === "confirmed" &&
+                      (confirmedDateSearch.trim() || confirmedBillSearch.trim() || confirmedInstituteSearch.trim() || confirmedFirmSearch.trim() || confirmedAmountSearch.trim()) &&
                       ` / ${matches.length}`}
                   </span>
                   {tab === "confirmed" && matches.some((m) => m.highConfidence) && (
@@ -1913,10 +1951,66 @@ export default function ReconciliationPage() {
                     </div>
                   </div>
                 )}
+                {tab === "confirmed" && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <div className="relative flex-1 min-w-[140px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={confirmedDateSearch}
+                        onChange={(e) => setConfirmedDateSearch(e.target.value)}
+                        placeholder="Search date..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[140px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={confirmedBillSearch}
+                        onChange={(e) => setConfirmedBillSearch(e.target.value)}
+                        placeholder="Search bill no..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[140px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={confirmedInstituteSearch}
+                        onChange={(e) => setConfirmedInstituteSearch(e.target.value)}
+                        placeholder="Search institute..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[140px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={confirmedFirmSearch}
+                        onChange={(e) => setConfirmedFirmSearch(e.target.value)}
+                        placeholder="Search firm..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="relative flex-1 min-w-[140px] max-w-xs">
+                      <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                      <input
+                        type="text"
+                        value={confirmedAmountSearch}
+                        onChange={(e) => setConfirmedAmountSearch(e.target.value)}
+                        placeholder="Search credited amount..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1.5 pl-7 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               {matches.length === 0 ? (
                 <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">No records</div>
               ) : tab === "excluded" && sortedExcludedMatches.length === 0 ? (
+                <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">No matches for this search</div>
+              ) : tab === "confirmed" && filteredConfirmedMatches.length === 0 ? (
                 <div className="text-center py-10 text-slate-400 text-xs font-bold uppercase tracking-widest">No matches for this search</div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1948,6 +2042,7 @@ export default function ReconciliationPage() {
                           <>
                             <th className="py-2.5 px-3">Bill No</th>
                             <th className="py-2.5 px-3">Institute</th>
+                            {tab === "confirmed" && <th className="py-2.5 px-3">Firm</th>}
                           </>
                         )}
                         <th
@@ -1963,7 +2058,7 @@ export default function ReconciliationPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(tab === "excluded" ? sortedExcludedMatches : matches).map((m) => (
+                      {(tab === "excluded" ? sortedExcludedMatches : tab === "confirmed" ? filteredConfirmedMatches : matches).map((m) => (
                         <tr key={m._id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-600">{m.transactionDate}</td>
                           {tab === "excluded" ? (
@@ -1981,6 +2076,9 @@ export default function ReconciliationPage() {
                             <>
                               <td className="py-2.5 px-3 font-mono text-slate-700">{m.billNos.join(", ") || "—"}</td>
                               <td className="py-2.5 px-3 text-slate-700">{m.instituteName || "—"}</td>
+                              {tab === "confirmed" && (
+                                <td className="py-2.5 px-3 text-slate-700">{firmNameByCode[m.firmCode] || m.firmCode || "—"}</td>
+                              )}
                             </>
                           )}
                           <td className="py-2.5 px-3 text-right font-mono text-emerald-700">₹{formatMoney(m.creditedAmount)}</td>
@@ -1995,14 +2093,23 @@ export default function ReconciliationPage() {
                           )}
                           {tab === "confirmed" && (
                             <td className="py-2.5 px-3 text-center">
-                              <button
-                                disabled={busyId === m._id}
-                                onClick={() => handleReverse(m)}
-                                className="inline-flex items-center gap-1 p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-40"
-                                title="Reverse"
-                              >
-                                <FiRotateCcw size={13} />
-                              </button>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  onClick={() => openDetails(m)}
+                                  className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200 transition-colors"
+                                  title="View credited transaction + per-bill amount breakdown"
+                                >
+                                  <FiFileText size={13} />
+                                </button>
+                                <button
+                                  disabled={busyId === m._id}
+                                  onClick={() => handleReverse(m)}
+                                  className="inline-flex items-center gap-1 p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors disabled:opacity-40"
+                                  title="Reverse"
+                                >
+                                  <FiRotateCcw size={13} />
+                                </button>
+                              </div>
                             </td>
                           )}
                           {tab === "excluded" && (
