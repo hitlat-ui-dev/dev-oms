@@ -13,8 +13,11 @@ import {
   FiCheckCircle,
   FiAlertTriangle,
   FiClock,
+  FiLayers,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
+import SearchableSelect from "@/app/dashboard/tasks/components/SearchableSelect";
+import { parseDateToSortable } from "@/lib/reconciliation/matchingEngine";
 
 interface Transaction {
   sno: string;
@@ -292,6 +295,19 @@ export default function StatementPage() {
   const [confirmedInstituteByKey, setConfirmedInstituteByKey] = useState<Record<string, string>>({});
   const [ddMatchByKey, setDdMatchByKey] = useState<Record<string, { ddNumber: string; payeeName: string }>>({});
   const [txnSearch, setTxnSearch] = useState("");
+
+  // All Firms Ledger - every statement's transactions merged into one table,
+  // opened as a popup from the header button. Same confirmed-institute /
+  // DD-match lookups as the single-statement viewer, but unscoped by
+  // firmCode since it spans every firm at once.
+  const [showAllFirmsModal, setShowAllFirmsModal] = useState(false);
+  const [allFirmsLoading, setAllFirmsLoading] = useState(false);
+  const [allFirmsConfirmedByKey, setAllFirmsConfirmedByKey] = useState<Record<string, string>>({});
+  const [allFirmsDdByKey, setAllFirmsDdByKey] = useState<Record<string, { ddNumber: string; payeeName: string }>>({});
+  const [allFirmsDescSearch, setAllFirmsDescSearch] = useState("");
+  const [allFirmsInstituteSearch, setAllFirmsInstituteSearch] = useState("");
+  const [allFirmsCreditSearch, setAllFirmsCreditSearch] = useState("");
+  const [allFirmsFirmFilter, setAllFirmsFirmFilter] = useState("");
   const [currentUsername, setCurrentUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
   // Owner-only: pick a set of accounts and see their combined closing balance
@@ -371,6 +387,81 @@ export default function StatementPage() {
       })
       .catch((err) => console.error("Failed to load DD refund matches", err));
   }, [viewingStatement]);
+
+  // All Firms Ledger popup - loads confirmed-institute and DD-match lookups
+  // across every firm (no firmCode filter) once the popup is opened.
+  useEffect(() => {
+    if (!showAllFirmsModal) return;
+    setAllFirmsLoading(true);
+    Promise.all([
+      fetch("/api/reconciliation/matches?status=confirmed")
+        .then((res) => res.json())
+        .then((data: { transactionKey?: string; instituteName?: string | null }[]) => {
+          const map: Record<string, string> = {};
+          if (Array.isArray(data)) {
+            for (const m of data) {
+              if (m.transactionKey && m.instituteName) map[m.transactionKey] = m.instituteName;
+            }
+          }
+          setAllFirmsConfirmedByKey(map);
+        })
+        .catch((err) => console.error("Failed to load confirmed matches", err)),
+      fetch("/api/dd-entries?status=refund_credited")
+        .then((res) => res.json())
+        .then((data: { ddNumber: string; payeeName: string; matchedStatementId?: string; matchedTxnKey?: string }[]) => {
+          const map: Record<string, { ddNumber: string; payeeName: string }> = {};
+          if (Array.isArray(data)) {
+            for (const d of data) {
+              if (d.matchedStatementId && d.matchedTxnKey) {
+                map[`${d.matchedStatementId}|${d.matchedTxnKey}`] = { ddNumber: d.ddNumber, payeeName: d.payeeName };
+              }
+            }
+          }
+          setAllFirmsDdByKey(map);
+        })
+        .catch((err) => console.error("Failed to load DD refund matches", err)),
+    ]).finally(() => setAllFirmsLoading(false));
+  }, [showAllFirmsModal]);
+
+  // "FIRMCODE-1234" (firm code + the statement's own account number's last 4
+  // digits) - a firm can have more than one bank account/statement, so the
+  // firm name alone wouldn't say which account a row's money moved through.
+  const accountLabel = (s: StatementRecord) => `${s.firmCode || "?"}-${(s.accountNumber || "").slice(-4) || "????"}`;
+
+  // Every statement's transactions flattened into one list, each tagged with
+  // its firm+account - newest first across firms (not per-statement insertion order).
+  const allFirmsRows = useMemo(() => {
+    const rows: { statementId: string; firmCode: string; firmLabel: string; t: Transaction }[] = [];
+    statements.forEach((s) => {
+      const firmLabel = accountLabel(s);
+      (s.transactions || []).forEach((t) => rows.push({ statementId: s._id, firmCode: s.firmCode || "", firmLabel, t }));
+    });
+    return rows.sort((a, b) => parseDateToSortable(b.t.date) - parseDateToSortable(a.t.date));
+  }, [statements]);
+
+  // Dropdown filters by firm code only (not per-account) - a firm with
+  // several bank accounts should still be one pickable entry here; the
+  // table's own Firm column is what shows which specific account.
+  const allFirmsFirmOptions = useMemo(() => {
+    const codes = Array.from(new Set(statements.map((s) => s.firmCode).filter(Boolean))).sort();
+    return [{ value: "", label: "All Firms" }, ...codes.map((c) => ({ value: c, label: c }))];
+  }, [statements]);
+
+  const filteredAllFirmsRows = useMemo(() => {
+    const descQ = allFirmsDescSearch.trim().toLowerCase();
+    const instituteQ = allFirmsInstituteSearch.trim().toLowerCase();
+    const creditQ = allFirmsCreditSearch.trim().toLowerCase();
+    return allFirmsRows.filter(({ statementId, firmCode, t }) => {
+      if (allFirmsFirmFilter && firmCode !== allFirmsFirmFilter) return false;
+      if (descQ && !(t.description || "").toLowerCase().includes(descQ)) return false;
+      if (creditQ && !formatMoney(t.credit).toLowerCase().includes(creditQ)) return false;
+      if (instituteQ) {
+        const institute = t.credit > 0 ? allFirmsConfirmedByKey[`${statementId}|${txnKey(t)}`] || "" : "";
+        if (!institute.toLowerCase().includes(instituteQ)) return false;
+      }
+      return true;
+    });
+  }, [allFirmsRows, allFirmsFirmFilter, allFirmsDescSearch, allFirmsInstituteSearch, allFirmsCreditSearch, allFirmsConfirmedByKey]);
 
   const fetchStatements = () => {
     setLoadingStatements(true);
@@ -579,16 +670,24 @@ export default function StatementPage() {
       <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
         <div className="max-w-7xl mx-auto flex flex-col gap-6">
           {/* Header */}
-          <div>
-            <Link href="/dashboard/account" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
-              <FiArrowLeft /> Back to Account
-            </Link>
-            <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
-              <FiFileText className="text-blue-600" /> Bank Statements
-            </h1>
-            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
-              Upload & Review Firm-wise Account Statements
-            </p>
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <Link href="/dashboard/account" className="flex items-center gap-2 text-slate-500 hover:text-blue-600 text-xs mb-2 transition-colors w-fit">
+                <FiArrowLeft /> Back to Account
+              </Link>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-2">
+                <FiFileText className="text-blue-600" /> Bank Statements
+              </h1>
+              <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-0.5">
+                Upload & Review Firm-wise Account Statements
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAllFirmsModal(true)}
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl py-2.5 px-4 text-[11px] font-black uppercase tracking-wide transition-colors shrink-0"
+            >
+              <FiLayers size={14} /> All Firms Ledger
+            </button>
           </div>
 
           {/* Upload Card */}
@@ -1108,6 +1207,142 @@ export default function StatementPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAllFirmsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                  <FiLayers className="text-blue-600" /> All Firms Ledger
+                </h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                  {filteredAllFirmsRows.length} entries
+                  {(allFirmsFirmFilter || allFirmsDescSearch.trim() || allFirmsInstituteSearch.trim() || allFirmsCreditSearch.trim()) &&
+                    ` / ${allFirmsRows.length}`}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAllFirmsModal(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 px-5 pt-4">
+              <SearchableSelect
+                options={allFirmsFirmOptions}
+                value={allFirmsFirmFilter}
+                onChange={setAllFirmsFirmFilter}
+                placeholder="All Firms"
+                className="flex-1 min-w-[160px]"
+              />
+              <div className="relative flex-1 min-w-[160px]">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                <input
+                  type="text"
+                  value={allFirmsDescSearch}
+                  onChange={(e) => setAllFirmsDescSearch(e.target.value)}
+                  placeholder="Search description..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 pl-8 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                />
+              </div>
+              <div className="relative flex-1 min-w-[160px]">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                <input
+                  type="text"
+                  value={allFirmsInstituteSearch}
+                  onChange={(e) => setAllFirmsInstituteSearch(e.target.value)}
+                  placeholder="Search confirmed institute..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 pl-8 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                />
+              </div>
+              <div className="relative flex-1 min-w-[160px]">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+                <input
+                  type="text"
+                  value={allFirmsCreditSearch}
+                  onChange={(e) => setAllFirmsCreditSearch(e.target.value)}
+                  placeholder="Search credit amount..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 pl-8 pr-3 text-[11px] font-bold focus:outline-none focus:border-blue-400"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 pt-3 custom-scrollbar">
+              {allFirmsLoading ? (
+                <div className="flex justify-center py-10">
+                  <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-blue-500"></div>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200 sticky top-0">
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-3">Firm</th>
+                      <th className="py-2.5 px-3">Description</th>
+                      <th className="py-2.5 px-3">Confirmed Institute</th>
+                      <th className="py-2.5 px-3 text-right">Debit</th>
+                      <th className="py-2.5 px-3 text-right">Credit</th>
+                      <th className="py-2.5 px-3">Cheque No</th>
+                      <th className="py-2.5 px-3 text-right">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredAllFirmsRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="text-center py-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
+                          No matching transactions
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAllFirmsRows.map(({ statementId, firmLabel, t }, idx) => {
+                        const matchedInstitute =
+                          t.credit > 0 ? allFirmsConfirmedByKey[`${statementId}|${txnKey(t)}`] || null : null;
+                        const ddMatch =
+                          t.credit > 0 && !matchedInstitute ? allFirmsDdByKey[`${statementId}|${txnKey(t)}`] || null : null;
+                        return (
+                          <tr key={`${statementId}|${idx}`} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-mono text-slate-700">{t.date}</td>
+                            <td className="py-2.5 px-3 font-mono text-slate-700">{firmLabel}</td>
+                            <td className="py-2.5 px-3 text-slate-700">{t.description || "—"}</td>
+                            <td className="py-2.5 px-3">
+                              {matchedInstitute ? (
+                                <span
+                                  title="Confirmed in Reconciliation"
+                                  className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full"
+                                >
+                                  ✓ {matchedInstitute}
+                                </span>
+                              ) : ddMatch ? (
+                                <span
+                                  title={`Matched as DD ${ddMatch.ddNumber} refund in DD Tracking > Bank Match`}
+                                  className="bg-sky-50 border border-sky-200 text-sky-700 text-[10px] font-black px-2 py-0.5 rounded-full"
+                                >
+                                  ✓ DD {ddMatch.ddNumber} — {ddMatch.payeeName}
+                                </span>
+                              ) : t.credit > 0 ? (
+                                <span className="text-slate-300 text-[10px] italic">unconfirmed</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-red-600">{t.debit ? formatMoney(t.debit) : "—"}</td>
+                            <td className="py-2.5 px-3 text-right font-mono text-orange-600">{t.credit ? formatMoney(t.credit) : "—"}</td>
+                            <td className="py-2.5 px-3 font-mono text-slate-500">{t.chequeNo || "—"}</td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">{formatMoney(t.balance)}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
