@@ -85,6 +85,15 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
     if (data.url) window.open(data.url, "_blank");
   };
 
+  const setStatus = async (id: string, status: "ACTIVE" | "ARCHIVED") => {
+    const res = await fetch("/api/purchase/pricelist/history", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    if (res.ok) loadHistory();
+  };
+
   const hasBlocking = report && (report.headerErrors?.length > 0 || report.errors?.length > 0);
 
   return (
@@ -255,7 +264,7 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
         <div className="overflow-auto">
           <table className="w-full text-xs whitespace-nowrap">
             <thead className="text-slate-500">
-              <tr><th className="text-left p-2">Supplier</th><th className="text-left p-2">Brand</th><th className="text-left p-2">Valid from</th><th className="text-right p-2">Rows</th><th className="text-left p-2">Uploaded by</th><th className="text-left p-2">Date</th><th className="p-2">Status</th><th /></tr>
+              <tr><th className="text-left p-2">Supplier</th><th className="text-left p-2">Brand</th><th className="text-left p-2">Valid from</th><th className="text-right p-2">Rows</th><th className="text-left p-2">Uploaded by</th><th className="text-left p-2">Date</th><th className="p-2">Status</th><th /><th /></tr>
             </thead>
             <tbody>
               {history.map((h) => (
@@ -271,10 +280,15 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
                       {h.status === "ACTIVE" && <FiCheckCircle className="inline mr-1" />}{h.status}
                     </span>
                   </td>
+                  <td className="p-2">
+                    <button onClick={() => setStatus(h._id, h.status === "ACTIVE" ? "ARCHIVED" : "ACTIVE")} className="text-slate-600 hover:underline font-bold">
+                      {h.status === "ACTIVE" ? "Archive" : "Restore"}
+                    </button>
+                  </td>
                   <td className="p-2"><button onClick={() => download(h._id)} className="text-blue-600 hover:underline flex items-center gap-1"><FiDownload /> Original</button></td>
                 </tr>
               ))}
-              {history.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-slate-400">No uploads yet</td></tr>}
+              {history.length === 0 && <tr><td colSpan={9} className="p-4 text-center text-slate-400">No uploads yet</td></tr>}
             </tbody>
           </table>
         </div>

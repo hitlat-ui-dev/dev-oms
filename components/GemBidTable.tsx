@@ -113,6 +113,15 @@ interface BoqItem {
   marketRate?: string;
   marketRateSampleCount?: number;
   marketRateSamples?: { rate: number; party: string; date: string | null; place: string; evaluationType: string; bidNo: string }[];
+  // From the GeM Bid Result Export extension's v3.3 direct-import payload
+  // (see /api/gem-results/import) - reflects the most recent imported
+  // result only, same as marketRate itself. Absent on a bid whose market
+  // data only ever came from the older plain-Excel-upload flow.
+  isOurL1?: boolean;
+  l2Rate?: number | null;
+  l2Party?: string;
+  headroomPct?: number | null;
+  marketSource?: string;
   purchaseRate?: string;
   purchaseVendor?: string;
   purchaseDate?: string | null;
@@ -379,21 +388,22 @@ export default function GemBidTable({
     }
   };
 
-  // "BOQ Rates" covers both a real BOQ Detail Document (boqDetailDoc) and a
-  // Regular Bid's hand-typed items (boqRates with no source file at all -
-  // see document-maker/page.tsx's Fill Rates panel) - either way there's a
-  // rate list worth opening. "BOQ Specifications" only ever comes from an
-  // uploaded/auto-fetched Specification Document. "(REGULAR BID)" is keyed
-  // on the BOQ Detail Document specifically (not Specification) - shown
-  // whenever autoDocLinksJob.ts has checked this bid's Bid Document and it
-  // still has no BOQ (neither auto-fetched nor manually typed in), by
-  // request: a bid can have a Specification link but no BOQ table at all,
-  // and that still counts as "regular" for this label's purposes.
+  // "BOQ Rates" covers both a real BOQ Detail Document (boqDetailDoc,
+  // manually uploaded via document-maker's Rate tab - no longer
+  // auto-fetched, see autoDocLinksJob.ts) and a Regular Bid's hand-typed
+  // items (boqRates with no source file at all) - either way there's a
+  // rate list worth opening. "BOQ Specifications" still comes from an
+  // uploaded/auto-fetched Specification Document as before. "(REGULAR
+  // BID)" reads the bid's own explicit bidType field (set via the BOQ
+  // BID/REGULAR BID toggle in document-maker's Fill Rates panel) rather
+  // than inferring it from whether a BOQ file happens to be fetched yet -
+  // now that BOQ Detail Document fetching is manual-only, "not fetched
+  // yet" no longer means "this is a Regular Bid".
   const renderDocLinks = (b: GemBid) => {
     const hasBoqRates = !!(b.boqDetailDoc?.fileKey || (Array.isArray(b.boqRates) && b.boqRates.length > 0));
     const hasSpec = !!b.specificationDoc?.fileKey;
-    const checkedNoBoq = !!b.autoDocLinksCheckedAt && !hasBoqRates;
-    if (!hasBoqRates && !hasSpec && !checkedNoBoq) return null;
+    const isRegularBid = b.bidType === "regular";
+    if (!hasBoqRates && !hasSpec && !isRegularBid) return null;
     return (
       <div className="mt-1 flex flex-col items-start gap-0.5">
         {hasBoqRates && (
@@ -414,7 +424,7 @@ export default function GemBidTable({
             BOQ Specifications
           </button>
         )}
-        {checkedNoBoq && <span className="text-[9px] text-slate-400 font-bold">(REGULAR BID)</span>}
+        {isRegularBid && !hasBoqRates && <span className="text-[9px] text-slate-400 font-bold">(REGULAR BID)</span>}
       </div>
     );
   };
@@ -449,14 +459,35 @@ export default function GemBidTable({
     [boqItems]
   );
 
+  // The same short name the Address column's own match-guess shows (see
+  // guessInstituteForAddress/matchedInstituteByBidNo above), applied to a
+  // market-result sample's place - these can come from a different bid
+  // than the one currently open, so each is resolved independently rather
+  // than read off matchedInstituteByBidNo (keyed to the bids in the
+  // current table). Falls back to the address's first comma-separated
+  // segment (city/taluka) when no institute match is found, rather than
+  // the full address - that's what used to overflow/get cut off.
+  const shortPlace = (address: string) => {
+    if (!address) return "";
+    const guess = sellers.length > 0 ? guessInstituteForAddress(address, sellers) : null;
+    if (guess) return guess;
+    const firstPart = address.split(",").map((s) => s.trim()).find(Boolean);
+    return firstPart || address;
+  };
+
   // Same real-GeM-result-data suggestion as document-maker/page.tsx's own
   // copy of this (see marketRateEngine.ts) - duplicated rather than
   // shared, consistent with this file already keeping its own BoqItem
   // shape/update handlers separate from that page's. Headline = most
   // recent result; hover reveals the up-to-5-row trend table behind it.
+  // Anchored right-0 (opens toward the left) rather than left-0 - this
+  // trigger sits in the Rate column, right next to Total near the table's
+  // own right edge, so a left-anchored popup was the one routinely running
+  // off the screen.
   const renderMarketRateSuggestion = (it: BoqItem) => {
     if (!it.marketRate) return null;
     const samples = it.marketRateSamples || [];
+    const estimated = it.marketSource === "ESTIMATED";
     return (
       <div className="relative inline-block group/market mt-0.5">
         <button
@@ -464,33 +495,46 @@ export default function GemBidTable({
           onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
           className="text-[9px] text-purple-700 underline font-bold block"
         >
-          Market L1: {it.marketRate}
+          Market L1: {estimated ? "~" : ""}
+          {it.marketRate}
           {it.marketRateSampleCount && it.marketRateSampleCount > 1 ? ` (${it.marketRateSampleCount} results)` : ""}
         </button>
+        {it.isOurL1 && it.l2Rate != null && (
+          <div className="text-[9px] text-emerald-700 font-bold">
+            L2: {estimated ? "~" : ""}
+            {it.l2Rate} ({it.l2Party || "—"})
+            {it.headroomPct != null && ` | +${it.headroomPct}% tak badha sakte ho`}
+            <button type="button" onClick={() => updateBoqRate(it.itemNumber, String(it.l2Rate))} className="underline ml-1">
+              Use {it.l2Rate}
+            </button>
+          </div>
+        )}
         {samples.length > 0 && (
-          <div className="hidden group-hover/market:block absolute z-50 left-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 w-max max-w-sm">
-            <table className="text-[9px] border-collapse">
+          <div
+            className="hidden group-hover/market:block absolute z-50 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 min-w-[280px] max-w-[min(420px,92vw)]"
+          >
+            <table className="text-[9px] border-collapse w-full">
               <thead>
                 <tr className="text-slate-400 font-black uppercase">
                   <th className="text-left pr-3 pb-1">Rate</th>
                   <th className="text-left pr-3 pb-1">L1 Party</th>
                   <th className="text-left pr-3 pb-1">Date</th>
-                  <th className="text-left pr-3 pb-1">Place</th>
-                  <th className="text-left pb-1">Eval</th>
+                  <th className="text-left pb-1">Place</th>
+                  <th className="text-left pb-1 pl-3">Eval</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {samples.map((s, i) => (
                   <tr key={i} className={i === 0 ? "font-bold text-slate-800" : "text-slate-500"}>
-                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.rate}</td>
-                    <td className="pr-3 py-0.5 max-w-[110px] truncate" title={s.party}>
+                    <td className="pr-3 py-0.5 whitespace-nowrap align-top">{s.rate}</td>
+                    <td className="pr-3 py-0.5 align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {s.party || "—"}
                     </td>
-                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
-                    <td className="pr-3 py-0.5 max-w-[140px] truncate" title={s.place}>
-                      {s.place || "—"}
+                    <td className="pr-3 py-0.5 whitespace-nowrap align-top">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
+                    <td className="py-0.5 align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={s.place}>
+                      {shortPlace(s.place) || "—"}
                     </td>
-                    <td className="py-0.5 whitespace-nowrap">
+                    <td className="py-0.5 pl-3 whitespace-nowrap align-top">
                       {s.evaluationType === "ITEM_WISE" ? "Item-wise" : s.evaluationType === "TOTAL" ? "Total" : "—"}
                     </td>
                   </tr>
@@ -968,7 +1012,7 @@ export default function GemBidTable({
   // record who/when" endpoint rather than several near-identical ones.
   const quickUpdate = async (
     bidNo: string,
-    field: "selectedPartyIds" | "bidStatus" | "bidResult",
+    field: "selectedPartyIds" | "bidStatus" | "bidResult" | "awardedPartyId",
     value: string | string[]
   ) => {
     setBusy(true);
@@ -1416,12 +1460,15 @@ export default function GemBidTable({
                 return (
                 <tr
                   key={b.bidNo}
-                  // justPromoted (blue background, New Bids -> Fetched Bid Data arrival) and
-                  // isHighlighted (yellow, the extension's own "paper-based printing" rule) are
-                  // deliberately different colors so the two never look the same.
-                  className={`hover:bg-blue-50/40 transition-colors ${b.justPromoted ? "bg-blue-50" : b.isHighlighted ? "bg-yellow-50" : ""} ${
-                    isExpiringSoon ? "border-l-4 border-l-rose-500" : ""
-                  }`}
+                  // justPromoted (blue background, New Bids -> Fetched Bid Data arrival),
+                  // isHighlighted (yellow, the extension's own "paper-based printing" rule), and
+                  // bidResult "Bid Won" (green, Submitted Bids only) are deliberately different
+                  // colors so none of these ever look the same. Won takes priority over the
+                  // other two - a won bid is the one state here worth standing out regardless
+                  // of whatever got it into Submitted Bids in the first place.
+                  className={`hover:bg-blue-50/40 transition-colors ${
+                    b.bidResult === "Bid Won" ? "bg-emerald-50" : b.justPromoted ? "bg-blue-50" : b.isHighlighted ? "bg-yellow-50" : ""
+                  } ${isExpiringSoon ? "border-l-4 border-l-rose-500" : ""}`}
                 >
                   <td className="py-2 px-2">
                     <input type="checkbox" checked={selected.has(b.bidNo)} onChange={() => toggleSelectOne(b.bidNo)} />
@@ -1525,6 +1572,23 @@ export default function GemBidTable({
                           </option>
                         ))}
                       </select>
+                      {b.bidResult === "Bid Won" && (
+                        <select
+                          key={b.awardedPartyId || ""}
+                          defaultValue={b.awardedPartyId || ""}
+                          disabled={busy}
+                          onChange={(e) => quickUpdate(b.bidNo, "awardedPartyId", e.target.value)}
+                          title="Which party this bid was awarded to"
+                          className="mt-1 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded px-1.5 py-1 text-[10px] w-28"
+                        >
+                          <option value="">Awarded to...</option>
+                          {(b.selectedPartyIds && b.selectedPartyIds.length > 0 ? companies.filter((c) => b.selectedPartyIds!.includes(c._id)) : companies).map((c) => (
+                            <option key={c._id} value={c._id}>
+                              {c.firmName}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                   )}
                   {showPartyCol && (

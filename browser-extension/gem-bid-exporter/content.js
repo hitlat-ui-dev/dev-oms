@@ -443,12 +443,37 @@
     selectEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  // Plain Levenshtein edit distance - used below as a last-resort match tier
+  // so a spelling variant GeM's own dropdown uses (e.g. "Mehsana" vs a
+  // cached "Mahesana") still resolves instead of failing the whole option
+  // lookup over one transliteration difference.
+  function levenshtein(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++)
+      for (let j = 1; j <= b.length; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  }
+
   function selectOptionByText(selectEl, text) {
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
     const target = norm(text);
     const opts = Array.from(selectEl.options || []);
     let opt = opts.find((o) => norm(o.textContent) === target);
     if (!opt) opt = opts.find((o) => norm(o.textContent).includes(target));
+    // A short, close-but-not-identical spelling (city names especially -
+    // "Mahesana"/"Mehsana", "Anand"/"Anad", etc.) within 2 edits of an
+    // option's text still counts as the same place; picks the closest one
+    // rather than the first match within tolerance.
+    if (!opt && target.length >= 4) {
+      let best = null, bestDist = Infinity;
+      for (const o of opts) {
+        const dist = levenshtein(target, norm(o.textContent));
+        if (dist < bestDist) { bestDist = dist; best = o; }
+      }
+      if (best && bestDist <= 2) opt = best;
+    }
     if (!opt) return false;
     setSelectValue(selectEl, opt.value);
     return true;
@@ -1059,6 +1084,20 @@
           batch.index += 1;
           batch.phase = "search";
           await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
+        } else if (!searchResult.ok && searchResult.error === "city_option_not_found") {
+          // The city dropdown loaded fine, but this one city's cached name
+          // isn't in it (a spelling GeM itself uses differently, or the
+          // cache is just stale) - selectOptionByText already tries a close
+          // spelling match first, so this means it genuinely couldn't find
+          // anything close. Same "skip, don't kill the whole batch" fix as
+          // the empty-city case above, by request - one unmatched city used
+          // to abort every city after it too. Kept out of emptyCities (which
+          // gets pruned from the cache) since an unmatched city is likely
+          // still real and worth surfacing, not silently dropped.
+          batch.unmatchedCities = [...(batch.unmatchedCities || []), city];
+          batch.index += 1;
+          batch.phase = "search";
+          await chrome.storage.local.set({ [CITY_BATCH_KEY]: batch });
         } else {
           if (!searchResult.ok && batch.omsRunId) {
             // Every other failure reason (a selector/DOM match that didn't
@@ -1160,6 +1199,7 @@
     const finishedBatch = cbData[CITY_BATCH_KEY] || {};
     const totalCities = (finishedBatch.cities || []).length;
     const emptyCities = finishedBatch.emptyCities || [];
+    const unmatchedCities = finishedBatch.unmatchedCities || [];
     if (emptyCities.length) {
       sendToBackground("GEM_BID_CITIES_PRUNE", {
         state: finishedBatch.state || "Gujarat",
@@ -1181,7 +1221,8 @@
     });
     keywordExcludedThisBatch = [];
     await chrome.storage.local.remove([OMS_BATCH_ROWS_KEY, CLAIMED_RUN_KEY]);
-    const citySummary = totalCities > 1 ? ` across ${totalCities} cities (${emptyCities.length} empty)` : "";
+    const unmatchedNote = unmatchedCities.length ? `, ${unmatchedCities.length} unmatched: ${unmatchedCities.join(", ")}` : "";
+    const citySummary = totalCities > 1 ? ` across ${totalCities} cities (${emptyCities.length} empty${unmatchedNote})` : "";
     if (applyResult && applyResult.ok) {
       await setStatus({ scanning: false, lastAction: "city_batch_done", omsApplied: true, omsRowCount: rows.length });
       const skippedNote = applyResult.result?.keywordExcludedCount

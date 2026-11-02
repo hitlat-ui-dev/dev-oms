@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 // POST { token, userName }: persist a previously validated upload.
 // One transaction: new pricelist version, items upsert by sku_key, items missing from the file
-// flagged is_active:false (never deleted), previous ACTIVE version of that supplier archived.
+// flagged is_active:false (never deleted). Older versions are NOT archived automatically - the user archives from Upload history.
 export async function POST(req: Request) {
   const { client, db } = await getPricelistDb();
   try {
@@ -40,11 +40,6 @@ export async function POST(req: Request) {
     const session = client.startSession();
     try {
       await session.withTransaction(async () => {
-        await db.collection("pricelists").updateMany(
-          { supplier_code: supplierCode, status: "ACTIVE" },
-          { $set: { status: "ARCHIVED" } },
-          { session }
-        );
         await db.collection("pricelists").insertOne(
           {
             _id: pricelistId,

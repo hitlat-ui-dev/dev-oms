@@ -5,6 +5,22 @@ import { getSignedDownloadUrl } from "@/lib/cloudflareR2";
 export const runtime = "nodejs";
 
 // GET: upload history. GET ?download=<id>: redirect to a signed URL of the original file.
+// PATCH { id, status: "ACTIVE" | "ARCHIVED" }: manual archive / restore of one upload (label only; items are untouched).
+export async function PATCH(req: Request) {
+  try {
+    const { id, status } = await req.json();
+    const { ObjectId } = await import("mongodb");
+    if (!ObjectId.isValid(id) || !(status === "ACTIVE" || status === "ARCHIVED")) {
+      return NextResponse.json({ error: "Invalid id or status" }, { status: 400 });
+    }
+    const { db } = await getPricelistDb();
+    await db.collection("pricelists").updateOne({ _id: new ObjectId(id) }, { $set: { status } });
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Update failed" }, { status: 500 });
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const { db } = await getPricelistDb();

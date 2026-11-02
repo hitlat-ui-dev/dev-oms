@@ -103,6 +103,15 @@ interface BoqItem {
   marketRate?: string;
   marketRateSampleCount?: number;
   marketRateSamples?: { rate: number; party: string; date: string | null; place: string; evaluationType: string; bidNo: string }[];
+  // From the GeM Bid Result Export extension's v3.3 direct-import payload
+  // (see /api/gem-results/import) - reflects the most recent imported
+  // result only, same as marketRate itself. Absent on a bid whose market
+  // data only ever came from the older plain-Excel-upload flow.
+  isOurL1?: boolean;
+  l2Rate?: number | null;
+  l2Party?: string;
+  headroomPct?: number | null;
+  marketSource?: string;
   // What we actually paid a vendor for this item, per the Received
   // Purchase ledger (token-matched server-side, see /api/gem-bids/boq's
   // GET) - a cost reference for Base Rate, not Rate, so it's shown under
@@ -940,9 +949,27 @@ function DocumentMakerPageInner() {
   // trend table behind it (rate/party/date/place/evaluation type, newest
   // first) - a native title tooltip can't hold a real table, so this is a
   // CSS-only (no per-row hover state needed) group-hover reveal instead.
+  // Same short name the Address column's own match-guess shows (see
+  // guessInstituteForAddress above) - a market-result sample can come from
+  // a different bid than the one open here, so each is resolved on its own
+  // rather than off this page's own bid-keyed matchedInstituteByBidNo.
+  // Falls back to the address's first comma-separated segment (city/
+  // taluka) when nothing matches, rather than the full address overflowing.
+  const shortPlace = (address: string) => {
+    if (!address) return "";
+    const guess = sellers.length > 0 ? guessInstituteForAddress(address, sellers) : null;
+    if (guess) return guess;
+    const firstPart = address.split(",").map((s) => s.trim()).find(Boolean);
+    return firstPart || address;
+  };
+
+  // Anchored right-0 (opens toward the left) - this trigger sits in the
+  // Rate column, right next to Total near the table's own right edge, so a
+  // left-anchored popup was the one routinely running off the screen.
   const renderMarketRateSuggestion = (it: BoqItem) => {
     if (!it.marketRate) return null;
     const samples = it.marketRateSamples || [];
+    const estimated = it.marketSource === "ESTIMATED";
     return (
       <div className="relative inline-block group/market mt-0.5">
         <button
@@ -950,33 +977,44 @@ function DocumentMakerPageInner() {
           onClick={() => updateBoqRate(it.itemNumber, it.marketRate!)}
           className="text-[9px] text-purple-700 underline font-bold block"
         >
-          Market L1: {it.marketRate}
+          Market L1: {estimated ? "~" : ""}
+          {it.marketRate}
           {it.marketRateSampleCount && it.marketRateSampleCount > 1 ? ` (${it.marketRateSampleCount} results)` : ""}
         </button>
+        {it.isOurL1 && it.l2Rate != null && (
+          <div className="text-[9px] text-emerald-700 font-bold">
+            L2: {estimated ? "~" : ""}
+            {it.l2Rate} ({it.l2Party || "—"})
+            {it.headroomPct != null && ` | +${it.headroomPct}% tak badha sakte ho`}
+            <button type="button" onClick={() => updateBoqRate(it.itemNumber, String(it.l2Rate))} className="underline ml-1">
+              Use {it.l2Rate}
+            </button>
+          </div>
+        )}
         {samples.length > 0 && (
-          <div className="hidden group-hover/market:block absolute z-50 left-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 w-max max-w-sm">
-            <table className="text-[9px] border-collapse">
+          <div className="hidden group-hover/market:block absolute z-50 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-2 min-w-[280px] max-w-[min(420px,92vw)]">
+            <table className="text-[9px] border-collapse w-full">
               <thead>
                 <tr className="text-slate-400 font-black uppercase">
                   <th className="text-left pr-3 pb-1">Rate</th>
                   <th className="text-left pr-3 pb-1">L1 Party</th>
                   <th className="text-left pr-3 pb-1">Date</th>
-                  <th className="text-left pr-3 pb-1">Place</th>
-                  <th className="text-left pb-1">Eval</th>
+                  <th className="text-left pb-1">Place</th>
+                  <th className="text-left pb-1 pl-3">Eval</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {samples.map((s, i) => (
                   <tr key={i} className={i === 0 ? "font-bold text-slate-800" : "text-slate-500"}>
-                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.rate}</td>
-                    <td className="pr-3 py-0.5 max-w-[110px] truncate" title={s.party}>
+                    <td className="pr-3 py-0.5 whitespace-nowrap align-top">{s.rate}</td>
+                    <td className="pr-3 py-0.5 align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {s.party || "—"}
                     </td>
-                    <td className="pr-3 py-0.5 whitespace-nowrap">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
-                    <td className="pr-3 py-0.5 max-w-[140px] truncate" title={s.place}>
-                      {s.place || "—"}
+                    <td className="pr-3 py-0.5 whitespace-nowrap align-top">{s.date ? new Date(s.date).toLocaleDateString("en-IN") : "—"}</td>
+                    <td className="py-0.5 align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={s.place}>
+                      {shortPlace(s.place) || "—"}
                     </td>
-                    <td className="py-0.5 whitespace-nowrap">
+                    <td className="py-0.5 pl-3 whitespace-nowrap align-top">
                       {s.evaluationType === "ITEM_WISE" ? "Item-wise" : s.evaluationType === "TOTAL" ? "Total" : "—"}
                     </td>
                   </tr>

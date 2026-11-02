@@ -42,6 +42,14 @@ export async function POST() {
   }
 }
 
+// A bid stuck at "fetching" past this (the GeM tab never opened, the
+// extension crashed mid-batch, the tab got closed by hand, etc. - any path
+// that claims a bid but never reaches /complete for it) is reclaimed back
+// to "pending" here so the next poll retries it, instead of sitting stuck
+// forever - the exact bug behind "the button just shows running and
+// nothing ever finishes".
+const STUCK_FETCHING_MS = 3 * 60 * 1000;
+
 // GET — returns up to 20 bids still pending a status check, for the
 // extension's background worker to claim and work through a few at a time
 // (flips each to "fetching" in the same query so a second poll before this
@@ -51,6 +59,14 @@ export async function GET() {
     const client = await clientPromise;
     const db = client.db(DB_NAME);
     const bidsCollection = db.collection("gem_bids");
+
+    await bidsCollection.updateMany(
+      {
+        "statusRefresh.status": "fetching",
+        "statusRefresh.requestedAt": { $lt: new Date(Date.now() - STUCK_FETCHING_MS) },
+      },
+      { $set: { "statusRefresh.status": "pending" } }
+    );
 
     const pending = await bidsCollection
       .find({ "statusRefresh.status": "pending" }, { projection: { bidNo: 1, bidLink: 1 } })

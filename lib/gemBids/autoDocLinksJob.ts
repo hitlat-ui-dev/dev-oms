@@ -35,10 +35,7 @@ async function fetchPublicDoc(url: string): Promise<{ buffer: Buffer; contentTyp
 /**
  * Self-throttled, site-visit-triggered (see app/layout.tsx), same pattern
  * as runExpireBidsJobIfDue. Automatic for every Bids to Fill/Submitted
- * Bids bid, by request - an earlier version of this gated it behind a
- * manual "Fetch Documents" selection, which was reverted: every bid should
- * already show BOQ Rates/BOQ Specifications the same way a manual upload
- * always has, with no extra click needed. Two steps each run:
+ * Bids bid. Two steps each run:
  *
  * 1. Queue a Bid Document fetch (docFetch, same mechanism Generate ATC
  *    already uses) for any bid that doesn't have one yet - GeM blocks
@@ -50,14 +47,21 @@ async function fetchPublicDoc(url: string): Promise<{ buffer: Buffer; contentTyp
  *    "already has it" is exactly "has bidLinkDoc.fileKey", so this is
  *    naturally a no-op for every bid past its first sync.
  * 2. For any such bid whose Bid Document has since been fetched but not
- *    yet checked for embedded Specification/BOQ Detail Document links,
- *    reads them (extractOrderItemLinks) and fetches+stores those two files
- *    directly - mkp.gem.gov.in serves them with no GeM login at all
- *    (confirmed: a plain curl, no cookies, returns the real file), so this
- *    needs no extension round trip of its own. A bid that already has one
- *    set (a manual upload, or an auto-fetch from an earlier run) is never
- *    overwritten. Marked checked either way so a bid with no such table (a
- *    Regular Bid with no BOQ at all) isn't re-parsed forever.
+ *    yet checked for an embedded Specification Document link, reads it
+ *    (extractOrderItemLinks) and fetches+stores that file directly -
+ *    mkp.gem.gov.in serves it with no GeM login at all (confirmed: a plain
+ *    curl, no cookies, returns the real file), so this needs no extension
+ *    round trip of its own. A bid that already has one set (a manual
+ *    upload, or an auto-fetch from an earlier run) is never overwritten.
+ *    Marked checked either way so a bid with no such link isn't re-parsed
+ *    forever.
+ *
+ * The BOQ Detail Document (the rates table itself) is deliberately NOT
+ * auto-fetched here anymore, by request - it rarely actually came through
+ * this way in practice, so "BOQ Rates" now only ever gets populated by the
+ * existing manual "Upload BOQ File" button (document-maker's Rate tab) or,
+ * for a Regular Bid, by typing items in directly. The Specification link
+ * alone is worth auto-fetching since that one reliably works.
  */
 export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobResult> {
   const now = new Date();
@@ -121,16 +125,6 @@ export async function runAutoDocLinksJobIfDue(db: any): Promise<AutoDocLinksJobR
           found = true;
         }
       }
-      if (links.boqUrl && !bid.boqDetailDoc?.fileKey) {
-        const fetched = await fetchPublicDoc(links.boqUrl);
-        if (fetched) {
-          const key = `bids/${bid._id.toString()}/source-docs/boq.csv`;
-          await uploadFileToR2(fetched.buffer, key, "text/csv");
-          await bidsCollection.updateOne({ _id: bid._id }, { $set: { "boqDetailDoc.fileKey": key, "boqDetailDoc.fetchedAt": now } });
-          found = true;
-        }
-      }
-
       await bidsCollection.updateOne(
         { _id: bid._id },
         { $set: { autoDocLinksCheckedAt: now, autoDocLinksFound: found } }

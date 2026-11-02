@@ -290,6 +290,7 @@ export default function StatementPage() {
   // been reviewed; now it only ever reflects what a human actually approved
   // in Reconciliation.
   const [confirmedInstituteByKey, setConfirmedInstituteByKey] = useState<Record<string, string>>({});
+  const [ddMatchByKey, setDdMatchByKey] = useState<Record<string, { ddNumber: string; payeeName: string }>>({});
   const [txnSearch, setTxnSearch] = useState("");
   const [currentUsername, setCurrentUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
@@ -342,6 +343,33 @@ export default function StatementPage() {
         setConfirmedInstituteByKey(map);
       })
       .catch((err) => console.error("Failed to load confirmed matches", err));
+  }, [viewingStatement]);
+
+  // Same idea for DD refund matches (confirmed separately in DD Tracking >
+  // Bank Match) - a credit line claimed there as a DD's refund never goes
+  // through Reconciliation, so confirmedInstituteByKey alone would leave it
+  // looking unconfirmed forever even though it's fully accounted for.
+  useEffect(() => {
+    if (!viewingStatement) {
+      setDdMatchByKey({});
+      return;
+    }
+    const params = new URLSearchParams({ status: "refund_credited" });
+    if (viewingStatement.firmCode) params.set("firmCode", viewingStatement.firmCode);
+    fetch(`/api/dd-entries?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data: { ddNumber: string; payeeName: string; matchedStatementId?: string; matchedTxnKey?: string }[]) => {
+        const map: Record<string, { ddNumber: string; payeeName: string }> = {};
+        if (Array.isArray(data)) {
+          for (const d of data) {
+            if (d.matchedStatementId && d.matchedTxnKey && String(d.matchedStatementId) === String(viewingStatement._id)) {
+              map[`${d.matchedStatementId}|${d.matchedTxnKey}`] = { ddNumber: d.ddNumber, payeeName: d.payeeName };
+            }
+          }
+        }
+        setDdMatchByKey(map);
+      })
+      .catch((err) => console.error("Failed to load DD refund matches", err));
   }, [viewingStatement]);
 
   const fetchStatements = () => {
@@ -1006,6 +1034,7 @@ export default function StatementPage() {
                         (g) => g.beforeDate === t.date && g.beforeDescription === t.description
                       );
                       const matchedInstitute = t.credit > 0 ? confirmedInstituteByKey[`${viewingStatement._id}|${txnKey(t)}`] || null : null;
+                      const ddMatch = t.credit > 0 && !matchedInstitute ? ddMatchByKey[`${viewingStatement._id}|${txnKey(t)}`] || null : null;
                       return (
                         <Fragment key={idx}>
                           {gapBefore && (
@@ -1027,6 +1056,13 @@ export default function StatementPage() {
                                   className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full"
                                 >
                                   ✓ {matchedInstitute}
+                                </span>
+                              ) : ddMatch ? (
+                                <span
+                                  title={`Matched as DD ${ddMatch.ddNumber} refund in DD Tracking > Bank Match`}
+                                  className="bg-sky-50 border border-sky-200 text-sky-700 text-[10px] font-black px-2 py-0.5 rounded-full"
+                                >
+                                  ✓ DD {ddMatch.ddNumber} — {ddMatch.payeeName}
                                 </span>
                               ) : t.credit > 0 ? (
                                 <span className="text-slate-300 text-[10px] italic">unconfirmed</span>

@@ -309,7 +309,7 @@ export async function applyImport(db: any, input: ApplyImportInput): Promise<App
       // itself isn't undone just because GeM moved the deadline; the user
       // only needs to notice the date changed (the Updated badge covers
       // that), not redo work that still stands.
-      if (!RAW_DATA_SECTIONS.includes(existing.currentSection)) {
+      if (RAW_DATA_SECTIONS.includes(existing.currentSection)) {
         setDoc.currentSection = "new_bids";
         setDoc.firstSeenAt = runAt;
       }

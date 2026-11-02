@@ -171,6 +171,16 @@ export async function GET(req: Request) {
           ...it,
           marketRate: String(latest.l1Rate),
           marketRateSampleCount: samples.length,
+          // isOurL1/l2Rate/l2Party/headroomPct/marketSource reflect the
+          // MOST RECENT sample only (same "latest, not averaged" rule as
+          // marketRate itself) - from the GeM Bid Result Export extension's
+          // v3.3 payload (see /api/gem-results/import), nullable since a
+          // bid imported the older way (plain Excel upload) never had them.
+          isOurL1: !!latest.isOurL1,
+          l2Rate: latest.l2Rate ?? null,
+          l2Party: latest.l2Party || "",
+          headroomPct: latest.headroomPct ?? null,
+          marketSource: latest.source || "REAL",
           marketRateSamples: samples.slice(0, 5).map((s) => ({
             rate: s.l1Rate,
             party: s.l1Party || "",
