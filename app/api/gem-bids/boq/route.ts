@@ -57,6 +57,20 @@ export async function GET(req: Request) {
 
       items = (bid.boqRates || []).map((r: any) => {
         const history = historyByKey.get(resolveItemKey(r.itemTitle, aliasMap));
+        // Our own past rate for this exact item (gem_bid_item_rate_history,
+        // updated every time any bid's rates are saved - not tied to who
+        // saved it) goes straight into the Rate box itself the moment this
+        // bid has no rate of its own yet, rather than sitting off to the
+        // side as a "Suggested: X / Use X" prompt someone has to click -
+        // by request, since that click is easy to miss, especially for a
+        // different user opening a bid they didn't originally work. Still
+        // just prefilling local state here, not persisted until Save Rates
+        // is actually clicked, and still fully editable before that.
+        // suggestedRate/suggestedFromBidNo stay around only for the case
+        // this bid DOES already have its own saved rate - there, showing
+        // the historical one alongside remains a useful cross-check, not a
+        // redundant duplicate of what's already in the box.
+        const ownRate = r.rate || "";
         return {
           itemNumber: r.itemNumber,
           itemTitle: r.itemTitle || "",
@@ -65,11 +79,11 @@ export async function GET(req: Request) {
           unit: r.unit || "",
           consigneeId: "",
           deliveryPeriod: "",
-          rate: r.rate || "",
+          rate: ownRate || history?.rate || "",
           baseRate: r.baseRate || "",
           marginPercent: r.marginPercent || "",
-          suggestedRate: history?.rate || "",
-          suggestedFromBidNo: history?.bidNo || "",
+          suggestedRate: ownRate ? history?.rate || "" : "",
+          suggestedFromBidNo: ownRate ? history?.bidNo || "" : "",
         };
       });
     } else {
@@ -129,11 +143,14 @@ export async function GET(req: Request) {
           // EACH" vs a plain "NOS") so it wins when both exist.
           unit: spec?.unit || it.unit,
           specification: spec?.specification || "",
-          rate: savedRates[it.itemNumber] || "",
+          // Same "prefill the Rate box directly instead of a separate
+          // Suggested/Use prompt" treatment as the Regular Bid branch
+          // above - see its own comment for why.
+          rate: savedRates[it.itemNumber] || history?.rate || "",
           baseRate: savedBaseRates[it.itemNumber] || "",
           marginPercent: savedMarginPercents[it.itemNumber] || "",
-          suggestedRate: history?.rate || "",
-          suggestedFromBidNo: history?.bidNo || "",
+          suggestedRate: savedRates[it.itemNumber] ? history?.rate || "" : "",
+          suggestedFromBidNo: savedRates[it.itemNumber] ? history?.bidNo || "" : "",
         };
       });
     }

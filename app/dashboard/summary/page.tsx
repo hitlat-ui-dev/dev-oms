@@ -163,6 +163,7 @@ export default function SummaryDashboardPage() {
   const [firmFilter, setFirmFilter] = useState("");
   const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ddOutstanding, setDdOutstanding] = useState<{ count: number; totalValue: number } | null>(null);
 
   const [perfRange, setPerfRange] = useState<"month" | "year">("month");
   const [perfData, setPerfData] = useState<TeamActivityRow[] | null>(null);
@@ -244,6 +245,32 @@ export default function SummaryDashboardPage() {
       .catch(err => console.error("Failed to load GeM fetch history", err))
       .finally(() => setFetchHistoryLoading(false));
   }, [data]);
+
+  // Every DD issued, minus every DD that's already come back (status
+  // returned_cancelled/refund_credited - see models/DDEntry.ts's DD_STATUSES) -
+  // what's actually still out with a buyer right now, regardless of whether
+  // that tender itself has even concluded yet (unlike the Pending Return
+  // report, which only tracks DDs for a tender that's already won/lost/
+  // cancelled/disqualified - this is broader, every rupee not yet back).
+  // Gated on `data` same as every other secondary fetch on this page
+  // (nothing loads before Scan Data).
+  const RETURNED_DD_STATUSES = ["returned_cancelled", "refund_credited"];
+  useEffect(() => {
+    if (!data) return;
+    const params = new URLSearchParams();
+    if (firmFilter) params.set("firmCode", firmFilter);
+    fetch(`/api/dd-entries?${params.toString()}`)
+      .then((res) => res.json())
+      .then((d) => {
+        const entries = Array.isArray(d) ? d : [];
+        const outstanding = entries.filter((e: any) => !RETURNED_DD_STATUSES.includes(e.status));
+        setDdOutstanding({
+          count: outstanding.length,
+          totalValue: outstanding.reduce((s: number, e: any) => s + (e.amount || 0), 0),
+        });
+      })
+      .catch((err) => console.error("Failed to load DD outstanding total", err));
+  }, [data, firmFilter]);
 
   const fetchDailyPerformance = useCallback((username: string, range: "month" | "year") => {
     setDailyLoading(true);
@@ -389,13 +416,15 @@ export default function SummaryDashboardPage() {
                   sub={`${formatInt(data.thisMonth.monthOrderCount)} orders this month`}
                   color="bg-indigo-600"
                 />
-                <StatCard
-                  icon={<FiAlertCircle size={16} />}
-                  label="Pending Orders"
-                  value={formatInt(data.pending.pendingOrderCount)}
-                  sub={`₹${formatMoney(data.pending.pendingOrderValue)} value`}
-                  color="bg-amber-600"
-                />
+                <Link href="/dashboard/account/dd-tracking/ledger" className="block">
+                  <StatCard
+                    icon={<FiAlertCircle size={16} />}
+                    label="DD Outstanding"
+                    value={`₹${formatMoney(ddOutstanding?.totalValue || 0)}`}
+                    sub={`${formatInt(ddOutstanding?.count || 0)} DDs issued, not returned`}
+                    color="bg-amber-600"
+                  />
+                </Link>
               </div>
 
               {/* Row 2: Payments */}

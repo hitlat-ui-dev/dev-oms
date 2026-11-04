@@ -1044,6 +1044,30 @@ function DocumentMakerPageInner() {
     </>
   );
 
+  // What we actually paid for this item last time, per Received Purchase -
+  // fuzzy-matched server-side (see /api/gem-bids/boq's GET), independent
+  // of (and a different match than) the tag-based ReceivedRateChip inside
+  // renderPricelistRate above. The data was already coming through on
+  // every BoqItem (purchaseRate/purchaseVendor/purchaseDate) - this page
+  // just never rendered it, unlike GemBidTable.tsx's own BOQ Rates modal,
+  // which is why the same bid showed this suggestion there but not here.
+  // Fills Base Rate (this page has one; GemBidTable's modal doesn't, so
+  // its own copy of this fills Rate directly instead).
+  const renderPurchaseRateSuggestion = (it: BoqItem) => {
+    if (!it.purchaseRate) return null;
+    const dateLabel = it.purchaseDate ? new Date(it.purchaseDate).toLocaleDateString("en-IN") : "";
+    return (
+      <button
+        type="button"
+        onClick={() => updateBoqBaseRate(it.itemNumber, it.purchaseRate!)}
+        className="text-[9px] text-emerald-700 underline mt-0.5 block"
+        title={[it.purchaseVendor, dateLabel].filter(Boolean).join(" — ") || undefined}
+      >
+        Purchased: {it.purchaseRate}
+      </button>
+    );
+  };
+
   const updateBoqBaseRate = (itemNumber: string, baseRate: string) => {
     setBoqItems((prev) =>
       prev.map((it) => (it.itemNumber === itemNumber ? { ...it, baseRate, rate: computeRateFromBase(baseRate, it.marginPercent) || it.rate } : it))
@@ -1127,6 +1151,29 @@ function DocumentMakerPageInner() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Rate Variants");
     XLSX.writeFile(wb, `Rate-Variants-${selectedBid?.bidNo || selectedBidId}.xlsx`);
+  };
+
+  // Persisted every time a party/percent/count control actually changes
+  // (never from the bid-switch reset effect, which would otherwise clobber
+  // whatever was already saved for a bid before its own data has loaded) -
+  // see /api/gem-bids/boq/save-variants and the Bid Summary page, which
+  // reads this to bump each assigned firm's Final Rate by its own variant's
+  // % rather than just showing every firm the plain L1 total.
+  const persistVariantPercents = (parties: Record<number, string>, count: number, l2Pct: string, l3Pct: string) => {
+    if (!selectedBidId) return;
+    const percents: Record<string, number> = {};
+    const v1Party = parties[1];
+    if (v1Party) percents[v1Party] = 0;
+    for (let v = 2; v <= count; v++) {
+      const partyId = parties[v];
+      if (!partyId) continue;
+      percents[partyId] = v === 2 ? parseFloat(l2Pct) || 0 : parseFloat(l3Pct) || 0;
+    }
+    fetch("/api/gem-bids/boq/save-variants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bidId: selectedBidId, variantPartyPercents: percents }),
+    }).catch(() => {});
   };
 
   const generateBoqRateVariants = () => {
@@ -1806,6 +1853,7 @@ function DocumentMakerPageInner() {
                                         className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                       />
                                       {renderPricelistRate(it)}
+                                      {renderPurchaseRateSuggestion(it)}
                                     </td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1885,6 +1933,7 @@ function DocumentMakerPageInner() {
                                       className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                                     />
                                     {renderPricelistRate(it)}
+                                    {renderPurchaseRateSuggestion(it)}
                                   </td>
                                   <td className="py-2 px-2">
                                     <input
@@ -2098,7 +2147,10 @@ function DocumentMakerPageInner() {
                       {([2, 3] as const).map((n) => (
                         <button
                           key={n}
-                          onClick={() => setBoqVariantCount(n)}
+                          onClick={() => {
+                            setBoqVariantCount(n);
+                            persistVariantPercents(boqVariantParties, n, boqVariantL2Percent, boqVariantL3Percent);
+                          }}
                           className={`px-4 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors ${
                             boqVariantCount === n ? "bg-purple-600 text-white shadow" : "text-slate-500 hover:text-slate-800"
                           }`}
@@ -2118,7 +2170,10 @@ function DocumentMakerPageInner() {
                         type="number"
                         step="0.01"
                         value={boqVariantL2Percent}
-                        onChange={(e) => setBoqVariantL2Percent(e.target.value)}
+                        onChange={(e) => {
+                          setBoqVariantL2Percent(e.target.value);
+                          persistVariantPercents(boqVariantParties, boqVariantCount, e.target.value, boqVariantL3Percent);
+                        }}
                         className="w-16 border border-slate-200 rounded px-2 py-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-purple-400"
                       />
                       <span className="text-[10px] text-slate-400">%</span>
@@ -2135,7 +2190,10 @@ function DocumentMakerPageInner() {
                           type="number"
                           step="0.01"
                           value={boqVariantL3Percent}
-                          onChange={(e) => setBoqVariantL3Percent(e.target.value)}
+                          onChange={(e) => {
+                            setBoqVariantL3Percent(e.target.value);
+                            persistVariantPercents(boqVariantParties, boqVariantCount, boqVariantL2Percent, e.target.value);
+                          }}
                           className="w-16 border border-slate-200 rounded px-2 py-1 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-purple-400"
                         />
                         <span className="text-[10px] text-slate-400">%</span>
@@ -2160,7 +2218,11 @@ function DocumentMakerPageInner() {
                         </span>
                         <select
                           value={boqVariantParties[i + 1] || ""}
-                          onChange={(e) => setBoqVariantParties((p) => ({ ...p, [i + 1]: e.target.value }))}
+                          onChange={(e) => {
+                            const next = { ...boqVariantParties, [i + 1]: e.target.value };
+                            setBoqVariantParties(next);
+                            persistVariantPercents(next, boqVariantCount, boqVariantL2Percent, boqVariantL3Percent);
+                          }}
                           className="border border-slate-200 rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-purple-400"
                         >
                           <option value="">Select party...</option>

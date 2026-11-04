@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
-import { FiArrowLeft, FiX, FiLayers, FiFileText, FiPercent, FiList } from "react-icons/fi";
+import { FiArrowLeft, FiX, FiLayers, FiFileText, FiPercent, FiList, FiClipboard } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import GemBidTable, { GemBid } from "@/components/GemBidTable";
 import { SECTIONS, SectionKey, SUBMITTED_STATUSES } from "@/lib/gemBids/columns";
@@ -462,6 +462,12 @@ export default function GemBidsPage() {
                     Start Sync
                   </button>
                 )}
+                <Link
+                  href="/dashboard/gem-bids/bid-summary"
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"
+                >
+                  <FiClipboard size={13} /> Bid Summary →
+                </Link>
                 <Link
                   href="/dashboard/gem-bids/final-rates"
                   className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black uppercase text-[11px] tracking-wide py-2 px-3.5 rounded-xl transition-colors"

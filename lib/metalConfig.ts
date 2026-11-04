@@ -9,6 +9,7 @@ export const DENSITIES: Record<string, number> = {
   Aluminium: 2700,
   "Cast Iron": 7200,
   "Iron / Mild Steel": 7850,
+  Polypropylene: 946,
 };
 
 export type Unit = "mm" | "meter" | "inch";
@@ -104,4 +105,5 @@ export const METAL_SHAPES: Record<string, string[]> = {
     "Wire",
     "Cable (Conductor)",
   ],
+  Polypropylene: ["Pipe (OD + ID)", "Pipe (OD + Wall)", "Round Bar", "Plate", "Flat Bar", "Square Bar"],
 };
