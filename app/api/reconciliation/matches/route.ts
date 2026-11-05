@@ -18,6 +18,8 @@ import {
   comboSignature,
   parseDateToSortable,
   buildConfirmedDatesBySeller,
+  buildSameDateConfirmedSellers,
+  extractKeywords,
   SellerForMatching,
   InstituteCandidate,
 } from "@/lib/reconciliation/matchingEngine";
@@ -68,6 +70,9 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
     .project({ sellerId: 1, transactionDate: 1 })
     .toArray();
   const confirmedDatesBySeller = buildConfirmedDatesBySeller(confirmedForDateLookup);
+  // Same lookup, indexed the other way (date -> sellers) - see
+  // buildSameDateConfirmedSellers for why this exists.
+  const sameDateConfirmedSellers = buildSameDateConfirmedSellers(confirmedForDateLookup);
 
   const ops: any[] = [];
 
@@ -142,6 +147,61 @@ async function generateSuggestions(db: any, statements: any[], firmCode: string 
             dateFit: c.dateFit,
             matchedBillNos: c.matchedBillNos,
           }));
+        }
+      }
+
+      // Same-day, any-firm fallback: no institute's registered keyword
+      // literally matched this description at all, but an institute already
+      // has a CONFIRMED match on this exact date under a different firm's
+      // statement (e.g. a district treasury paying out several of one
+      // institute's bills across different supplier firms the same day,
+      // under a narration that isn't registered as that institute's own
+      // alias yet). Keyword evidence is absent here, so unlike the branches
+      // above, this is only accepted when the credited amount ALSO fits one
+      // of that institute's open bills - "same date, no keyword, no amount
+      // fit" is too weak to attach an institute to blindly, and is left
+      // unmatched instead. Never fast-tracked either way (confidenceLabel
+      // "new" always fails isHighConfidenceMatch below) - always lands in
+      // Pending Review for a human to actually click Confirm.
+      // User-specified design, 2026-11-05.
+      if (candidates.length === 0) {
+        const sameDateSellerIds = sameDateConfirmedSellers.get(parseDateToSortable(t.date));
+        if (sameDateSellerIds && sameDateSellerIds.size > 0) {
+          const learnableKeyword = extractKeywords(t.description)[0];
+          const fallbackCandidates: InstituteCandidate[] = [...sameDateSellerIds]
+            .map((sid) => sellersById.get(sid))
+            .filter((s: any): s is SellerForMatching => !!s)
+            .map((s: any) => ({
+              instituteName: s.instituteName,
+              sellerId: s._id,
+              matchedKeyword: learnableKeyword || "",
+              confidence: 1,
+              confidenceLabel: "new" as const,
+              matchLength: 0,
+            }));
+          if (fallbackCandidates.length > 0) {
+            const scoredFallback = await scoreInstituteCandidates(db, fallbackCandidates, {
+              creditedAmount: t.credit,
+              transactionDate: t.date,
+              firmCode: statement.firmCode,
+              confirmedDatesBySeller,
+            });
+            const fitting = scoredFallback.filter((c) => c.amountFit);
+            if (fitting.length === 1) {
+              instituteMatch = fitting[0];
+            } else if (fitting.length > 1) {
+              isAmbiguous = true;
+              ambiguousCandidates = fitting.map((c) => ({
+                sellerId: String(c.sellerId),
+                instituteName: c.instituteName,
+                score: c.score,
+                amountFit: c.amountFit,
+                dateFit: c.dateFit,
+                matchedBillNos: c.matchedBillNos,
+              }));
+            }
+            // fitting.length === 0: no real evidence either way - stays unmatched.
+          }
         }
       }
 

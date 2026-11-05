@@ -228,6 +228,7 @@ const LIGHT_PROJECTION = {
   createdAt: 1,
   totalAmount: 1,
   paidAmount: 1,
+  deductionAmount: 1,
   isPaid: 1,
   status: 1,
   billExemptReason: 1,

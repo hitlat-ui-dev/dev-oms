@@ -118,6 +118,7 @@ interface OrderLite {
   createdAt?: string;
   totalAmount: number;
   paidAmount?: number;
+  deductionAmount?: number;
   isPaid?: boolean;
   status: string;
   billExemptReason?: "ALREADY_BILLED_EXTERNAL" | "NOT_REQUIRED" | null;
@@ -192,7 +193,10 @@ function OrderLedgerMini({
       ? highlightSet.has((o.orderNo || "").trim().toUpperCase())
       : highlightAmount != null && Math.abs(remaining - highlightAmount) < 1;
 
-  const withRemaining = orders.map((o) => ({ o, remaining: (o.totalAmount || 0) - (o.paidAmount || 0) }));
+  const withRemaining = orders.map((o) => ({
+    o,
+    remaining: (o.totalAmount || 0) - (o.paidAmount || 0) - (o.deductionAmount || 0),
+  }));
   const sorted = [...withRemaining].sort((a, b) => {
     const aMatch = isHighlighted(a.o, a.remaining);
     const bMatch = isHighlighted(b.o, b.remaining);
@@ -638,7 +642,14 @@ export default function ReconciliationPage() {
         (o) =>
           o.instituteName === instituteName &&
           o.firmCode === firmCode &&
-          !o.isPaid &&
+          // Real remaining balance, not the `isPaid` flag - that flag is only
+          // ever set by applyPaymentToBill (lib/reconciliation/paymentEngine.ts)
+          // at the moment a payment is confirmed, so a handful of older orders
+          // whose paidAmount was set before that logic existed stayed `isPaid:
+          // false` forever despite being fully settled - confirmed live via
+          // the DB (OD6021/OD3972/OD0816-RE-N1 etc.), showing as ₹0.00 "open"
+          // orders here. Deriving straight from the amounts can't go stale.
+          (o.totalAmount || 0) - (o.paidAmount || 0) - (o.deductionAmount || 0) > 0.5 &&
           !RETURN_FAMILY.has(o.status) &&
           // "No bill needed for this at all" orders aren't a real receivable -
           // a payment can never belong to one, so they're excluded from the

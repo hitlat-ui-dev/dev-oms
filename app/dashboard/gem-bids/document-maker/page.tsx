@@ -17,6 +17,7 @@ import {
   FiPercent,
   FiCopy,
   FiCheck,
+  FiTag,
 } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
 import { guessInstituteForAddress, SellerLite } from "@/lib/gemBids/instituteMatch";
@@ -24,6 +25,7 @@ import { parseGemDate } from "@/lib/gemBids/expirySweep";
 import { normalizeName } from "@/lib/pricelist/normalize";
 import PricelistRateChip, { PricelistRate } from "@/components/purchase/pricelist/PricelistRateChip";
 import ReceivedRateChip, { ReceivedRate } from "@/components/purchase/pricelist/ReceivedRateChip";
+import BidItemTagDialog from "@/components/purchase/pricelist/BidItemTagDialog";
 import RateSuggestions, { RateSuggestion } from "@/components/purchase/pricelist/RateSuggestions";
 
 interface Company {
@@ -298,6 +300,45 @@ function DocumentMakerPageInner() {
   const [receivedRates, setReceivedRates] = useState<Record<string, ReceivedRate[]>>({});
   // Near-miss tag names (similarity hints, never auto-linked) for items without an exact tag match.
   const [rateSuggestions, setRateSuggestions] = useState<Record<string, RateSuggestion[]>>({});
+  // Tag Pricelist / Received Purchase items with a bid item's name (button next to the item title).
+  const [tagBidItem, setTagBidItem] = useState<string | null>(null);
+  const [ratesReload, setRatesReload] = useState(0);
+  // the row the Tag popup was opened from - the cursor goes back to its Base Rate box when the popup closes
+  const tagRowRef = useRef<HTMLElement | null>(null);
+  const focusTagRow = () => {
+    const row = tagRowRef.current;
+    setTimeout(() => {
+      const input = row?.querySelector<HTMLInputElement>('input[placeholder="Base Rate"]');
+      if (input) {
+        input.focus();
+        input.select();
+        input.scrollIntoView({ block: "center" });
+      }
+    }, 0);
+  };
+  const tagUser = useMemo(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem("oms_user") || "null");
+      const p = u?.permissions || {};
+      return u && (p.boss || p.pricelist || p.pricelistManage) ? String(u.username || "") : "";
+    } catch {
+      return "";
+    }
+  }, []);
+  const renderTagButton = (title: string) =>
+    tagUser && title.trim() ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          tagRowRef.current = e.currentTarget.closest("tr");
+          setTagBidItem(title.trim());
+        }}
+        title="Tag Pricelist / Received Purchase items with this item"
+        className="shrink-0 p-1 rounded text-orange-500 hover:bg-orange-50"
+      >
+        <FiTag size={12} />
+      </button>
+    ) : null;
   const pricelistTitlesKey = useMemo(
     () => Array.from(new Set(boqItems.map((it) => normalizeName(it.itemTitle)).filter(Boolean))).sort().join("\n"),
     [boqItems]
@@ -328,7 +369,7 @@ function DocumentMakerPageInner() {
         });
     }, 400);
     return () => clearTimeout(t);
-  }, [pricelistTitlesKey]);
+  }, [pricelistTitlesKey, ratesReload]);
   const [loadingBoq, setLoadingBoq] = useState(false);
   const [savingBoq, setSavingBoq] = useState(false);
   const [uploadingBoq, setUploadingBoq] = useState(false);
@@ -1814,6 +1855,7 @@ function DocumentMakerPageInner() {
                                 >
                                     <td className="py-2 px-2 text-slate-500">{idx + 1}</td>
                                     <td className="py-2 px-2">
+                                      <div className="flex items-center gap-1">
                                       <input
                                         type="text"
                                         value={it.itemTitle}
@@ -1821,6 +1863,8 @@ function DocumentMakerPageInner() {
                                         placeholder="Item name"
                                         className="w-full min-w-[160px] border border-slate-200 rounded px-2 py-1 text-[11px] font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400"
                                       />
+                                      {renderTagButton(it.itemTitle)}
+                                      </div>
                                     </td>
                                     <td className="py-2 px-2">
                                       <input
@@ -1914,7 +1958,7 @@ function DocumentMakerPageInner() {
                                 >
                                   <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
                                   <td className="py-2 px-2 max-w-[260px]" title={it.itemDescription}>
-                                    <div className="font-bold text-slate-700">{it.itemTitle}</div>
+                                    <div className="font-bold text-slate-700 flex items-center gap-1">{it.itemTitle}{renderTagButton(it.itemTitle)}</div>
                                     {it.specification && (
                                       <div className="text-[10px] font-normal text-slate-400 mt-0.5">{it.specification}</div>
                                     )}
@@ -2657,6 +2701,21 @@ function DocumentMakerPageInner() {
             </div>
           </div>
         </div>
+      )}
+      {tagBidItem && (
+        <BidItemTagDialog
+          bidItemName={tagBidItem}
+          userName={tagUser}
+          onClose={() => {
+            setTagBidItem(null);
+            focusTagRow();
+          }}
+          onDone={() => {
+            setTagBidItem(null);
+            setRatesReload((n) => n + 1);
+            focusTagRow();
+          }}
+        />
       )}
     </BlockGuard>
   );

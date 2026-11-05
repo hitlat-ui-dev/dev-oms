@@ -375,6 +375,27 @@ export function buildConfirmedDatesBySeller(confirmed: { sellerId: any; transact
   return map;
 }
 
+// Reverse of buildConfirmedDatesBySeller - date -> every seller that already
+// has a CONFIRMED match that same day (any firm). A government treasury
+// commonly pays one institute's bills out across several different supplier
+// firms on the same real-world day under a narration that may not be
+// registered as that institute's own keyword yet (e.g. "DISTRICT TREASURY,
+// PAL" confirmed for VADGAM ITI under one firm's statement doesn't make it a
+// candidate for an identical-day transaction under a different firm until
+// that keyword is learned) - this index is what lets generateSuggestions
+// fall back to "who else got paid this exact day" when literal keyword
+// matching finds nothing at all. User-specified design, 2026-11-05.
+export function buildSameDateConfirmedSellers(confirmed: { sellerId: any; transactionDate?: string }[]): Map<number, Set<string>> {
+  const map = new Map<number, Set<string>>();
+  for (const cm of confirmed) {
+    const sortable = parseDateToSortable(cm.transactionDate);
+    if (!sortable) continue;
+    if (!map.has(sortable)) map.set(sortable, new Set());
+    map.get(sortable)!.add(String(cm.sellerId));
+  }
+  return map;
+}
+
 /**
  * Scores each candidate institute by (a) whether the credited amount fits one of
  * its open bills/combinations and (b) whether the payment date falls near its
