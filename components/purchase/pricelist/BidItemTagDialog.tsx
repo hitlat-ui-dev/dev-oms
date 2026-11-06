@@ -19,18 +19,26 @@ interface RecItem {
 // with this bid item's name - the reverse of tagging from the Pricelist / Received Purchase pages.
 // Received items are listed even when they have no rate yet (rate 0).
 export default function BidItemTagDialog({
-  bidItemName,
+  bidItemTitle,
+  bidItemSpec,
   userName,
   onClose,
   onDone,
 }: {
-  bidItemName: string;
+  bidItemTitle: string;
+  // Specification of the BOQ row the tag button was opened from, if any - folded into the
+  // tag name/key so two rows sharing a title but differing only in spec (e.g. "P.V.C.
+  // Insulated Copper Wire" 7/20 vs 3/20 wire) are tagged and matched separately.
+  bidItemSpec?: string;
   userName: string;
   onClose: () => void;
   onDone: () => void;
 }) {
+  const bidItemName = [bidItemTitle, bidItemSpec].filter(Boolean).join(" ");
   const bidKey = normalizeName(bidItemName);
-  const [q, setQ] = useState(bidItemName);
+  // Search box defaults to the title alone - the pricelist/received search requires every
+  // typed word to match, and specification text usually isn't present in that search index.
+  const [q, setQ] = useState(bidItemTitle);
   const [plItems, setPlItems] = useState<any[]>([]);
   const [plLoading, setPlLoading] = useState(false);
   const [received, setReceived] = useState<RecItem[] | null>(null);
@@ -185,7 +193,8 @@ export default function BidItemTagDialog({
         <div className="flex justify-between items-start mb-3 gap-3">
           <div>
             <div className="text-sm font-black text-slate-800">Tag items with this bid item</div>
-            <div className="text-[11px] text-slate-500 uppercase">{bidItemName}</div>
+            <div className="text-[11px] text-slate-500 uppercase">{bidItemTitle}</div>
+            {bidItemSpec && <div className="text-[10px] text-slate-400">{bidItemSpec}</div>}
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><FiX /></button>
         </div>

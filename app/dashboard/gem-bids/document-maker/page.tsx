@@ -78,6 +78,12 @@ interface GemBid {
   bidType?: "regular" | "boq";
 }
 
+// Pricelist/Received Purchase matching (and tagging) must key off item title
+// AND specification together - two BOQ rows can share a title but differ
+// only in specification (e.g. "P.V.C. Insulated Copper Wire" 7/20 vs 3/20
+// wire), and those are different materials with different rates.
+const itemMatchName = (title: string, spec?: string) => [title, spec].filter(Boolean).join(" ");
+
 interface BoqItem {
   itemNumber: string;
   itemTitle: string;
@@ -301,7 +307,8 @@ function DocumentMakerPageInner() {
   // Near-miss tag names (similarity hints, never auto-linked) for items without an exact tag match.
   const [rateSuggestions, setRateSuggestions] = useState<Record<string, RateSuggestion[]>>({});
   // Tag Pricelist / Received Purchase items with a bid item's name (button next to the item title).
-  const [tagBidItem, setTagBidItem] = useState<string | null>(null);
+  // spec is carried alongside so the tag itself is scoped to title+specification, not title alone.
+  const [tagBidItem, setTagBidItem] = useState<{ title: string; spec?: string } | null>(null);
   const [ratesReload, setRatesReload] = useState(0);
   // the row the Tag popup was opened from - the cursor goes back to its Base Rate box when the popup closes
   const tagRowRef = useRef<HTMLElement | null>(null);
@@ -325,13 +332,13 @@ function DocumentMakerPageInner() {
       return "";
     }
   }, []);
-  const renderTagButton = (title: string) =>
+  const renderTagButton = (title: string, spec?: string) =>
     tagUser && title.trim() ? (
       <button
         type="button"
         onClick={(e) => {
           tagRowRef.current = e.currentTarget.closest("tr");
-          setTagBidItem(title.trim());
+          setTagBidItem({ title: title.trim(), spec: spec?.trim() || undefined });
         }}
         title="Tag Pricelist / Received Purchase items with this item"
         className="shrink-0 p-1 rounded text-orange-500 hover:bg-orange-50"
@@ -340,7 +347,7 @@ function DocumentMakerPageInner() {
       </button>
     ) : null;
   const pricelistTitlesKey = useMemo(
-    () => Array.from(new Set(boqItems.map((it) => normalizeName(it.itemTitle)).filter(Boolean))).sort().join("\n"),
+    () => Array.from(new Set(boqItems.map((it) => normalizeName(itemMatchName(it.itemTitle, it.specification))).filter(Boolean))).sort().join("\n"),
     [boqItems]
   );
   useEffect(() => {
@@ -1068,22 +1075,16 @@ function DocumentMakerPageInner() {
     );
   };
 
-  const renderPricelistRate = (it: BoqItem) => (
-    <>
-      <PricelistRateChip
-        rates={pricelistRates[normalizeName(it.itemTitle)]}
-        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
-      />
-      <ReceivedRateChip
-        rates={receivedRates[normalizeName(it.itemTitle)]}
-        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
-      />
-      <RateSuggestions
-        items={rateSuggestions[normalizeName(it.itemTitle)]}
-        onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))}
-      />
-    </>
-  );
+  const renderPricelistRate = (it: BoqItem) => {
+    const key = normalizeName(itemMatchName(it.itemTitle, it.specification));
+    return (
+      <>
+        <PricelistRateChip rates={pricelistRates[key]} onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))} />
+        <ReceivedRateChip rates={receivedRates[key]} onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))} />
+        <RateSuggestions items={rateSuggestions[key]} onUse={(rate) => updateBoqBaseRate(it.itemNumber, String(rate))} />
+      </>
+    );
+  };
 
   // What we actually paid for this item last time, per Received Purchase -
   // fuzzy-matched server-side (see /api/gem-bids/boq's GET), independent
@@ -1958,7 +1959,7 @@ function DocumentMakerPageInner() {
                                 >
                                   <td className="py-2 px-2 text-slate-500">{it.itemNumber}</td>
                                   <td className="py-2 px-2 max-w-[260px]" title={it.itemDescription}>
-                                    <div className="font-bold text-slate-700 flex items-center gap-1">{it.itemTitle}{renderTagButton(it.itemTitle)}</div>
+                                    <div className="font-bold text-slate-700 flex items-center gap-1">{it.itemTitle}{renderTagButton(it.itemTitle, it.specification)}</div>
                                     {it.specification && (
                                       <div className="text-[10px] font-normal text-slate-400 mt-0.5">{it.specification}</div>
                                     )}
@@ -2704,7 +2705,8 @@ function DocumentMakerPageInner() {
       )}
       {tagBidItem && (
         <BidItemTagDialog
-          bidItemName={tagBidItem}
+          bidItemTitle={tagBidItem.title}
+          bidItemSpec={tagBidItem.spec}
           userName={tagUser}
           onClose={() => {
             setTagBidItem(null);
