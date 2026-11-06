@@ -12,6 +12,7 @@ interface RecItem {
   category: string;
   rate: number;
   tagKeys: string[];
+  tagId?: string; // this bid item's tag link on the sku, if tagged
 }
 
 // Opened from a bid item (Document Maker): pick Pricelist items and/or Received Purchase items and tag them
@@ -35,6 +36,8 @@ export default function BidItemTagDialog({
   const [received, setReceived] = useState<RecItem[] | null>(null);
   const [plSel, setPlSel] = useState<Set<string>>(new Set());
   const [recSel, setRecSel] = useState<Set<string>>(new Set());
+  // already-tagged rows marked for removal (kind:key -> tag link id)
+  const [rem, setRem] = useState<Map<string, { kind: "pl" | "rec"; id: string }>>(new Map());
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [active, setActive] = useState(0);
@@ -69,8 +72,9 @@ export default function BidItemTagDialog({
           const rate = Number(r.rate) || 0;
           const cur = bySku.get(r.sku);
           const tagKeys = (r.tags || []).map((t: any) => t.tag_key);
+          const tagId = (r.tags || []).find((t: any) => t.tag_key === bidKey)?._id;
           if (!cur) {
-            bySku.set(r.sku, { sku: r.sku, itemName: r.itemName || "", vendor: r.vendor || "", category: r.category || "", rate, tagKeys, at: rate > 0 ? at : 0 });
+            bySku.set(r.sku, { sku: r.sku, itemName: r.itemName || "", vendor: r.vendor || "", category: r.category || "", rate, tagKeys, tagId, at: rate > 0 ? at : 0 });
           } else if (rate > 0 && at >= cur.at) {
             cur.rate = rate;
             cur.vendor = r.vendor || cur.vendor;
@@ -94,11 +98,11 @@ export default function BidItemTagDialog({
   }, [received, q]);
 
   // one combined list: pricelist items first, then received purchase items
-  type Row = { kind: "pl" | "rec"; key: string; done: boolean; pl?: any; rec?: RecItem };
+  type Row = { kind: "pl" | "rec"; key: string; done: boolean; tagId?: string; pl?: any; rec?: RecItem };
   const rows: Row[] = useMemo(
     () => [
-      ...plItems.map((i): Row => ({ kind: "pl", key: i.sku_key, done: (i.tags || []).some((t: any) => t.tag_key === bidKey), pl: i })),
-      ...recResults.map((r): Row => ({ kind: "rec", key: r.sku, done: r.tagKeys.includes(bidKey), rec: r })),
+      ...plItems.map((i): Row => ({ kind: "pl", key: i.sku_key, done: (i.tags || []).some((t: any) => t.tag_key === bidKey), tagId: (i.tags || []).find((t: any) => t.tag_key === bidKey)?._id, pl: i })),
+      ...recResults.map((r): Row => ({ kind: "rec", key: r.sku, done: r.tagKeys.includes(bidKey), tagId: r.tagId, rec: r })),
     ],
     [plItems, recResults, bidKey]
   );
@@ -108,19 +112,31 @@ export default function BidItemTagDialog({
   }, [active]);
 
   const toggleRow = (row: Row) => {
-    if (row.done) return;
+    if (row.done) {
+      if (!row.tagId) return;
+      const k = row.kind + ":" + row.key;
+      const n = new Map(rem);
+      n.has(k) ? n.delete(k) : n.set(k, { kind: row.kind, id: row.tagId });
+      setRem(n);
+      return;
+    }
     const set = row.kind === "pl" ? plSel : recSel;
     const n = new Set(set);
     n.has(row.key) ? n.delete(row.key) : n.add(row.key);
     row.kind === "pl" ? setPlSel(n) : setRecSel(n);
   };
 
-  const total = plSel.size + recSel.size;
+  const total = plSel.size + recSel.size + rem.size;
   const save = async () => {
     if (total === 0) return;
     setSaving(true);
     setErr("");
     try {
+      for (const x of Array.from(rem.values())) {
+        const url = x.kind === "pl" ? "/api/purchase/pricelist/tags" : "/api/purchase/pricelist/received-tags";
+        const res = await fetch(url + "?id=" + x.id, { method: "DELETE" });
+        if (!res.ok) throw new Error("Could not remove a tag");
+      }
       if (plSel.size) {
         const res = await fetch("/api/purchase/pricelist/tags", {
           method: "POST",
@@ -165,7 +181,7 @@ export default function BidItemTagDialog({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-16 px-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-3 gap-3">
           <div>
             <div className="text-sm font-black text-slate-800">Tag items with this bid item</div>
@@ -192,7 +208,7 @@ export default function BidItemTagDialog({
           <ul className="text-[11px] text-slate-600 space-y-0.5">
             {[
               ["↑ ↓", "highlight upar-neeche jata hai"],
-              ["Enter", "highlighted row select / unselect hoti hai"],
+              ["Enter", "highlighted row select / unselect hoti hai (Tagged row par = tag hatana)"],
               ["Ctrl + Enter", "selected sab items tag ho jate hain"],
               ["Esc", "popup band hota hai"],
             ].map(([k, d]) => (
@@ -209,7 +225,7 @@ export default function BidItemTagDialog({
           {!plLoading && received !== null && rows.length === 0 && <div className="p-4 text-xs text-slate-400 text-center">No item found</div>}
           {rows.map((row, idx) => {
             const sel = row.kind === "pl" ? plSel.has(row.key) : recSel.has(row.key);
-            const base = `flex items-center gap-3 px-3 py-2 text-xs cursor-pointer ${row.done ? "opacity-60" : ""} ${idx === active ? "bg-amber-50 ring-1 ring-inset ring-amber-300" : sel ? "bg-emerald-50" : "hover:bg-slate-50"}`;
+            const base = `flex items-center gap-3 px-3 py-2 text-xs cursor-pointer ${row.done && !rem.has(row.kind + ":" + row.key) ? "opacity-70" : ""} ${rem.has(row.kind + ":" + row.key) ? "bg-rose-50" : ""} ${idx === active ? "bg-amber-50 ring-1 ring-inset ring-amber-300" : sel ? "bg-emerald-50" : "hover:bg-slate-50"}`;
             const badge = row.kind === "pl"
               ? <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 uppercase">Pricelist</span>
               : <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-green-100 text-green-700 uppercase">Received</span>;
@@ -217,7 +233,7 @@ export default function BidItemTagDialog({
             const r = row.rec;
             return (
               <div key={row.kind + row.key} data-idx={idx} className={base} onClick={() => { setActive(idx); toggleRow(row); }}>
-                <input type="checkbox" readOnly tabIndex={-1} disabled={row.done} checked={sel} />
+                <input type="checkbox" readOnly tabIndex={-1} checked={row.done ? !rem.has(row.kind + ":" + row.key) : sel} />
                 {badge}
                 <div className="flex-1 min-w-0">
                   {i ? (
@@ -232,7 +248,9 @@ export default function BidItemTagDialog({
                     </>
                   )}
                 </div>
-                {row.done && <span className="text-[10px] font-black text-emerald-600 flex items-center gap-1"><FiCheck /> Tagged</span>}
+                {row.done && (rem.has(row.kind + ":" + row.key)
+                  ? <span className="text-[10px] font-black text-rose-600">Will remove</span>
+                  : <span className="text-[10px] font-black text-emerald-600 flex items-center gap-1"><FiCheck /> Tagged</span>)}
                 {i ? (
                   <span className="font-black text-orange-600 w-20 text-right">{i.unit_price_incl_gst != null ? `₹${inr(i.unit_price_incl_gst)}` : "—"}</span>
                 ) : (
@@ -249,7 +267,7 @@ export default function BidItemTagDialog({
           onClick={save}
           className="mt-4 w-full py-2 rounded-lg bg-orange-500 text-white text-xs font-black uppercase tracking-wider disabled:opacity-40"
         >
-          {saving ? "Saving…" : total ? `Tag ${total} item${total > 1 ? "s" : ""}` : "Select items to tag"}
+          {saving ? "Saving…" : total ? [plSel.size + recSel.size ? `Tag ${plSel.size + recSel.size}` : "", rem.size ? `Remove ${rem.size}` : ""].filter(Boolean).join(" + ") : "Select items to tag / untag"}
         </button>
       </div>
     </div>

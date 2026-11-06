@@ -10,6 +10,7 @@ const TABS = [
   { key: "upload", label: "Upload", href: "/dashboard/purchase/pricelist/upload", perm: ["pricelistManage"] },
   { key: "tags", label: "Tag Manager", href: "/dashboard/purchase/pricelist/tags", perm: ["pricelist", "pricelistManage"] },
   { key: "received", label: "Received Purchase", href: "/dashboard/purchase/pricelist/received", perm: ["pricelistReceived"] },
+  { key: "materials", label: "Material Rates", href: "/dashboard/purchase/pricelist/materials", perm: ["pricelist", "pricelistManage"] },
 ];
 const canOpen = (p: any, perm: string[]) => !!p.boss || perm.some((k) => p[k]);
 
@@ -24,7 +25,7 @@ export default function PricelistShell({
   active,
   children,
 }: {
-  active: "search" | "upload" | "tags" | "received";
+  active: "search" | "upload" | "tags" | "received" | "materials";
   children: (user: PricelistUser) => React.ReactNode;
 }) {
   const router = useRouter();

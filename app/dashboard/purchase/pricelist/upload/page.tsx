@@ -94,6 +94,22 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
     if (res.ok) loadHistory();
   };
 
+  const remove = async (h: any) => {
+    const c = await (await fetch(`/api/purchase/pricelist/history?id=${h._id}&count=1`, { method: "DELETE" })).json();
+    const ok = window.confirm(
+      `Delete this pricelist?
+
+${h.supplier_name} - ${h.row_count} rows (uploaded ${h.uploaded_at ? new Date(h.uploaded_at).toLocaleString("en-IN") : ""})
+
+${c.items ?? 0} items and their tags will be permanently removed. This cannot be undone.`
+    );
+    if (!ok) return;
+    const res = await fetch(`/api/purchase/pricelist/history?id=${h._id}`, { method: "DELETE" });
+    const data = await res.json();
+    setMsg(res.ok ? `Deleted: ${data.deletedItems} items removed.` : data.error || "Delete failed");
+    loadHistory();
+  };
+
   const hasBlocking = report && (report.headerErrors?.length > 0 || report.errors?.length > 0);
 
   return (
@@ -264,7 +280,7 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
         <div className="overflow-auto">
           <table className="w-full text-xs whitespace-nowrap">
             <thead className="text-slate-500">
-              <tr><th className="text-left p-2">Supplier</th><th className="text-left p-2">Brand</th><th className="text-left p-2">Valid from</th><th className="text-right p-2">Rows</th><th className="text-left p-2">Uploaded by</th><th className="text-left p-2">Date</th><th className="p-2">Status</th><th /><th /></tr>
+              <tr><th className="text-left p-2">Supplier</th><th className="text-left p-2">Brand</th><th className="text-left p-2">Valid from</th><th className="text-right p-2">Rows</th><th className="text-left p-2">Uploaded by</th><th className="text-left p-2">Date</th><th className="p-2">Status</th><th /><th /><th /></tr>
             </thead>
             <tbody>
               {history.map((h) => (
@@ -285,10 +301,11 @@ function UploadBody({ user }: { user: { username: string; isAdmin: boolean } }) 
                       {h.status === "ACTIVE" ? "Archive" : "Restore"}
                     </button>
                   </td>
+                  <td className="p-2"><button onClick={() => remove(h)} className="text-rose-600 hover:underline font-bold">Delete</button></td>
                   <td className="p-2"><button onClick={() => download(h._id)} className="text-blue-600 hover:underline flex items-center gap-1"><FiDownload /> Original</button></td>
                 </tr>
               ))}
-              {history.length === 0 && <tr><td colSpan={9} className="p-4 text-center text-slate-400">No uploads yet</td></tr>}
+              {history.length === 0 && <tr><td colSpan={10} className="p-4 text-center text-slate-400">No uploads yet</td></tr>}
             </tbody>
           </table>
         </div>

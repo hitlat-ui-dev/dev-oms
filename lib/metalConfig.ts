@@ -6,6 +6,7 @@
 
 export const DENSITIES: Record<string, number> = {
   Copper: 8960,
+  Brass: 8730,
   Aluminium: 2700,
   "Cast Iron": 7200,
   "Iron / Mild Steel": 7850,
@@ -81,6 +82,7 @@ export const SHAPES: Record<string, ShapeDef> = {
 
 export const METAL_SHAPES: Record<string, string[]> = {
   Copper: ["Pipe (OD + ID)", "Pipe (OD + Wall)", "Plate", "Flat Bar", "Wire", "Round Bar", "Cable (Conductor)"],
+  Brass: ["Round Bar", "Square Bar", "Pipe (OD + ID)", "Pipe (OD + Wall)", "Plate", "Flat Bar", "Wire"],
   Aluminium: [
     "Wire",
     "Flat Bar",

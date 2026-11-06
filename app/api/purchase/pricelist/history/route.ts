@@ -21,6 +21,29 @@ export async function PATCH(req: Request) {
   }
 }
 
+// DELETE ?id=<pricelist id>: remove one upload together with the items it currently owns
+// (pricelist_items.pricelist_id = id) and their tag links. ?count=1 only reports what would go.
+// Items last refreshed by a newer upload belong to that upload and are left alone; the original xlsx stays in R2.
+export async function DELETE(req: Request) {
+  try {
+    const sp = new URL(req.url).searchParams;
+    const id = sp.get("id") || "";
+    const { ObjectId } = await import("mongodb");
+    if (!ObjectId.isValid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    const { db } = await getPricelistDb();
+    const _id = new ObjectId(id);
+    const items = db.collection("pricelist_items");
+    const skus = await items.distinct("sku_key", { pricelist_id: _id });
+    if (sp.get("count") === "1") return NextResponse.json({ items: skus.length });
+    await db.collection("pricelist_tags").deleteMany({ sku_key: { $in: skus } });
+    await items.deleteMany({ pricelist_id: _id });
+    await db.collection("pricelists").deleteOne({ _id });
+    return NextResponse.json({ ok: true, deletedItems: skus.length });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Delete failed" }, { status: 500 });
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const { db } = await getPricelistDb();

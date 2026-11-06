@@ -1,5 +1,6 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { DENSITIES, METAL_SHAPES, SHAPES, UNIT_TO_M, Unit } from "@/lib/metalConfig";
 
 const UNITS: Unit[] = ["mm", "meter", "inch"];
@@ -25,6 +26,22 @@ export default function MetalCalculatorPanel() {
   const [calcMode, setCalcMode] = useState<CalcMode>("lengthToWeight");
   const [weightInput, setWeightInput] = useState("");
 
+  // Rates come from Pricelist's own Material Rates list (same name key as
+  // DENSITIES) - see app/dashboard/purchase/pricelist/materials/page.tsx -
+  // so a rate entered there shows up here automatically, no sync step.
+  const [rates, setRates] = useState<Record<string, { rate: number | null; unit: string }>>({});
+  useEffect(() => {
+    fetch("/api/purchase/pricelist/materials")
+      .then((res) => res.json())
+      .then((data) => {
+        const byName: Record<string, { rate: number | null; unit: string }> = {};
+        for (const r of data as any[]) byName[r.name] = { rate: r.rate ?? null, unit: r.unit || "" };
+        setRates(byName);
+      })
+      .catch(() => {});
+  }, []);
+  const materialRate = rates[metal];
+
   const def = SHAPES[shape];
 
   const result = useMemo(() => {
@@ -49,6 +66,17 @@ export default function MetalCalculatorPanel() {
     const len = parseFloat(length);
     return { kgPerM, total: isNaN(len) || len <= 0 ? null : kgPerM * len, lengthFromWeight: null };
   }, [metal, unit, dims, length, weightInput, calcMode, def]);
+
+  // Cost = that material's own Rate (Pricelist > Material Rates, assumed
+  // ₹ per kg - the only unit the weight this calculator produces lines up
+  // with) x the weight actually on screen for the current mode.
+  const weightForCost =
+    result && !("error" in result)
+      ? calcMode === "lengthToWeight"
+        ? result.total
+        : parseFloat(weightInput) || null
+      : null;
+  const totalCost = materialRate?.rate != null && weightForCost != null ? materialRate.rate * weightForCost : null;
 
   const changeMetal = (m: string) => {
     setMetal(m);
@@ -78,6 +106,18 @@ export default function MetalCalculatorPanel() {
                 </option>
               ))}
             </select>
+            {materialRate?.rate != null ? (
+              <p className="text-[11px] font-bold text-emerald-600 ml-1">
+                Rate: ₹{materialRate.rate.toLocaleString("en-IN")} {materialRate.unit || "/ kg"}
+              </p>
+            ) : (
+              <p className="text-[11px] font-bold text-slate-400 ml-1">
+                No rate set -{" "}
+                <Link href="/dashboard/purchase/pricelist/materials" className="underline hover:text-blue-600">
+                  add in Pricelist → Material Rates
+                </Link>
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -208,6 +248,14 @@ export default function MetalCalculatorPanel() {
                 <span className="text-xl font-black text-emerald-800 block mt-1">
                   {result?.lengthFromWeight != null ? round3(result.lengthFromWeight) : "—"}{" "}
                   <span className="text-xs font-bold text-emerald-600">meter</span>
+                </span>
+              </div>
+            )}
+            {totalCost != null && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 sm:col-span-2">
+                <span className="text-[9px] font-black uppercase text-orange-600 tracking-wider block">Total Cost</span>
+                <span className="text-xl font-black text-orange-800 block mt-1">
+                  ₹{totalCost.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                 </span>
               </div>
             )}

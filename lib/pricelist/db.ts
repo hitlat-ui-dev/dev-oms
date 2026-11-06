@@ -19,6 +19,7 @@ export async function getPricelistDb() {
       await db.collection("received_purchase_tags").createIndex({ tag_key: 1, sku: 1 }, { unique: true });
       await db.collection("received_purchase_tags").createIndex({ sku: 1 });
       await db.collection("pricelist_staging").createIndex({ created_at: 1 }, { expireAfterSeconds: 7200 });
+      await db.collection("material_rates").createIndex({ name: 1 }, { unique: true });
     })().catch((e) => {
       indexesReady = null;
       throw e;
