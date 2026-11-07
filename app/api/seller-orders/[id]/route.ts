@@ -32,6 +32,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       delete updateData.sellerId;
     }
 
+    // Label-printed marker only: a plain flag update that must not touch
+    // stock/status logic (and doesn't need the order's SKU to be valid).
+    const updateKeys = Object.keys(updateData);
+    if (updateKeys.length > 0 && updateKeys.every(k => k === "labelPrinted" || k === "labelPrintedAt")) {
+      const marked = await SellerOrder.findByIdAndUpdate(
+        id,
+        {
+          labelPrinted: !!updateData.labelPrinted,
+          labelPrintedAt: updateData.labelPrinted ? (updateData.labelPrintedAt ? new Date(updateData.labelPrintedAt) : new Date()) : null,
+        },
+        { new: true }
+      );
+      if (!marked) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      return NextResponse.json(marked);
+    }
+
     // 1. Find Original Order
     const originalOrder = await SellerOrder.findById(id);
     if (!originalOrder) return NextResponse.json({ error: "Order not found" }, { status: 404 });

@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { FiArrowLeft, FiBookOpen, FiSearch, FiDownload } from "react-icons/fi";
 import BlockGuard from "@/components/BlockGuard";
-import { matchInstituteFromDescription, SellerLite } from "@/lib/institutMatcher";
+import { SellerLite } from "@/lib/institutMatcher";
 import * as XLSX from "xlsx";
 
 interface Order {
@@ -14,20 +14,6 @@ interface Order {
   contractDate: string;
   totalAmount: number;
   isPaid: boolean;
-}
-
-interface StatementTransaction {
-  date: string;
-  description: string;
-  debit: number;
-  credit: number;
-}
-
-interface StatementRecord {
-  _id: string;
-  firmCode: string;
-  bankName: string;
-  transactions: StatementTransaction[];
 }
 
 interface LedgerEntry {
@@ -43,6 +29,8 @@ interface LedgerEntry {
 
 interface ReconciliationMatch {
   transactionDate: string;
+  transactionDescription?: string;
+  creditedAmount?: number;
   billNos?: string[];
   firmCode?: string;
   deductionAmount?: number;
@@ -73,7 +61,6 @@ export default function BuyerLedgerPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
-  const [statements, setStatements] = useState<StatementRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [partySummary, setPartySummary] = useState<PartySummary | null>(null);
   const [confirmedMatches, setConfirmedMatches] = useState<ReconciliationMatch[]>([]);
@@ -95,11 +82,6 @@ export default function BuyerLedgerPage() {
         if (Array.isArray(data)) setInstitutes(data.map((r: any) => r.instituteName).sort());
       })
       .catch((err) => console.error("Failed to load institutes", err));
-
-    fetch("/api/account-statements")
-      .then((res) => res.json())
-      .then((data) => setStatements(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Failed to load statements", err));
   }, []);
 
   useEffect(() => {
@@ -169,32 +151,29 @@ export default function BuyerLedgerPage() {
     [sellers, selectedInstitute]
   );
 
-  // Bank statement credits that mention this institute's registered "Statement
-  // Description Name" tags — these are the REAL receipts, with real dates/amounts,
-  // matched via the naming set up on the Update Seller page.
-  const matchedReceipts = useMemo(() => {
-    if (!selectedInstitute || !selectedSeller) return [];
-    const relevantStatements = firmFilter ? statements.filter((s) => s.firmCode === firmFilter) : statements;
-    const entries: LedgerEntry[] = [];
-    relevantStatements.forEach((stmt) => {
-      (stmt.transactions || []).forEach((t, idx) => {
-        if (!t.credit) return;
-        const matched = matchInstituteFromDescription(t.description, [selectedSeller]);
-        if (matched === selectedInstitute) {
-          entries.push({
-            key: `receipt-${stmt._id}-${idx}`,
-            date: t.date,
-            type: "Receipt",
-            voucherNo: t.description.slice(0, 24),
-            accountName: firmNameByCode[stmt.firmCode] || stmt.bankName || stmt.firmCode,
-            debit: 0,
-            credit: t.credit,
-          });
-        }
-      });
-    });
-    return entries;
-  }, [selectedInstitute, selectedSeller, statements, firmFilter, firmNameByCode]);
+  // One ledger line per CONFIRMED Bank Reconciliation match - the same
+  // verified ground truth the summary cards' "Total Received" is built from
+  // (see /api/reconciliation/party-summary). This used to independently
+  // re-scan every bank statement for this institute's registered keyword,
+  // which matched far more than Reconciliation ever actually confirmed for
+  // it (a shared/ambiguous keyword snippet, or money confirmed for a
+  // different institute) and silently inflated this ledger's Credit total
+  // past the summary card's real figure.
+  const receiptEntries = useMemo<LedgerEntry[]>(
+    () =>
+      confirmedMatches
+        .filter((m) => (m.creditedAmount || 0) > 0)
+        .map((m, idx) => ({
+          key: `receipt-${idx}-${m.transactionDate}-${m.creditedAmount}`,
+          date: m.transactionDate || "",
+          type: "Receipt",
+          voucherNo: (m.billNos && m.billNos.length ? m.billNos.join(", ") : m.transactionDescription || "").slice(0, 40),
+          accountName: firmNameByCode[m.firmCode || ""] || m.firmCode || "—",
+          debit: 0,
+          credit: Number(m.creditedAmount) || 0,
+        })),
+    [confirmedMatches, firmNameByCode]
+  );
 
   // One ledger line per confirmed match that actually had something deducted -
   // this is what lets the running balance reflect the bill as fully settled
@@ -237,8 +216,8 @@ export default function BuyerLedgerPage() {
 
   // Full chronological history (unbounded) so the running balance carries forward correctly
   const fullHistory = useMemo(
-    () => [...saleEntries, ...matchedReceipts, ...deductionEntries].sort((a, b) => a.date.localeCompare(b.date)),
-    [saleEntries, matchedReceipts, deductionEntries]
+    () => [...saleEntries, ...receiptEntries, ...deductionEntries].sort((a, b) => a.date.localeCompare(b.date)),
+    [saleEntries, receiptEntries, deductionEntries]
   );
 
   const { openingBalance, visibleRows, closingBalance, totals } = useMemo(() => {

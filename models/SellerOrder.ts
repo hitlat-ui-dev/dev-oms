@@ -80,6 +80,9 @@ const SellerOrderSchema = new Schema({
   // together" later. Never set on single-item orders. Not used by billing
   // (which already groups by contractNo, not by this) or Advance merge.
   orderGroupId: { type: String, default: null },
+  // Set after a sticker label for this order was printed (Orders page "Print Labels")
+  labelPrinted: { type: Boolean, default: false },
+  labelPrintedAt: { type: Date, default: null },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt
 
 SellerOrderSchema.index({ firmCode: 1, createdAt: -1 });

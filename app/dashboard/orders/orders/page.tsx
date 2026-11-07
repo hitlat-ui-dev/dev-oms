@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FiExternalLink, FiTruck, FiRotateCcw, FiEdit, FiRefreshCcw, FiCheckCircle, FiPlus, FiDownload, FiTrash2, FiX, FiArrowLeft, FiSend, FiChevronDown } from "react-icons/fi";
 import { LuRotateCcw, LuRefreshCw } from "react-icons/lu";
+import { DEFAULT_LABEL_SETTINGS, loadLabelSettings, saveLabelSettings, printLabels, type LabelSettings } from "@/lib/printLabels";
 // jspdf, jspdf-autotable and xlsx are all heavy (500KB+) and only ever needed
 // when the user actually clicks an Export/Download button - dynamically
 // imported inside those handlers below instead of bundled into every load
@@ -94,6 +95,64 @@ export default function OrdersListPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  // Print Labels: separate from selectedOrderIds (used by the bulk delivery
+  // flows) and deliberately kept across filter/tab changes.
+  const [labelSelected, setLabelSelected] = useState<Set<string>>(new Set());
+  const [showLabelModal, setShowLabelModal] = useState(false);
+  // Select checkboxes only appear after "Print Labels" is picked in Quick Actions
+  const [labelMode, setLabelMode] = useState(false);
+  const [labelSettings, setLabelSettings] = useState<LabelSettings>(DEFAULT_LABEL_SETTINGS);
+  useEffect(() => { setLabelSettings(loadLabelSettings()); }, []);
+  const updateLabelSettings = (patch: Partial<LabelSettings>) => {
+    setLabelSettings(prev => {
+      const next = { ...prev, ...patch };
+      saveLabelSettings(next);
+      return next;
+    });
+  };
+  // Order objects for selected ids - orders are fetched per tab, so a selected
+  // order from another tab may not be in `orders` anymore when printing.
+  const labelOrderCache = useRef<Map<string, any>>(new Map());
+  const toggleLabelSelect = (order: any) => {
+    labelOrderCache.current.set(order._id, order);
+    setLabelSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(order._id)) next.delete(order._id); else next.add(order._id);
+      return next;
+    });
+  };
+  const toggleLabelSelectAll = (rows: any[], checked: boolean) => {
+    rows.forEach(o => labelOrderCache.current.set(o._id, o));
+    setLabelSelected(prev => {
+      const next = new Set(prev);
+      rows.forEach(o => { if (checked) next.add(o._id); else next.delete(o._id); });
+      return next;
+    });
+  };
+  const handlePrintLabels = async () => {
+    const selected = Array.from(labelSelected).map(id => {
+      const fresh = orders.find(o => o._id === id);
+      return fresh || labelOrderCache.current.get(id);
+    }).filter(Boolean);
+    if (selected.length === 0) return;
+    if (!printLabels(selected, labelSettings)) {
+      alert("Popup blocked - please allow popups for this site to print labels.");
+      return;
+    }
+    setShowLabelModal(false);
+    const printedAt = new Date().toISOString();
+    const ids = new Set(selected.map((o: any) => o._id));
+    setOrders(prev => prev.map(o => ids.has(o._id) ? { ...o, labelPrinted: true, labelPrintedAt: printedAt } : o));
+    const results = await Promise.allSettled(selected.map((o: any) =>
+      fetch(`/api/seller-orders/${o._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labelPrinted: true, labelPrintedAt: printedAt }),
+      }).then(r => { if (!r.ok) throw new Error("fail"); })
+    ));
+    const failed = results.filter(r => r.status === "rejected").length;
+    if (failed > 0) alert(`${failed} order(s) could not be marked as label-printed.`);
+  };
   const [isBulkDelivery, setIsBulkDelivery] = useState(false);
 
   // Bulk "TO CHECK" status-change flow: a checkbox-select mode toggled by a
@@ -1415,6 +1474,16 @@ const shippingLock = useRef(false);
                   >
                     Remaining Order
                   </button>
+                  <button
+                    onClick={() => {
+                      setLabelMode(prev => !prev);
+                      setLabelSelected(new Set());
+                      setShowQuickActions(false);
+                    }}
+                    className="w-full text-left px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors border-t border-slate-100"
+                  >
+                    {labelMode ? "Cancel Print Labels" : "🏷️ Print Labels"}
+                  </button>
                 </div>
               )}
             </div>
@@ -1531,6 +1600,22 @@ const shippingLock = useRef(false);
           </button>
         ))}
         <div className="flex-1" />
+        {labelMode && labelSelected.size > 0 && (
+          <div className="flex items-center gap-2 mb-1 mr-2">
+            <button
+              onClick={() => setShowLabelModal(true)}
+              className="flex items-center px-4 py-2 bg-slate-900 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
+            >
+              🏷️ Print Labels ({labelSelected.size})
+            </button>
+            <button
+              onClick={() => setLabelSelected(new Set())}
+              className="flex items-center px-3 py-2 bg-slate-100 text-slate-600 rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
         {activeTab === "ALL" && (
           <button
             onClick={handleExportSellingReport}
@@ -1611,6 +1696,18 @@ const shippingLock = useRef(false);
         <table className="w-full text-left border-collapse min-w-full">
           <thead className="bg-slate-100 border-b border-slate-200">
             <tr className="divide-x divide-slate-200">
+              {labelMode && (
+              <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 rounded border-slate-300 text-slate-900 cursor-pointer"
+                  title="Select all (current filtered rows) for label printing"
+                  checked={filteredOrders.length > 0 && filteredOrders.every(o => labelSelected.has(o._id))}
+                  onChange={(e) => toggleLabelSelectAll(filteredOrders, e.target.checked)}
+                />
+                <span className="block text-[9px] font-bold text-slate-400">Select</span>
+              </th>
+              )}
               {activeTab === "ALL" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center">Paid</th>}
               {activeTab === "DELIVERY" && <th className="px-2 py-3 text-[12px] font-bold uppercase text-slate-600 w-10 text-center"> </th>}
               {activeTab === "READY TO SHIP" && (
@@ -1668,6 +1765,17 @@ const shippingLock = useRef(false);
           <tbody className="divide-y divide-slate-100 text-[11px]">
             {visibleOrders.map((order) => (
               <tr key={order._id} className="hover:bg-slate-50 transition-colors divide-x divide-slate-100">
+                {labelMode && (
+                <td className="px-2 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 text-slate-900 cursor-pointer"
+                    checked={labelSelected.has(order._id)}
+                    onChange={() => toggleLabelSelect(order)}
+                    title="Select for label printing"
+                  />
+                </td>
+                )}
                 {activeTab === "ALL" && (
                   <td className="px-2 py-2 text-center">
                     <input
@@ -1730,6 +1838,12 @@ const shippingLock = useRef(false);
                 )}
 
                 <td className="px-3 py-2 font-black text-blue-600 max-w-20">{order.orderNo}
+                  {order.labelPrinted && (
+                    <span
+                      className="ml-1 text-[10px]"
+                      title={order.labelPrintedAt ? `Label printed ${new Date(order.labelPrintedAt).toLocaleString('en-GB')}` : "Label printed"}
+                    >🏷️</span>
+                  )}
                   <span className="text-[9px] font-bold text-slate-800 block">
                     {order.createdAt
                       ? new Date(order.createdAt).toLocaleDateString('en-GB', {
@@ -2416,6 +2530,109 @@ const shippingLock = useRef(false);
             ) : (
               <p className="text-center text-slate-400 font-bold text-sm py-6">No matching advance order found</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {showLabelModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md border border-slate-200">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-100 rounded-t-lg">
+              <h3 className="text-[12px] font-black uppercase tracking-widest text-slate-800">🏷️ Print Labels ({labelSelected.size})</h3>
+              <button onClick={() => setShowLabelModal(false)} className="text-slate-500 hover:text-slate-800 cursor-pointer"><FiX /></button>
+            </div>
+            <div className="p-5 space-y-4 text-[12px]">
+              <label className="block">
+                <span className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Printer type</span>
+                <select
+                  value={labelSettings.printer}
+                  onChange={(e) => updateLabelSettings({ printer: e.target.value as LabelSettings["printer"] })}
+                  className="w-full border border-slate-200 rounded-sm px-3 py-2 font-bold text-slate-800 bg-white"
+                >
+                  <option value="thermal">Thermal 50x25mm</option>
+                  <option value="a4">A4 Sheet 40 (52.5x29.7mm, 4x10)</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Copies</span>
+                <select
+                  value={labelSettings.copies}
+                  onChange={(e) => updateLabelSettings({ copies: e.target.value as LabelSettings["copies"] })}
+                  className="w-full border border-slate-200 rounded-sm px-3 py-2 font-bold text-slate-800 bg-white"
+                >
+                  <option value="perOrder">1 per order</option>
+                  <option value="byQty">Qty ke hisaab se</option>
+                </select>
+              </label>
+              {labelSettings.printer === "a4" && (
+                <label className="block">
+                  <span className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Start label no. (1-40)</span>
+                  <input
+                    type="number" min={1} max={40}
+                    value={labelSettings.startLabel}
+                    onChange={(e) => updateLabelSettings({ startLabel: Math.min(40, Math.max(1, Math.round(Number(e.target.value)) || 1)) })}
+                    className="w-full border border-slate-200 rounded-sm px-3 py-2 font-bold text-slate-800"
+                  />
+                </label>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Offset X (mm)</span>
+                  <input
+                    type="number" step={0.1}
+                    value={labelSettings.offsetX}
+                    onChange={(e) => updateLabelSettings({ offsetX: Number(e.target.value) || 0 })}
+                    className="w-full border border-slate-200 rounded-sm px-3 py-2 font-bold text-slate-800"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Offset Y (mm)</span>
+                  <input
+                    type="number" step={0.1}
+                    value={labelSettings.offsetY}
+                    onChange={(e) => updateLabelSettings({ offsetY: Number(e.target.value) || 0 })}
+                    className="w-full border border-slate-200 rounded-sm px-3 py-2 font-bold text-slate-800"
+                  />
+                </label>
+              </div>
+              <p className="text-[10px] font-bold text-slate-400">Offsets apply to A4 sheet calibration. Settings are remembered on this browser.</p>
+              <details className="border border-slate-200 rounded-sm bg-slate-50">
+                <summary className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 cursor-pointer select-none">
+                  📖 Printing guide ({labelSettings.printer === "a4" ? "A4 Sheet" : "Thermal 50x25mm"})
+                </summary>
+                <div className="px-3 pb-3 pt-1 text-[11px] font-semibold text-slate-600 space-y-1.5">
+                  {labelSettings.printer === "thermal" ? (
+                    <ol className="list-decimal pl-4 space-y-1">
+                      <li>Printer driver mein label size <b>50mm x 25mm</b> set karein (Printer Preferences → Paper/Stock). Na dikhe to Custom size banayein.</li>
+                      <li>Yahan <b>Print</b> dabayein - naya window khulega aur print dialog aayega.</li>
+                      <li>Destination mein apna <b>thermal printer</b> chunein.</li>
+                      <li>More settings: Paper size <b>50x25mm</b>, Margins <b>None</b>, Scale <b>100%</b>, Headers and footers <b>band</b>.</li>
+                      <li>Print karein - har label alag page par nikalega.</li>
+                    </ol>
+                  ) : (
+                    <ol className="list-decimal pl-4 space-y-1">
+                      <li>Label sheet (40 labels, 4x10) printer ke sahi tray mein sahi direction se rakhein.</li>
+                      <li>Pehle label sheet jaisa <b>saada A4 kaagaz</b> par test print karein.</li>
+                      <li>Print dialog mein: Paper size <b>A4</b>, Margins <b>None</b>, Scale <b>100%</b> (Fit to page nahi), Headers and footers <b>band</b>.</li>
+                      <li>Test kaagaz ko asli sheet ke saamne roshni mein rakhein. Print khisak raha ho to <b>Offset X/Y</b> badlein (X + = right, Y + = neeche).</li>
+                      <li>Sheet ke kuch labels pehle use ho chuke hon to <b>Start label no.</b> set karein (row-wise: 1-4 pehli row).</li>
+                      <li>Ab asli sheet par print karein.</li>
+                    </ol>
+                  )}
+                  <p className="text-slate-400">Chrome ki print settings yaad rakhta hai - ek baar set karna kaafi hai.</p>
+                </div>
+              </details>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">
+              <button
+                onClick={() => setShowLabelModal(false)}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 cursor-pointer"
+              >Cancel</button>
+              <button
+                onClick={handlePrintLabels}
+                className="px-4 py-2 bg-slate-900 text-white rounded-sm font-black text-[10px] uppercase tracking-widest hover:bg-slate-700 active:scale-95 cursor-pointer"
+              >Print</button>
+            </div>
           </div>
         </div>
       )}
