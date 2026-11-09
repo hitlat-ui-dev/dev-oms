@@ -1325,14 +1325,21 @@ function DocumentMakerPageInner() {
         XLSX.utils.book_append_sheet(offerWb, offerWs, "Offer Price");
         const offerBuf = XLSX.write(offerWb, { type: "array", bookType: "xlsx" });
         const partyShortName = companies.find((c) => c._id === boqVariantParties[v + 1])?.firmCode || "";
-        zip.file(`gem-offer-price-items-${safeBidNo}-L${v + 1}${partyShortName ? `-${partyShortName}` : ""}.xlsx`, offerBuf);
+        // Fixed naming by request: FIRM CODE_INSTITUTE NAME_BID NO - institute
+        // is the same guessed match shown in this page's own info strip
+        // (matchedInstitute), omitted when nothing matched.
+        const safeInstitute = String(matchedInstitute || "").replace(/[\\/:*?"<>|]/g, "-").trim();
+        const offerFileName = [partyShortName || "FIRM", safeInstitute, safeBidNo].filter(Boolean).join("_");
+        zip.file(`${offerFileName}.xlsx`, offerBuf);
       }
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `BOQ-Filled-${safeBidNo}.zip`;
+      // Fixed naming by request: INSTITUTE NAME_BOQ_BID NO
+      const safeInstituteForZip = String(matchedInstitute || "").replace(/[\\/:*?"<>|]/g, "-").trim();
+      a.download = `${[safeInstituteForZip, "BOQ", safeBidNo].filter(Boolean).join("_")}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -1,12 +1,41 @@
 import { NextResponse } from "next/server";
 import { getPricelistDb } from "@/lib/pricelist/db";
+import { similarity } from "@/lib/pricelist/match";
 
 export const runtime = "nodejs";
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Same threshold family as SUGGEST_MIN_SCORE (lib/pricelist/match.ts) - tuned
+// a touch looser since this compares single words, not whole names, and the
+// AND-across-every-query-word requirement below already guards against
+// false positives on its own.
+const FUZZY_WORD_MIN_SCORE = 0.65;
+
+function searchTokens(searchText: unknown): string[] {
+  return String(searchText || "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+// A query word matches a stored item if it's a literal substring of any of
+// the item's search_text tokens (unchanged exact behavior), or - for words
+// long enough that a bigram comparison is meaningful - if it's a close
+// spelling variant of one (e.g. "comparision" vs. the item's "comparison").
+function wordFuzzyMatches(word: string, tokens: string[]): boolean {
+  if (tokens.some((t) => t.includes(word))) return true;
+  if (word.length < 4) return false;
+  return tokens.some((t) => t.length >= 4 && similarity(word, t) >= FUZZY_WORD_MIN_SCORE);
+}
+
 // GET ?q=&brand=a,b&supplier=&category=&tagged=all|tagged|untagged&tag=<tag_key>&inactive=1&page=1
 // q is split on spaces; every word must appear in search_text (AND, case-insensitive).
+// If that strict pass finds nothing for a non-blank q, a fallback pass
+// allows each word to match by close spelling instead (see wordFuzzyMatches)
+// - a GeM BOQ title and a supplier's pricelist entry for the same item
+// often differ by exactly this kind of typo (e.g. "Comparision" vs.
+// "Comparison"), and a literal AND-substring search has no way to bridge
+// that on its own.
 export async function GET(req: Request) {
   try {
     const { db } = await getPricelistDb();
@@ -40,7 +69,7 @@ export async function GET(req: Request) {
     if (and.length) filter.$and = and;
 
     const col = db.collection("pricelist_items");
-    const [total, items] = await Promise.all([
+    let [total, items] = await Promise.all([
       col.countDocuments(filter),
       col
         .find(filter, { projection: { search_text: 0, price_history: 0 } })
@@ -49,6 +78,43 @@ export async function GET(req: Request) {
         .limit(PAGE_SIZE)
         .toArray(),
     ]);
+
+    let fuzzy = false;
+    const qWords = q.split(/\s+/).filter(Boolean);
+    if (total === 0 && qWords.length) {
+      // Re-run every other filter (brand/supplier/category/tagged/active) with
+      // no q constraint, then score each candidate's search_text in app code -
+      // the collection is small enough (a few thousand rows) that this is
+      // cheap, and it's only ever reached once the strict pass above already
+      // came up empty.
+      const fallbackFilter: any = { ...filter };
+      delete fallbackFilter.$and;
+      const nonQAnd = and.filter((clause) => !("search_text" in clause));
+      if (nonQAnd.length) fallbackFilter.$and = nonQAnd;
+
+      const candidates = await col
+        .find(fallbackFilter, { projection: { price_history: 0 } })
+        .toArray();
+      const scored = candidates
+        .map((c: any) => {
+          const tokens = searchTokens(c.search_text);
+          if (!qWords.every((w) => wordFuzzyMatches(w, tokens))) return null;
+          const score =
+            qWords.reduce((sum, w) => {
+              if (tokens.some((t) => t.includes(w))) return sum + 1;
+              const best = tokens.reduce((m, t) => Math.max(m, similarity(w, t)), 0);
+              return sum + best;
+            }, 0) / qWords.length;
+          delete c.search_text;
+          return { c, score };
+        })
+        .filter((x): x is { c: any; score: number } => x !== null)
+        .sort((a, b) => b.score - a.score);
+
+      fuzzy = scored.length > 0;
+      total = scored.length;
+      items = scored.slice((page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE).map((s) => s.c);
+    }
 
     const tagDocs = items.length
       ? await tags.find({ sku_key: { $in: items.map((i: any) => i.sku_key) } }).sort({ created_at: 1 }).toArray()
@@ -75,6 +141,10 @@ export async function GET(req: Request) {
       total,
       page,
       pageSize: PAGE_SIZE,
+      // True when the strict AND-substring pass found nothing and these
+      // results came from the spelling-fuzzy fallback instead - lets a
+      // caller (e.g. BidItemTagDialog) flag them as approximate matches.
+      fuzzy,
       items: items.map((i: any) => ({ ...i, _id: String(i._id), pricelist_id: String(i.pricelist_id), tags: tagsBySku.get(i.sku_key) || [] })),
       facets,
     });

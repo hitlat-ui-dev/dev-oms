@@ -620,7 +620,10 @@ export default function GemBidTable({
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Offer Price");
       const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
-      const fileName = `gem-offer-price-items-${safeBidNo}${boqPartyShortName ? `-${boqPartyShortName}` : ""}.xlsx`;
+      // Fixed naming by request: FIRM CODE_INSTITUTE NAME_BID NO - same
+      // format as document-maker's BOQ Rate Variants download.
+      const safeInstitute = String(matchedInstituteByBidNo.get(boqBidNo) || "").replace(/[\\/:*?"<>|]/g, "-").trim();
+      const fileName = `${[boqPartyShortName || "FIRM", safeInstitute, safeBidNo].filter(Boolean).join("_")}.xlsx`;
       const blob = new Blob([buf], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1648,6 +1651,36 @@ export default function GemBidTable({
                               </div>
                             );
                           })}
+                        </td>
+                      );
+                    }
+                    // Items column: stacks a Pending/Filled rate count under the item
+                    // list itself, once boqRates has ever been saved for this bid (see
+                    // /api/gem-bids/boq/save - that's the one place the full per-item
+                    // rate list, filled or not, lives) - shown here rather than next to
+                    // the BOQ Rates link since it's the column with room, and the one
+                    // place every section (not just Bids to Fill/Submitted, which alone
+                    // have a Party column) can see it.
+                    if (col.key === "items") {
+                      const boqRatesArr: any[] = Array.isArray(b.boqRates) ? b.boqRates : [];
+                      const totalRates = boqRatesArr.length;
+                      const filledRates = boqRatesArr.filter((r) => (parseFloat(r?.rate) || 0) > 0).length;
+                      const pendingRates = totalRates - filledRates;
+                      return (
+                        <td key={col.key} className="py-2 px-2 max-w-[200px]">
+                          <div
+                            className={`truncate ${changedSet.has(col.key) ? "text-blue-700 font-bold" : "text-slate-600"}`}
+                            title={String(b[col.key] || "")}
+                          >
+                            {(CELL_DISPLAY_FORMATTERS[col.key] ? CELL_DISPLAY_FORMATTERS[col.key](b[col.key]) : b[col.key]) || "—"}
+                          </div>
+                          {totalRates > 0 && (
+                            <div className="mt-0.5 whitespace-nowrap text-[9px] font-bold">
+                              <span className={pendingRates > 0 ? "text-amber-600" : "text-slate-300"}>{pendingRates} Pending</span>
+                              <span className="text-slate-300 mx-1">/</span>
+                              <span className={filledRates > 0 ? "text-emerald-600" : "text-slate-300"}>{filledRates} Filled</span>
+                            </div>
+                          )}
                         </td>
                       );
                     }
